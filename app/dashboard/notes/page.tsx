@@ -23,6 +23,9 @@ export default function NotesPage() {
   const [recordingState, setRecordingState] = useState<'idle' | 'recording' | 'transcribing' | 'done'>('idle')
   const [editingNote, setEditingNote] = useState<Partial<SessionNote> | null>(null)
   const [saving, setSaving] = useState(false)
+  const [noteFormat, setNoteFormat] = useState<'soap' | 'dap' | 'birp' | 'progress'>('soap')
+  const [formatting, setFormatting] = useState(false)
+  const [formattedNote, setFormattedNote] = useState('')
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
 
@@ -93,6 +96,23 @@ export default function NotesPage() {
 
   const stopRecording = () => {
     mediaRecorderRef.current?.stop()
+  }
+
+  const handleFormatNote = async () => {
+    const noteTextToFormat = editingNote?.note_text
+    if (!noteTextToFormat?.trim()) return
+    setFormatting(true)
+    setFormattedNote('')
+    try {
+      const res = await fetch('/api/notes/format', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: noteTextToFormat, format: noteFormat })
+      })
+      const data = await res.json()
+      if (data.formatted_note) setFormattedNote(data.formatted_note)
+    } catch (error) { console.error('Format error:', error) }
+    finally { setFormatting(false) }
   }
 
   const saveNote = async () => {
@@ -389,6 +409,42 @@ export default function NotesPage() {
               placeholder="Dictated or typed note content..."
               className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none font-mono text-gray-700"
             />
+            {/* Format Note Section */}
+            {editingNote?.note_text && (
+              <div className="mt-3 space-y-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label className="text-sm font-medium text-gray-600 flex-shrink-0">Format as:</label>
+                  <select value={noteFormat} onChange={(e) => setNoteFormat(e.target.value as any)}
+                    className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white">
+                    <option value="soap">SOAP Note</option>
+                    <option value="dap">DAP Note</option>
+                    <option value="birp">BIRP Note</option>
+                    <option value="progress">Progress Note</option>
+                  </select>
+                  <button onClick={handleFormatNote} disabled={formatting}
+                    className="flex items-center gap-1 px-3 py-1.5 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors">
+                    {formatting ? <><div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />Formatting...</> : <>✨ Format Note</>}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400">Claude restructures your dictation into a clinical {noteFormat.toUpperCase()} note</p>
+              </div>
+            )}
+            {formattedNote && (
+              <div className="mt-3 border border-teal-200 rounded-xl overflow-hidden">
+                <div className="bg-teal-50 px-4 py-2 flex items-center justify-between border-b border-teal-200">
+                  <span className="text-sm font-medium text-teal-800">✓ {noteFormat.toUpperCase()} — review and edit before saving</span>
+                  <button onClick={() => { setEditingNote(prev => ({ ...prev, note_text: formattedNote })); setFormattedNote('') }}
+                    className="text-xs text-teal-700 hover:text-teal-900 font-medium">Use this version →</button>
+                </div>
+                <textarea value={formattedNote} onChange={(e) => setFormattedNote(e.target.value)} rows={10}
+                  className="w-full px-4 py-3 text-sm text-gray-700 font-mono leading-relaxed resize-none focus:outline-none bg-white" />
+                <div className="bg-gray-50 px-4 py-2 flex gap-2 border-t border-gray-200">
+                  <button onClick={() => navigator.clipboard.writeText(formattedNote)} className="text-xs text-gray-600 hover:text-gray-800 font-medium">Copy</button>
+                  <span className="text-gray-300">·</span>
+                  <button onClick={() => setFormattedNote('')} className="text-xs text-gray-400 hover:text-gray-600">Discard</button>
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 flex gap-2">
               {recordingState === 'done' && (
