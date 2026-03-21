@@ -79,8 +79,8 @@ async function sendRemindersForDate(targetDate: Date, hoursAhead: number) {
     const firstName = patient.first_name || 'there'
 
     const message = hoursAhead === 48
-      ? `Hi ${firstName}! This is a reminder from ${practiceName} — you have an appointment in 2 days on ${apptTime}. Reply CONFIRM to confirm, CANCEL to cancel, or RESCHEDULE if you need a different time.`
-      : `Hi ${firstName}! Quick reminder from ${practiceName} — your appointment is tomorrow at ${apptTime}. Reply CONFIRM, CANCEL, or RESCHEDULE. See you soon! — ${aiName}`
+      ? `Hi ${firstName}! This is a reminder from ${practiceName} — you have an appointment in 2 days on ${apptTime}. Reply CONFIRM to confirm, CANCEL to cancel, or RESCHEDULE if you need a different time. Reply HERE when you arrive and we'll let your therapist know!`
+      : `Hi ${firstName}! Quick reminder from ${practiceName} — your appointment is tomorrow at ${apptTime}. Reply CONFIRM, CANCEL, or RESCHEDULE. For in-person visits, reply HERE when you arrive and we'll notify your therapist. See you soon! — ${aiName}`
 
     try {
       await sendSMS(patient.phone, message)
