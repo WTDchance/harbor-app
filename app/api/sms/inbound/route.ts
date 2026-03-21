@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Load existing conversation with this number
-    const { data: conversation, error: convError } = await supabaseAdmin
+    const { data: conversation } = await supabaseAdmin
       .from('sms_conversations')
       .select('*')
       .eq('practice_id', practiceId)
