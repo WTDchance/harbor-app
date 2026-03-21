@@ -177,16 +177,24 @@ export default function LandingPage() {
 
       {/* Footer */}
       <footer className="border-t border-gray-100 px-6 py-10">
-        <div className="max-w-4xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div>
-            <span className="text-xl font-bold text-teal-600">Harbor</span>
-            <p className="text-xs text-gray-400 mt-1">AI receptionist for therapy practices</p>
+        <div className="max-w-4xl mx-auto">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4 mb-6 pb-6 border-b border-gray-100">
+            <div>
+              <span className="text-xl font-bold text-teal-600">Harbor</span>
+              <p className="text-xs text-gray-400 mt-1">AI receptionist for therapy practices</p>
+            </div>
+            <div className="flex gap-6 text-sm text-gray-500">
+              <Link href="/login" className="hover:text-gray-900">Log in</Link>
+              <Link href="/onboard" className="hover:text-gray-900">Get Started</Link>
+            </div>
           </div>
-          <div className="flex gap-6 text-sm text-gray-500">
-            <Link href="/login" className="hover:text-gray-900">Log in</Link>
-            <Link href="/onboard" className="hover:text-gray-900">Get Started</Link>
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className="text-xs text-gray-400">© 2026 Harbor AI. All rights reserved.</p>
+            <div className="flex gap-4 text-xs text-gray-500">
+              <Link href="/privacy" className="hover:text-gray-900">Privacy Policy</Link>
+              <Link href="/terms" className="hover:text-gray-900">Terms of Service</Link>
+            </div>
           </div>
-          <p className="text-xs text-gray-400">© 2026 Harbor AI. All rights reserved.</p>
         </div>
       </footer>
     </div>
