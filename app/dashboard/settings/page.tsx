@@ -1,249 +1,170 @@
 'use client'
 
-import { useState } from 'react'
-import { Save } from 'lucide-react'
-import type { Practice } from '@/types'
+import { useEffect, useState } from 'react'
+import { createClient } from '@/lib/supabase-browser'
 
 export default function SettingsPage() {
-  // Mock practice data - in a real app, fetch from API
-  const [practice, setPractice] = useState<Partial<Practice>>({
-    name: 'Hope and Harmony Counseling',
-    ai_name: 'Sam',
-    phone_number: '+15551234567',
-    timezone: 'America/Los_Angeles',
-    insurance_accepted: ['Aetna', 'BlueCross', 'Cigna'],
-    hours_json: {
-      monday: { enabled: true, openTime: '08:00', closeTime: '18:00' },
-      tuesday: { enabled: true, openTime: '08:00', closeTime: '18:00' },
-      wednesday: { enabled: true, openTime: '10:00', closeTime: '20:00' },
-      thursday: { enabled: true, openTime: '08:00', closeTime: '18:00' },
-      friday: { enabled: true, openTime: '08:00', closeTime: '17:00' },
-      saturday: { enabled: true, openTime: '09:00', closeTime: '13:00' },
-      sunday: { enabled: false },
-    },
-  })
+  const [practice, setPractice] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [form, setForm] = useState({
+    name: '',
+    hours: '',
+    location: '',
+    specialties: '',
+    telehealth: true,
+    therapist_phone: '',
+  })
+  const supabase = createClient()
 
-  const insuranceOptions = [
-    'Aetna',
-    'BlueCross',
-    'Cigna',
-    'United Healthcare',
-    'Humana',
-    'Medicare',
-    'Medicaid',
-  ]
-
-  const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-  const dayLabels: Record<string, string> = {
-    monday: 'Monday',
-    tuesday: 'Tuesday',
-    wednesday: 'Wednesday',
-    thursday: 'Thursday',
-    friday: 'Friday',
-    saturday: 'Saturday',
-    sunday: 'Sunday',
-  }
+  useEffect(() => {
+    const load = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const { data: p } = await supabase
+        .from('practices')
+        .select('*')
+        .eq('notification_email', user.email)
+        .single()
+      if (p) {
+        setPractice(p)
+        setForm({
+          name: p.name || '',
+          hours: p.hours || '',
+          location: p.location || '',
+          specialties: (p.specialties || []).join(', '),
+          telehealth: p.telehealth ?? true,
+          therapist_phone: p.therapist_phone || '',
+        })
+      }
+      setLoading(false)
+    }
+    load()
+  }, [supabase])
 
   const handleSave = async () => {
+    if (!practice) return
     setSaving(true)
-    try {
-      // In a real app, call the API
-      // const response = await fetch(`/api/practices?id=${practice.id}`, {
-      //   method: 'PATCH',
-      //   headers: { 'Content-Type': 'application/json' },
-      //   body: JSON.stringify(practice),
-      // })
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      alert('Settings saved!')
-    } catch (error) {
-      console.error('Error saving settings:', error)
-      alert('Error saving settings')
-    } finally {
-      setSaving(false)
-    }
+    const res = await fetch(`/api/practices/${practice.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...form,
+        specialties: form.specialties.split(',').map(s => s.trim()).filter(Boolean),
+      }),
+    })
+    setSaving(false)
+    if (res.ok) setSaved(true)
+    setTimeout(() => setSaved(false), 3000)
   }
 
-  const toggleDay = (day: string) => {
-    const hours = practice.hours_json || {}
-    setPractice({
-      ...practice,
-      hours_json: {
-        ...hours,
-        [day]: {
-          ...hours[day as keyof typeof hours],
-          enabled: !hours[day as keyof typeof hours]?.enabled,
-        },
-      },
-    })
-  }
-
-  const updateTime = (day: string, field: 'openTime' | 'closeTime', value: string) => {
-    const hours = practice.hours_json || {}
-    setPractice({
-      ...practice,
-      hours_json: {
-        ...hours,
-        [day]: {
-          ...hours[day as keyof typeof hours],
-          [field]: value,
-        },
-      },
-    })
-  }
+  if (loading) return <div className="flex items-center justify-center h-32"><div className="w-5 h-5 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" /></div>
 
   return (
-    <div className="max-w-4xl space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-600 mt-2">Configure your practice and AI receptionist</p>
+    <div className="max-w-2xl">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">Practice Settings</h1>
+        <p className="text-gray-500 mt-1">Changes sync to Ellie automatically</p>
       </div>
 
-      {/* Practice basics */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Practice Information</h2>
+      <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+        {/* Read-only info */}
+        <div className="p-5">
+          <h2 className="font-semibold text-gray-700 mb-3 text-sm uppercase tracking-wide">AI Assistant</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">AI Name</label>
+              <p className="text-sm font-medium text-gray-700">{practice?.ai_name || 'Ellie'}</p>
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Vapi Assistant ID</label>
+              <p className="text-sm font-mono text-gray-500 truncate">{practice?.vapi_assistant_id || '—'}</p>
+            </div>
+          </div>
+        </div>
 
-        <div className="space-y-4">
+        {/* Editable fields */}
+        <div className="p-5 space-y-4">
+          <h2 className="font-semibold text-gray-700 mb-3 text-sm uppercase tracking-wide">Practice Info</h2>
+
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Practice Name</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Practice Name</label>
             <input
               type="text"
-              value={practice.name || ''}
-              onChange={(e) => setPractice({ ...practice, name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-600 focus:border-transparent"
+              value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              AI Receptionist Name
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Office Hours</label>
             <input
               type="text"
-              value={practice.ai_name || ''}
-              onChange={(e) => setPractice({ ...practice, ai_name: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-600 focus:border-transparent"
+              value={form.hours}
+              onChange={e => setForm(f => ({ ...f, hours: e.target.value }))}
+              placeholder="e.g. Monday–Friday 9am–5pm"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Phone Number</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
+            <input
+              type="text"
+              value={form.location}
+              onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+              placeholder="City, State or full address"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Specialties</label>
+            <input
+              type="text"
+              value={form.specialties}
+              onChange={e => setForm(f => ({ ...f, specialties: e.target.value }))}
+              placeholder="anxiety, depression, trauma, couples"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">Comma-separated</p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Therapist Cell (for crisis alerts)</label>
             <input
               type="tel"
-              value={practice.phone_number || ''}
-              disabled
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 cursor-not-allowed"
+              value={form.therapist_phone}
+              onChange={e => setForm(f => ({ ...f, therapist_phone: e.target.value }))}
+              placeholder="+1 (555) 000-0000"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
-            <p className="text-xs text-gray-500 mt-1">Contact support to change phone number</p>
+            <p className="text-xs text-gray-400 mt-1">Used for urgent crisis SMS alerts only</p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Timezone</label>
-            <select
-              value={practice.timezone || 'America/Los_Angeles'}
-              onChange={(e) => setPractice({ ...practice, timezone: e.target.value })}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-teal-600 focus:border-transparent"
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setForm(f => ({ ...f, telehealth: !f.telehealth }))}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.telehealth ? 'bg-teal-600' : 'bg-gray-200'}`}
             >
-              <option>America/Los_Angeles</option>
-              <option>America/Denver</option>
-              <option>America/Chicago</option>
-              <option>America/New_York</option>
-            </select>
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.telehealth ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+            <label className="text-sm font-medium text-gray-700">Telehealth sessions available</label>
           </div>
         </div>
-      </div>
 
-      {/* Business hours */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Business Hours</h2>
-
-        <div className="space-y-4">
-          {days.map((day) => {
-            const dayHours = practice.hours_json?.[day as keyof typeof practice.hours_json]
-            const enabled = dayHours?.enabled ?? false
-
-            return (
-              <div key={day} className="flex items-center gap-4">
-                <label className="flex items-center gap-2 w-32">
-                  <input
-                    type="checkbox"
-                    checked={enabled}
-                    onChange={() => toggleDay(day)}
-                    className="w-4 h-4 text-teal-600 rounded"
-                  />
-                  <span className="text-sm font-medium text-gray-700">{dayLabels[day]}</span>
-                </label>
-
-                {enabled && (
-                  <>
-                    <div className="flex-1">
-                      <label className="text-xs text-gray-600">Opens</label>
-                      <input
-                        type="time"
-                        value={dayHours?.openTime || '09:00'}
-                        onChange={(e) => updateTime(day, 'openTime', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-xs text-gray-600">Closes</label>
-                      <input
-                        type="time"
-                        value={dayHours?.closeTime || '17:00'}
-                        onChange={(e) => updateTime(day, 'closeTime', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
-                      />
-                    </div>
-                  </>
-                )}
-              </div>
-            )
-          })}
+        <div className="p-5 flex items-center justify-between">
+          <p className="text-xs text-gray-400">Saving will automatically update Ellie's knowledge</p>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Saving...' : saved ? '✓ Saved' : 'Save Changes'}
+          </button>
         </div>
-      </div>
-
-      {/* Insurance plans */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Insurance Accepted</h2>
-
-        <div className="space-y-2">
-          {insuranceOptions.map((plan) => (
-            <label key={plan} className="flex items-center">
-              <input
-                type="checkbox"
-                checked={practice.insurance_accepted?.includes(plan) ?? false}
-                onChange={(e) => {
-                  if (e.target.checked) {
-                    setPractice({
-                      ...practice,
-                      insurance_accepted: [...(practice.insurance_accepted || []), plan],
-                    })
-                  } else {
-                    setPractice({
-                      ...practice,
-                      insurance_accepted: practice.insurance_accepted?.filter((p) => p !== plan),
-                    })
-                  }
-                }}
-                className="w-4 h-4 text-teal-600 rounded"
-              />
-              <span className="ml-2 text-sm text-gray-700">{plan}</span>
-            </label>
-          ))}
-        </div>
-      </div>
-
-      {/* Save button */}
-      <div className="flex justify-end gap-4">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="flex items-center gap-2 bg-teal-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          <Save className="w-4 h-4" />
-          {saving ? 'Saving...' : 'Save Settings'}
-        </button>
       </div>
     </div>
   )

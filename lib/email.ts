@@ -57,15 +57,20 @@ export function buildCallSummaryEmail(opts: {
   summary: string
   transcript: string
   callTime: string
+  crisisDetected?: boolean
 }): string {
   const durationMin = Math.round(opts.duration / 60)
+  const headerBg = opts.crisisDetected ? '#DC3545' : '#6B8F71'
+  const headerIcon = opts.crisisDetected ? '🚨' : '📞'
+  const headerText = opts.crisisDetected ? 'CRISIS ALERT — New Call' : 'New Call'
+
   return `
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f0; margin: 0; padding: 20px; }
   .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  .header { background: #6B8F71; padding: 24px 32px; color: white; }
+  .header { background: ${headerBg}; padding: 24px 32px; color: white; }
   .header h1 { margin: 0; font-size: 20px; font-weight: 600; }
   .header p { margin: 4px 0 0; opacity: 0.85; font-size: 14px; }
   .body { padding: 32px; }
@@ -73,16 +78,17 @@ export function buildCallSummaryEmail(opts: {
   .meta-item label { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-bottom: 4px; }
   .meta-item value { font-size: 15px; font-weight: 500; color: #222; }
   .section { margin-bottom: 24px; }
-  .section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: #6B8F71; margin: 0 0 12px; }
-  .summary-box { background: #f9f9f7; border-left: 3px solid #6B8F71; padding: 16px; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.6; color: #333; }
+  .section h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px; color: ${headerBg}; margin: 0 0 12px; }
+  .summary-box { background: #f9f9f7; border-left: 3px solid ${headerBg}; padding: 16px; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.6; color: #333; }
+  .crisis-box { background: #fff5f5; border-left: 3px solid #DC3545; padding: 16px; border-radius: 0 8px 8px 0; font-size: 15px; line-height: 1.6; color: #DC3545; font-weight: 600; }
   .transcript { background: #f5f5f5; padding: 16px; border-radius: 8px; font-size: 13px; line-height: 1.7; color: #555; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
   .footer { padding: 20px 32px; background: #f9f9f7; font-size: 12px; color: #999; text-align: center; }
 </style></head>
 <body>
 <div class="container">
   <div class="header">
-    <h1>📞 New Call — ${opts.practiceName}</h1>
-    <p>Ellie took a call while you were with a patient</p>
+    <h1>${headerIcon} ${headerText} — ${opts.practiceName}</h1>
+    <p>${opts.crisisDetected ? 'Immediate action may be required' : 'Ellie took a call while you were with a patient'}</p>
   </div>
   <div class="body">
     <div class="meta">
@@ -99,6 +105,12 @@ export function buildCallSummaryEmail(opts: {
         <value>${opts.callTime}</value>
       </div>
     </div>
+
+    ${opts.crisisDetected ? `
+    <div class="section">
+      <div class="crisis-box">Crisis keywords detected in transcript. If you cannot reach the caller, please contact the 988 Suicide and Crisis Lifeline for guidance.</div>
+    </div>
+    ` : ''}
 
     <div class="section">
       <h2>AI Summary</h2>
