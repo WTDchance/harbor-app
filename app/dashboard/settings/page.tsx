@@ -17,6 +17,7 @@ export default function SettingsPage() {
     specialties: '',
     telehealth: true,
     therapist_phone: '',
+    emotional_support_enabled: true,
   })
   const [notifPrefs, setNotifPrefs] = useState<any>(null)
   const supabase = createClient()
@@ -39,6 +40,7 @@ export default function SettingsPage() {
           specialties: (p.specialties || []).join(', '),
           telehealth: p.telehealth ?? true,
           therapist_phone: p.therapist_phone || '',
+          emotional_support_enabled: p.emotional_support_enabled ?? true,
         })
         setNotifPrefs(p.notification_prefs || {})
       }
@@ -191,6 +193,29 @@ export default function SettingsPage() {
               <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.telehealth ? 'translate-x-6' : 'translate-x-1'}`} />
             </button>
             <label className="text-sm font-medium text-gray-700">Telehealth sessions available</label>
+          </div>
+        </div>
+
+        {/* Emotional Support Mode */}
+        <div className="mt-6 pt-4 border-t border-gray-100">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <h3 className="text-sm font-medium text-gray-700">Compassionate Support Mode</h3>
+              <p className="text-gray-500 text-xs mt-1">
+                When a patient mentions feeling anxious, overwhelmed, or stressed, Ellie responds
+                with warmth, validates their feelings, and can gently guide them through a simple
+                breathing exercise — all while being clear she is not their therapist.
+              </p>
+              <p className="text-teal-600 text-xs mt-2 font-medium">
+                ✓ No clinical advice · ✓ No diagnoses · ✓ Crisis protocol still active
+              </p>
+            </div>
+            <button
+              onClick={() => setForm(f => ({ ...f, emotional_support_enabled: !f.emotional_support_enabled }))}
+              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${form.emotional_support_enabled ? 'bg-teal-600' : 'bg-gray-200'}`}
+            >
+              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${form.emotional_support_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
           </div>
         </div>
 
