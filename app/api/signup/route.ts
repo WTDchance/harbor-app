@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { buildSystemPrompt } from '@/lib/systemPrompt'
 
-const VAPI_API_KEY = process.env.VAPI_API_KEY || 'fe9a5a27-57b7-431e-bdc0-ff3ac083cd33'
+const VAPI_API_KEY = process.env.VAPI_API_KEY
 
 export async function POST(req: NextRequest) {
     try {
