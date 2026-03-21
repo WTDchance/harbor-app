@@ -19,8 +19,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`📞 Vapi webhook: ${type}`, { callId })
 
-    // Get practice ID from request header or body
-    const practiceId = request.headers.get('x-practice-id') || call?.id?.split('-')[0]
+    // Get practice ID from request header (set when configuring Vapi webhook URL)
+    // e.g., webhook URL: /api/vapi/webhook?practice_id=<uuid>
+    const practiceId = request.headers.get('x-practice-id') ||
+      request.nextUrl.searchParams.get('practice_id') ||
+      callId?.split('-')[0]
 
     if (!practiceId) {
       console.warn('⚠️ No practice_id in webhook')
