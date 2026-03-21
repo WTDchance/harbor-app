@@ -1,14 +1,34 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { Sidebar } from '@/components/Sidebar'
+import { createClient } from '@/lib/supabase-browser'
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode
 }) {
-  // In a real app, you'd fetch the practice name from the user's session
-  const practiceName = 'Hope and Harmony Counseling'
+  const [practiceName, setPracticeName] = useState('Loading...')
+  const supabase = createClient()
+
+  useEffect(() => {
+    const loadPractice = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: practice } = await supabase
+        .from('practices')
+        .select('name')
+        .eq('notification_email', user.email)
+        .single()
+
+      if (practice?.name) {
+        setPracticeName(practice.name)
+      }
+    }
+    loadPractice()
+  }, [supabase])
 
   return (
     <div className="flex h-screen bg-gray-50">

@@ -1,173 +1,176 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Phone, MessageSquare, Calendar, Users } from 'lucide-react'
-import { StatsCard } from '@/components/StatsCard'
-import { CallCard } from '@/components/CallCard'
-import type { CallLog, DashboardStats } from '@/types'
+import { Phone, Clock, Users, TrendingUp } from 'lucide-react'
+import { createClient } from '@/lib/supabase-browser'
+import Link from 'next/link'
+
+interface RecentCall {
+  id: string
+  patient_phone: string
+  duration_seconds: number
+  summary: string | null
+  created_at: string
+}
+
+function formatDuration(s: number) {
+  if (!s) return '0:00'
+  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+}
+
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats>({
-    callsToday: 0,
-    messagesToday: 0,
-    appointmentsToday: 0,
-    newPatientsThisWeek: 0,
-  })
-  const [recentCalls, setRecentCalls] = useState<CallLog[]>([])
+  const [practiceName, setPracticeName] = useState('')
+  const [recentCalls, setRecentCalls] = useState<RecentCall[]>([])
+  const [stats, setStats] = useState({ today: 0, avgDuration: 0, waitlist: 0, total: 0 })
   const [loading, setLoading] = useState(true)
+  const supabase = createClient()
 
   useEffect(() => {
-    // Fetch dashboard data
-    const fetchData = async () => {
-      try {
-        // In a real app, these would be actual API calls
-        // For now, we'll use mock data
-        setStats({
-          callsToday: 12,
-          messagesToday: 8,
-          appointmentsToday: 3,
-          newPatientsThisWeek: 5,
-        })
+    const load = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) { setLoading(false); return }
 
-        setRecentCalls([
-          {
-            id: 'call-001',
-            practice_id: 'practice-001',
-            patient_phone: '+15551112222',
-            duration_seconds: 447,
-            transcript:
-              "Sam: Good afternoon, this is Sam with Hope and Harmony Counseling. How can I help you today?\nCaller: Hi, I'm looking to schedule an appointment with someone who specializes in anxiety.",
-            summary: 'New patient intake: anxiety concerns, scheduled for Thursday 2 PM',
-            vapi_call_id: 'call_demo_001',
-            created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-          },
-          {
-            id: 'call-002',
-            practice_id: 'practice-001',
-            patient_phone: '+15551113333',
-            duration_seconds: 312,
-            transcript: '',
-            summary: 'Appointment confirmation: existing patient',
-            vapi_call_id: 'call_demo_002',
-            created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-          },
-        ])
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error)
-      } finally {
-        setLoading(false)
-      }
+      const { data: practice } = await supabase
+        .from('practices')
+        .select('id, name')
+        .eq('notification_email', user.email)
+        .single()
+
+      if (!practice) { setLoading(false); return }
+
+      setPracticeName(practice.name)
+
+      const todayStart = new Date()
+      todayStart.setHours(0, 0, 0, 0)
+
+      const [callsRes, todayRes, waitlistRes] = await Promise.all([
+        supabase
+          .from('call_logs')
+          .select('id, patient_phone, duration_seconds, summary, created_at')
+          .eq('practice_id', practice.id)
+          .order('created_at', { ascending: false })
+          .limit(5),
+        supabase
+          .from('call_logs')
+          .select('id, duration_seconds', { count: 'exact' })
+          .eq('practice_id', practice.id)
+          .gte('created_at', todayStart.toISOString()),
+        supabase
+          .from('waitlist')
+          .select('id', { count: 'exact' })
+          .eq('practice_id', practice.id)
+          .eq('status', 'waiting'),
+      ])
+
+      const todayCalls = todayRes.data || []
+      const avgDur = todayCalls.length
+        ? Math.round(todayCalls.reduce((s, c) => s + (c.duration_seconds || 0), 0) / todayCalls.length)
+        : 0
+
+      setRecentCalls(callsRes.data || [])
+      setStats({
+        today: todayRes.count || 0,
+        avgDuration: avgDur,
+        waitlist: waitlistRes.count || 0,
+        total: todayRes.count || 0,
+      })
+      setLoading(false)
     }
-
-    fetchData()
-  }, [])
+    load()
+  }, [supabase])
 
   return (
-    <div className="space-y-8">
-      {/* Page header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
-        <p className="text-gray-600 mt-2">Overview of your practice activity</p>
+    <div>
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-900">
+          {practiceName || 'Dashboard'}
+        </h1>
+        <p className="text-gray-500 mt-1">Here&apos;s what Ellie has been up to today</p>
       </div>
 
-      {/* Stats cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <StatsCard
-          icon={<Phone className="w-8 h-8" />}
-          label="Calls Today"
-          value={stats.callsToday}
-          subtext="AI receptionist"
-        />
-        <StatsCard
-          icon={<MessageSquare className="w-8 h-8" />}
-          label="Messages Today"
-          value={stats.messagesToday}
-          subtext="SMS conversations"
-        />
-        <StatsCard
-          icon={<Calendar className="w-8 h-8" />}
-          label="Appointments Today"
-          value={stats.appointmentsToday}
-          subtext="Scheduled sessions"
-        />
-        <StatsCard
-          icon={<Users className="w-8 h-8" />}
-          label="New Patients This Week"
-          value={stats.newPatientsThisWeek}
-          subtext="Intake completed"
-        />
+      {/* Stats */}
+      <div className="grid grid-cols-4 gap-4 mb-8">
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center mb-3">
+            <Phone className="w-5 h-5 text-teal-600" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.today}</p>
+          <p className="text-sm text-gray-500 mt-0.5">Calls Today</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
+            <Clock className="w-5 h-5 text-blue-600" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{loading ? '—' : formatDuration(stats.avgDuration)}</p>
+          <p className="text-sm text-gray-500 mt-0.5">Avg Duration</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center mb-3">
+            <Users className="w-5 h-5 text-orange-600" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.waitlist}</p>
+          <p className="text-sm text-gray-500 mt-0.5">On Waitlist</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-5">
+          <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center mb-3">
+            <TrendingUp className="w-5 h-5 text-purple-600" />
+          </div>
+          <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.today}</p>
+          <p className="text-sm text-gray-500 mt-0.5">Total Today</p>
+        </div>
       </div>
 
-      {/* Recent calls section */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-2xl font-bold text-gray-900">Recent Calls</h2>
-          <a
-            href="/dashboard/calls"
-            className="text-teal-600 hover:text-teal-700 font-semibold text-sm"
-          >
+      {/* Recent calls */}
+      <div className="bg-white rounded-xl border border-gray-200">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">Recent Calls</h2>
+          <Link href="/dashboard/calls" className="text-sm text-teal-600 hover:underline">
             View all →
-          </a>
+          </Link>
         </div>
 
         {loading ? (
-          <div className="text-center py-8">
-            <p className="text-gray-500">Loading...</p>
+          <div className="flex items-center justify-center h-32">
+            <div className="w-5 h-5 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
           </div>
         ) : recentCalls.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-8 text-center">
-            <Phone className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <p className="text-gray-600">No calls yet</p>
+          <div className="p-12 text-center">
+            <Phone className="w-8 h-8 text-gray-300 mx-auto mb-3" />
+            <p className="text-gray-500 text-sm">No calls yet — Ellie is ready and waiting</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {recentCalls.slice(0, 5).map((call) => (
-              <CallCard key={call.id} call={call} />
+          <div className="divide-y divide-gray-100">
+            {recentCalls.map(call => (
+              <div key={call.id} className="flex items-start gap-3 px-5 py-4">
+                <div className="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
+                  <Phone className="w-3.5 h-3.5 text-teal-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between">
+                    <p className="font-medium text-gray-900 text-sm">{call.patient_phone}</p>
+                    <div className="flex items-center gap-2 text-xs text-gray-400">
+                      <span>{formatDuration(call.duration_seconds)}</span>
+                      <span>·</span>
+                      <span>{timeAgo(call.created_at)}</span>
+                    </div>
+                  </div>
+                  {call.summary && (
+                    <p className="text-sm text-gray-500 mt-0.5 truncate">{call.summary}</p>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         )}
-      </div>
-
-      {/* Quick actions */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="font-semibold text-gray-900 mb-2">Configure Business Hours</h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Set when your practice is open and when the AI should take messages
-          </p>
-          <a
-            href="/dashboard/settings"
-            className="text-teal-600 hover:text-teal-700 text-sm font-semibold"
-          >
-            Go to settings →
-          </a>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="font-semibold text-gray-900 mb-2">View Patient Messages</h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Check SMS conversations and respond to scheduling requests
-          </p>
-          <a
-            href="/dashboard/messages"
-            className="text-teal-600 hover:text-teal-700 text-sm font-semibold"
-          >
-            Go to messages →
-          </a>
-        </div>
-
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h3 className="font-semibold text-gray-900 mb-2">Review Call Transcripts</h3>
-          <p className="text-sm text-gray-600 mb-4">
-            Listen to AI interactions and read full transcripts
-          </p>
-          <a
-            href="/dashboard/calls"
-            className="text-teal-600 hover:text-teal-700 text-sm font-semibold"
-          >
-            Go to calls →
-          </a>
-        </div>
       </div>
     </div>
   )
