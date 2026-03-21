@@ -95,8 +95,8 @@ export async function POST(request: NextRequest) {
     )
 
     // Build conversation context with message history
-    const conversationHistory = messages.map((msg) => ({
-      role: msg.direction === 'inbound' ? 'user' : 'assistant' as const,
+    const conversationHistory: Array<{role: 'user' | 'assistant', content: string}> = messages.map((msg) => ({
+      role: (msg.direction === 'inbound' ? 'user' : 'assistant') as 'user' | 'assistant',
       content: msg.content,
     }))
 
