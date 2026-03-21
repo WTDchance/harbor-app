@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
 
-    const { patient_name, patient_phone, session_date, note_text, audio_url } = await req.json()
+    const { patient_name, patient_phone, session_date, note_text, audio_url, note_format } = await req.json()
 
     if (!note_text) {
       return NextResponse.json(
@@ -125,6 +125,7 @@ export async function POST(req: NextRequest) {
         session_date: session_date || new Date().toISOString().split('T')[0],
         note_text,
         audio_url: audio_url || null,
+        note_format: note_format || 'raw',
         transcription_model: 'whisper',
       })
       .select()
