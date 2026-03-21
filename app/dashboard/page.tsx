@@ -29,6 +29,7 @@ function timeAgo(iso: string) {
 
 export default function DashboardPage() {
   const [practiceName, setPracticeName] = useState('')
+  const [practice, setPractice] = useState<any>(null)
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([])
   const [stats, setStats] = useState({ today: 0, avgDuration: 0, waitlist: 0, total: 0 })
   const [loading, setLoading] = useState(true)
@@ -41,13 +42,14 @@ export default function DashboardPage() {
 
       const { data: practice } = await supabase
         .from('practices')
-        .select('id, name')
+        .select('id, name, phone_number, ai_name')
         .eq('notification_email', user.email)
         .single()
 
       if (!practice) { setLoading(false); return }
 
       setPracticeName(practice.name)
+      setPractice(practice)
 
       const todayStart = new Date()
       todayStart.setHours(0, 0, 0, 0)
@@ -96,6 +98,25 @@ export default function DashboardPage() {
         </h1>
         <p className="text-gray-500 mt-1">Here&apos;s what Ellie has been up to today</p>
       </div>
+
+      {/* Ellie Status Card */}
+      {!loading && (
+        <div className={`rounded-xl border p-4 mb-6 flex items-center justify-between ${
+          practice?.phone_number ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'
+        }`}>
+          <div className="flex items-center gap-3">
+            <div className={`w-2.5 h-2.5 rounded-full ${practice?.phone_number ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+            <div>
+              <p className={`font-medium text-sm ${practice?.phone_number ? 'text-green-800' : 'text-yellow-800'}`}>
+                {practice?.phone_number ? `${practice.ai_name || 'Ellie'} is live` : 'Phone number not configured'}
+              </p>
+              <p className={`text-xs mt-0.5 ${practice?.phone_number ? 'text-green-600' : 'text-yellow-600'}`}>
+                {practice?.phone_number ? `Answering calls at ${practice.phone_number}` : 'Contact Harbor support to activate your phone line'}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-8">
