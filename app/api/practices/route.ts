@@ -1,76 +1,63 @@
-// CRUD API for practice settings
-// Handles updating practice info, hours, insurance plans, etc.
-
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import type { Practice } from '@/types'
 
-/**
- * GET /api/practices
- * Get all practices (or filter by ID if ?id=uuid)
- * In a real app, this would be protected to only return the user's practice
- */
+async function getPractice() {
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
+  )
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data } = await supabase.from('practices').select('id, name').eq('notification_email', user.email).single()
+  return data
+}
+
 export async function GET(request: NextRequest) {
   try {
+    const practice = await getPractice()
+    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const practiceId = request.nextUrl.searchParams.get('id')
 
-    if (practiceId) {
-      // Get specific practice
-      const { data, error } = await supabaseAdmin
-        .from('practices')
-        .select('*')
-        .eq('id', practiceId)
-        .single()
-
-      if (error || !data) {
-        return NextResponse.json(
-          { error: 'Practice not found' },
-          { status: 404 }
-        )
-      }
-
-      return NextResponse.json(data)
+    if (practiceId && practiceId !== practice.id) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get all practices (should be protected in production)
     const { data, error } = await supabaseAdmin
       .from('practices')
       .select('*')
+      .eq('id', practice.id)
+      .single()
 
-    if (error) {
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
-    }
-
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
   } catch (error) {
-    console.error('Error fetching practices:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-/**
- * POST /api/practices
- * Create a new practice (signup)
- */
 export async function POST(request: NextRequest) {
   try {
-    const body: Partial<Practice> = await request.json()
+    const cookieStore = await cookies()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
+    )
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const body = await request.json()
     const { name, ai_name, phone_number, timezone } = body
 
     if (!name || !phone_number) {
-      return NextResponse.json(
-        { error: 'Missing required fields: name, phone_number' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'Missing required fields: name, phone_number' }, { status: 400 })
     }
 
-    // Check if phone number already exists
     const { data: existing } = await supabaseAdmin
       .from('practices')
       .select('id')
@@ -78,135 +65,69 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (existing) {
-      return NextResponse.json(
-        { error: 'Phone number already in use' },
-        { status: 409 }
-      )
+      return NextResponse.json({ error: 'Phone number already in use' }, { status: 409 })
     }
 
-    // Create practice
     const { data, error } = await supabaseAdmin
       .from('practices')
       .insert({
-        name: name,
-        ai_name: ai_name || 'Sam',
-        phone_number: phone_number,
+        name,
+        ai_name: ai_name || 'Ellie',
+        phone_number,
         timezone: timezone || 'America/Los_Angeles',
+        notification_email: user.email,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .select()
       .single()
 
-    if (error) {
-      console.error('Error creating practice:', error)
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
-    }
-
-    console.log(`✓ Practice created: ${data.id}`)
-
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data, { status: 201 })
   } catch (error) {
-    console.error('Error in POST /api/practices:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-/**
- * PATCH /api/practices/:id
- * Update practice settings
- */
 export async function PATCH(request: NextRequest) {
   try {
-    const practiceId = request.nextUrl.searchParams.get('id')
+    const practice = await getPractice()
+    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    if (!practiceId) {
-      return NextResponse.json(
-        { error: 'Missing practice ID' },
-        { status: 400 }
-      )
-    }
+    const practiceId = request.nextUrl.searchParams.get('id')
+    if (!practiceId) return NextResponse.json({ error: 'Missing practice ID' }, { status: 400 })
+    if (practiceId !== practice.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await request.json()
+    const { id, created_at, stripe_customer_id, stripe_subscription_id, notification_email, ...updateData } = body
 
-    // Remove immutable fields
-    const { id, created_at, stripe_customer_id, stripe_subscription_id, ...updateData } = body
-
-    // Update practice
     const { data, error } = await supabaseAdmin
       .from('practices')
-      .update({
-        ...updateData,
-        updated_at: new Date().toISOString(),
-      })
+      .update({ ...updateData, updated_at: new Date().toISOString() })
       .eq('id', practiceId)
       .select()
       .single()
 
-    if (error) {
-      console.error('Error updating practice:', error)
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
-    }
-
-    console.log(`✓ Practice updated: ${practiceId}`)
-
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json(data)
   } catch (error) {
-    console.error('Error in PATCH /api/practices:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
-/**
- * DELETE /api/practices/:id
- * Delete a practice (careful!)
- * This cascades to users, patients, appointments, etc.
- */
 export async function DELETE(request: NextRequest) {
   try {
+    const practice = await getPractice()
+    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const practiceId = request.nextUrl.searchParams.get('id')
+    if (!practiceId) return NextResponse.json({ error: 'Missing practice ID' }, { status: 400 })
+    if (practiceId !== practice.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    if (!practiceId) {
-      return NextResponse.json(
-        { error: 'Missing practice ID' },
-        { status: 400 }
-      )
-    }
-
-    // Delete practice (cascade handled by database)
-    const { error } = await supabaseAdmin
-      .from('practices')
-      .delete()
-      .eq('id', practiceId)
-
-    if (error) {
-      console.error('Error deleting practice:', error)
-      return NextResponse.json(
-        { error: error.message },
-        { status: 500 }
-      )
-    }
-
-    console.log(`✓ Practice deleted: ${practiceId}`)
-
+    const { error } = await supabaseAdmin.from('practices').delete().eq('id', practiceId)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ success: true })
   } catch (error) {
-    console.error('Error in DELETE /api/practices:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
