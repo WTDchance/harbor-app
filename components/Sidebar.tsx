@@ -2,7 +2,8 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { Phone, MessageSquare, Settings, Home, LogOut, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 import { createClient } from '@/lib/supabase-browser'
 
@@ -13,10 +14,39 @@ interface SidebarProps {
 export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
   const pathname = usePathname()
   const supabase = createClient()
+  const [crisisCount, setCrisisCount] = useState(0)
+  const [practiceId, setPracticeId] = useState<string | null>(null)
+
+  useEffect(() => {
+    const fetchCrisisCount = async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      const { data: practice } = await supabase
+        .from('practices')
+        .select('id')
+        .eq('notification_email', user.email)
+        .single()
+
+      if (!practice?.id) return
+      setPracticeId(practice.id)
+
+      const { count } = await supabase
+        .from('crisis_alerts')
+        .select('*', { count: 'exact', head: true })
+        .eq('practice_id', practice.id)
+        .eq('reviewed', false)
+
+      setCrisisCount(count || 0)
+    }
+
+    fetchCrisisCount()
+  }, [supabase])
 
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home, exact: true },
     { href: '/dashboard/calls', label: 'Call Logs', icon: Phone },
+    { href: '/dashboard/crisis', label: 'Crisis Alerts', icon: AlertTriangle, badge: crisisCount > 0 ? crisisCount : null },
     { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
     { href: '/dashboard/waitlist', label: 'Waitlist', icon: Users },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
@@ -38,7 +68,7 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
       {/* Navigation */}
       <nav className="flex-1 px-4 py-6">
         <ul className="space-y-1">
-          {navItems.map(({ href, label, icon: Icon, exact }) => {
+          {navItems.map(({ href, label, icon: Icon, exact, badge }) => {
             const isActive = exact ? pathname === href : pathname.startsWith(href)
             return (
               <li key={href}>
@@ -53,6 +83,11 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
                 >
                   <Icon className="w-5 h-5" />
                   <span>{label}</span>
+                  {badge && (
+                    <span className="ml-auto inline-flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-xs font-semibold">
+                      {badge}
+                    </span>
+                  )}
                 </Link>
               </li>
             )

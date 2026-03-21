@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, Phone, Clock, ChevronDown, ChevronUp } from 'lucide-react'
+import { Search, Phone, Clock, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react'
 import { createClient } from '@/lib/supabase-browser'
 
 interface CallLog {
@@ -11,6 +11,11 @@ interface CallLog {
   summary: string | null
   transcript: string | null
   created_at: string
+  crisis_detected?: boolean
+  intake_screenings?: Array<{
+    phq2_score?: number
+    gad2_score?: number
+  }>
 }
 
 function formatDuration(seconds: number) {
@@ -29,8 +34,17 @@ function timeAgo(iso: string) {
   return `${Math.floor(hrs / 24)}d ago`
 }
 
+function getScreeningBadgeColor(score?: number): string {
+  if (score === undefined) return 'bg-gray-100 text-gray-700'
+  if (score < 3) return 'bg-green-100 text-green-700'
+  if (score < 5) return 'bg-yellow-100 text-yellow-700'
+  return 'bg-red-100 text-red-700'
+}
+
 function CallCard({ call }: { call: CallLog }) {
   const [expanded, setExpanded] = useState(false)
+  const phq2Score = call.intake_screenings?.[0]?.phq2_score
+  const gad2Score = call.intake_screenings?.[0]?.gad2_score
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -43,7 +57,25 @@ function CallCard({ call }: { call: CallLog }) {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-2">
-            <p className="font-semibold text-gray-900">{call.patient_phone}</p>
+            <div className="flex items-center gap-2">
+              <p className="font-semibold text-gray-900">{call.patient_phone}</p>
+              {call.crisis_detected && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                  <AlertCircle className="w-3 h-3" />
+                  Crisis
+                </span>
+              )}
+              {phq2Score !== undefined && (
+                <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${getScreeningBadgeColor(phq2Score)}`}>
+                  PHQ-2: {phq2Score}
+                </span>
+              )}
+              {gad2Score !== undefined && (
+                <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${getScreeningBadgeColor(gad2Score)}`}>
+                  GAD-2: {gad2Score}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-3 text-sm text-gray-400">
               <span className="flex items-center gap-1">
                 <Clock className="w-3.5 h-3.5" />
@@ -84,6 +116,7 @@ function CallCard({ call }: { call: CallLog }) {
 export default function CallsPage() {
   const [calls, setCalls] = useState<CallLog[]>([])
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<'all' | 'crisis'>('all')
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
 
@@ -104,7 +137,7 @@ export default function CallsPage() {
 
       let query = supabase
         .from('call_logs')
-        .select('id, patient_phone, duration_seconds, summary, transcript, created_at')
+        .select('id, patient_phone, duration_seconds, summary, transcript, created_at, crisis_detected, intake_screenings(phq2_score, gad2_score)')
         .order('created_at', { ascending: false })
         .limit(100)
 
@@ -120,16 +153,41 @@ export default function CallsPage() {
     fetchCalls()
   }, [supabase])
 
-  const filtered = calls.filter(c =>
-    c.patient_phone?.includes(search) ||
-    c.summary?.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = calls
+    .filter(c => filter === 'all' || (filter === 'crisis' && c.crisis_detected))
+    .filter(c =>
+      c.patient_phone?.includes(search) ||
+      c.summary?.toLowerCase().includes(search.toLowerCase())
+    )
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Call Logs</h1>
         <p className="text-gray-500 mt-1">Every call Ellie has handled — click any to expand the summary and transcript</p>
+      </div>
+
+      <div className="flex gap-2">
+        <button
+          onClick={() => setFilter('all')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            filter === 'all'
+              ? 'bg-teal-600 text-white'
+              : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          All Calls
+        </button>
+        <button
+          onClick={() => setFilter('crisis')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            filter === 'crisis'
+              ? 'bg-red-600 text-white'
+              : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+          }`}
+        >
+          Crisis Only
+        </button>
       </div>
 
       <div className="relative">
