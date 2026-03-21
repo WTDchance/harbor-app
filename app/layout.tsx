@@ -8,6 +8,12 @@ export const metadata: Metadata = {
   icons: {
     icon: '/favicon.ico',
   },
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Harbor',
+  },
 }
 
 export default function RootLayout({
@@ -19,8 +25,25 @@ export default function RootLayout({
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="Harbor" />
+        <meta name="theme-color" content="#0d9488" />
+        <link rel="manifest" href="/manifest.json" />
+        <link rel="icon" type="image/png" href="/favicon.ico" />
       </head>
-      <body className="bg-gray-50 font-sans antialiased">{children}</body>
+      <body className="bg-gray-50 font-sans antialiased">
+        {children}
+        <script>
+          {`
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.register('/sw.js').catch(function(error) {
+                console.log('Service Worker registration failed:', error)
+              })
+            }
+          `}
+        </script>
+      </body>
     </html>
   )
 }
