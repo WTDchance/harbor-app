@@ -1,4 +1,4 @@
-// AI System Prompts for TheraLink
+// AI System Prompts for Harbor
 // These prompts guide Vapi (voice) and Claude (SMS) behavior
 
 /**

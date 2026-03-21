@@ -228,7 +228,7 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
                   </li>
                   <li className="flex gap-3">
                     <span className="font-semibold text-teal-600 flex-shrink-0">3.</span>
-                    <span>Configure the number to route to TheraLink in your Twilio dashboard</span>
+                    <span>Configure the number to route to Harbor in your Twilio dashboard</span>
                   </li>
                   <li className="flex gap-3">
                     <span className="font-semibold text-teal-600 flex-shrink-0">4.</span>

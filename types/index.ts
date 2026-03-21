@@ -1,4 +1,4 @@
-// Type definitions for TheraLink
+// Type definitions for Harbor
 
 export interface Practice {
   id: string

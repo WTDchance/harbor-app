@@ -2,7 +2,7 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'TheraLink - AI Receptionist for Therapy Practices',
+  title: 'Harbor - AI Receptionist for Therapy Practices',
   description: '24/7 AI receptionist for managing calls, SMS, and appointments',
   viewport: 'width=device-width, initial-scale=1',
   icons: {
