@@ -1,24 +1,14 @@
-// Smart cancellation fill
-// When a patient cancels, text the #1 waitlist candidate and give them 10 minutes to claim.
-// If they don't respond, move on to the next person.
-// Telehealth-flexible patients get priority since those slots are easiest to move.
-// POST /api/cancellation/fill
-
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { sendSMS } from '@/lib/twilio'
-import { sendEmail, buildCancellationFillEmail } from '@/lib/email'
-
-const CLAIM_WINDOW_MINUTES = 10 // How long the top patient has to respond
+import twilio from 'twilio'
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
-    const { practiceId, appointmentId, cancelledPatientName, slotTime, therapistName, sessionType } = body
+    const { practice_id, slot_time, was_telehealth } = await request.json()
 
-    if (!practiceId || !slotTime) {
+    if (!practice_id || !slot_time) {
       return NextResponse.json(
-        { error: 'Missing required fields: practiceId, slotTime' },
+        { error: 'Missing required fields' },
         { status: 400 }
       )
     }
@@ -26,141 +16,98 @@ export async function POST(request: NextRequest) {
     // Get practice info
     const { data: practice } = await supabaseAdmin
       .from('practices')
-      .select('id, name, phone_number, notification_email, ai_name')
-      .eq('id', practiceId)
+      .select('name, phone_number')
+      .eq('id', practice_id)
       .single()
 
     if (!practice) {
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+      return NextResponse.json(
+        { error: 'Practice not found' },
+        { status: 404 }
+      )
     }
 
-    // Priority ordering:
-    // 1. Telehealth/flexible patients — easiest slot to fill (video session = no commute needed)
-    // 2. high_need priority
-    // 3. flexible priority
-    // 4. standard
-    // Within each tier: longest wait time first
-    //
-    // We fetch the top candidate — just ONE person gets the offer.
-    // If they don't claim within 10 minutes, a follow-up job can call this endpoint again
-    // (or a cron can handle expiry — see /api/cancellation/fill/expire).
+    // Build query — telehealth patients first if slot was telehealth
+    let query = supabaseAdmin
+      .from('waitlist')
+      .select('*')
+      .eq('practice_id', practice_id)
+      .eq('status', 'waiting')
 
-    // First, try telehealth-eligible patients
-    let candidate = null
-
-    if (sessionType === 'telehealth' || sessionType === 'video') {
-      // Cancelled slot was telehealth — prioritize patients who prefer telehealth
-      const { data: telehealthFirst } = await supabaseAdmin
-        .from('waitlist')
-        .select('id, patient_name, patient_phone, priority, session_type, created_at')
-        .eq('practice_id', practiceId)
-        .eq('status', 'waiting')
-        .eq('session_type', 'telehealth')
-        .order('priority', { ascending: false })
-        .order('created_at', { ascending: true })
-        .limit(1)
-
-      candidate = telehealthFirst?.[0] || null
+    if (was_telehealth) {
+      query = query.order('session_type', { ascending: false }) // telehealth sorts before in-person
     }
 
-    // Fall back to highest-priority waitlist patient regardless of session type
-    if (!candidate) {
-      const { data: topPatient } = await supabaseAdmin
-        .from('waitlist')
-        .select('id, patient_name, patient_phone, priority, session_type, created_at')
-        .eq('practice_id', practiceId)
-        .eq('status', 'waiting')
-        .order('priority', { ascending: false })
-        .order('created_at', { ascending: true })
-        .limit(1)
+    const { data: candidates } = await query
+      .order('priority', { ascending: false })
+      .order('created_at', { ascending: true })
+      .limit(1)
 
-      candidate = topPatient?.[0] || null
-    }
-
-    if (!candidate) {
-      console.log('No waitlist patients to contact for fill')
-      return NextResponse.json({ success: true, contacted: 0, message: 'No waitlist patients' })
-    }
-
-    const aiName = practice.ai_name || 'Ellie'
-    const practiceName = practice.name
-    const firstName = candidate.patient_name?.split(' ')[0] || 'there'
-    const expiresAt = new Date(Date.now() + CLAIM_WINDOW_MINUTES * 60 * 1000).toISOString()
-
-    const message =
-      `Hi ${firstName}, this is ${aiName} from ${practiceName}. ` +
-      `A spot just opened up for ${slotTime}${therapistName ? ` with ${therapistName}` : ''}. ` +
-      `Reply YES to claim it — you have ${CLAIM_WINDOW_MINUTES} minutes. ` +
-      `Reply WAITLIST to stay on the list for a future opening.`
-
-    let contacted = false
-
-    try {
-      await sendSMS(candidate.patient_phone, message)
-      contacted = true
-
-      // Mark as fill_offered with expiry timestamp
-      await supabaseAdmin
-        .from('waitlist')
-        .update({
-          status: 'fill_offered',
-          fill_offered_at: new Date().toISOString(),
-          offered_slot: slotTime,
-          offer_expires_at: expiresAt,
-        })
-        .eq('id', candidate.id)
-
-      console.log(`✓ Fill offer sent to ${candidate.patient_name} (expires ${expiresAt})`)
-    } catch (err) {
-      console.error(`Error texting ${candidate.patient_phone}:`, err)
-    }
-
-    // Log fill attempt
-    await supabaseAdmin
-      .from('fill_attempts')
-      .insert({
-        practice_id: practiceId,
-        appointment_id: appointmentId || null,
-        slot_time: slotTime,
-        patients_contacted: contacted ? [candidate.patient_phone] : [],
-        candidate_id: candidate.id,
-        candidate_name: candidate.patient_name,
-        offer_expires_at: expiresAt,
-        status: contacted ? 'pending' : 'failed',
-        created_at: new Date().toISOString(),
-      })
-
-    // Notify therapist
-    if (practice.notification_email) {
-      await sendEmail({
-        to: practice.notification_email,
-        subject: `${practiceName} — Cancellation: ${slotTime} slot offered to ${candidate.patient_name}`,
-        html: buildCancellationFillEmail({
-          practiceName,
-          cancelledPatient: cancelledPatientName || 'Patient',
-          slotTime,
-          contactedCount: contacted ? 1 : 0,
-        }),
+    if (!candidates || candidates.length === 0) {
+      return NextResponse.json({
+        message: 'No waitlist patients available',
       })
     }
 
-    return NextResponse.json({
-      success: true,
-      contacted: contacted ? 1 : 0,
-      candidate: {
-        name: candidate.patient_name,
-        phone: candidate.patient_phone,
-        priority: candidate.priority,
-      },
-      offer_expires_at: expiresAt,
-      message: `Offered slot to ${candidate.patient_name}. They have ${CLAIM_WINDOW_MINUTES} minutes to respond.`,
+    const patient = candidates[0]
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    const slotFormatted = new Date(slot_time).toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
     })
-  } catch (error) {
-    console.error('❌ Cancellation fill error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
 
-export async function GET() {
-  return NextResponse.json({ status: 'Cancellation fill endpoint active' })
+    // Update waitlist
+    const { error: updateError } = await supabaseAdmin
+      .from('waitlist')
+      .update({
+        status: 'fill_offered',
+        offer_expires_at: expiresAt,
+        offered_slot: slot_time,
+        fill_offered_at: new Date().toISOString(),
+      })
+      .eq('id', patient.id)
+
+    if (updateError) {
+      console.error('Error updating waitlist:', updateError)
+      return NextResponse.json(
+        { error: 'Failed to update waitlist' },
+        { status: 500 }
+      )
+    }
+
+    // Send Twilio SMS
+    if (
+      process.env.TWILIO_ACCOUNT_SID &&
+      process.env.TWILIO_AUTH_TOKEN &&
+      process.env.TWILIO_PHONE_NUMBER &&
+      patient.patient_phone
+    ) {
+      try {
+        const client = twilio(
+          process.env.TWILIO_ACCOUNT_SID,
+          process.env.TWILIO_AUTH_TOKEN
+        )
+        const sessionType = was_telehealth ? 'telehealth (video)' : 'in-person'
+        await client.messages.create({
+          to: patient.patient_phone,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          body: `Hi ${patient.patient_name}, a ${sessionType} appointment just opened at ${practice.name} on ${slotFormatted}. Reply YES to claim it — you have 10 minutes. Harbor AI`,
+        })
+        console.log(`✓ Fill offer SMS sent to ${patient.patient_phone}`)
+      } catch (smsErr) {
+        console.error('Error sending fill offer SMS:', smsErr)
+      }
+    }
+
+    return NextResponse.json({ success: true, patient })
+  } catch (error) {
+    console.error('Cancellation fill error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
 }
