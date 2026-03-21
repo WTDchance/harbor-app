@@ -28,6 +28,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const updatedData = {
       ...practice,
       ...body,
+      emotional_support_enabled: body.emotional_support_enabled ?? practice.emotional_support_enabled ?? true,
     }
 
     // Rebuild system prompt
