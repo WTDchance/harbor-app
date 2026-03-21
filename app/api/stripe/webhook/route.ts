@@ -77,12 +77,13 @@ export async function POST(request: NextRequest) {
 
 /**
  * Handle subscription created event
- * Update practice with subscription ID
+ * Update practice with subscription ID and active status
  */
 async function handleSubscriptionCreated(subscription: any) {
   try {
     const customerId = subscription.customer
     const subscriptionId = subscription.id
+    const status = subscription.status
 
     // Find practice by Stripe customer ID
     const { data: practice, error } = await supabaseAdmin
@@ -96,16 +97,17 @@ async function handleSubscriptionCreated(subscription: any) {
       return
     }
 
-    // Update practice with subscription ID
+    // Update practice with subscription ID and status
     await supabaseAdmin
       .from('practices')
       .update({
         stripe_subscription_id: subscriptionId,
+        subscription_status: status === 'trialing' ? 'trialing' : 'active',
         updated_at: new Date().toISOString(),
       })
       .eq('id', practice.id)
 
-    console.log(`✓ Subscription created for practice: ${practice.id}`)
+    console.log(`✓ Subscription created for practice: ${practice.id}, status: ${status}`)
   } catch (error) {
     console.error('Error in handleSubscriptionCreated:', error)
   }
@@ -128,10 +130,22 @@ async function handleSubscriptionUpdated(subscription: any) {
       .single()
 
     if (practice) {
-      console.log(`✓ Subscription updated: ${subscriptionId}, status: ${status}`)
+      // Map Stripe status to Harbor subscription status
+      let newStatus = 'active'
+      if (status === 'trialing') newStatus = 'trialing'
+      if (status === 'past_due') newStatus = 'past_due'
+      if (status === 'cancelled' || status === 'incomplete_expired') newStatus = 'cancelled'
 
-      // Could emit event or send notification here
-      // Example: if status === 'past_due', send alert email
+      // Update practice status
+      await supabaseAdmin
+        .from('practices')
+        .update({
+          subscription_status: newStatus,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', practice.id)
+
+      console.log(`✓ Subscription updated: ${subscriptionId}, status: ${status} -> ${newStatus}`)
     }
   } catch (error) {
     console.error('Error in handleSubscriptionUpdated:', error)
@@ -154,11 +168,16 @@ async function handleSubscriptionDeleted(subscription: any) {
       .single()
 
     if (practice) {
-      // Could update practice status to "cancelled"
-      // Or disable the practice
-      console.log(`⚠️ Subscription cancelled: ${subscriptionId}`)
+      // Update practice status to cancelled
+      await supabaseAdmin
+        .from('practices')
+        .update({
+          subscription_status: 'cancelled',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', practice.id)
 
-      // Could send notification email to practice admin here
+      console.log(`⚠️ Subscription cancelled: ${subscriptionId} for practice ${practice.id}`)
     }
   } catch (error) {
     console.error('Error in handleSubscriptionDeleted:', error)
@@ -182,9 +201,35 @@ async function handlePaymentSucceeded(invoice: any) {
  */
 async function handlePaymentFailed(invoice: any) {
   try {
-    console.log(`⚠️ Payment failed: ${invoice.id}`)
-    // Could send payment failure email, disable account, etc.
+    const customerId = invoice.customer
+    const subscriptionId = invoice.subscription
+
+    // Find practice by customer ID
+    const { data: practice } = await supabaseAdmin
+      .from('practices')
+      .select('id')
+      .eq('stripe_customer_id', customerId)
+      .single()
+
+    if (practice && subscriptionId) {
+      // Update subscription status to past_due
+      await supabaseAdmin
+        .from('practices')
+        .update({
+          subscription_status: 'past_due',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', practice.id)
+
+      console.log(`⚠️ Payment failed for invoice ${invoice.id}, marked subscription as past_due`)
+    }
   } catch (error) {
     console.error('Error in handlePaymentFailed:', error)
   }
+}
+
+export const config = {
+  api: {
+    bodyParser: false,
+  },
 }

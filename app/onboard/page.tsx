@@ -46,7 +46,26 @@ export default function OnboardPage() {
         body: JSON.stringify(form),
       })
       if (res.ok) {
-        setDone(true)
+        const provisionData = await res.json()
+
+        // Redirect to Stripe checkout for billing setup
+        const checkoutRes = await fetch('/api/billing/create-checkout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            practice_id: provisionData.practice.id,
+            email: form.notification_email,
+            practice_name: form.practice_name,
+          }),
+        })
+
+        if (checkoutRes.ok) {
+          const { url } = await checkoutRes.json()
+          window.location.href = url
+        } else {
+          // Fallback: show success message if checkout fails
+          setDone(true)
+        }
       } else {
         const err = await res.json()
         alert(`Error: ${err.error || 'Failed to provision'}`)
