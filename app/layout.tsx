@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Harbor - AI Receptionist for Therapy Practices',
-  description: '24/7 AI receptionist for managing calls, SMS, and appointments',
+  title: 'Harbor — AI Receptionist for Therapy Practices',
+  description: "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
     icon: '/favicon.ico',
