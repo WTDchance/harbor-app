@@ -46,3 +46,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
+
+export async function GET(request: NextRequest) {
+  try {
+    const searchParams = request.nextUrl.searchParams
+    const practice_id = searchParams.get('practice_id')
+
+    if (!practice_id) {
+      return NextResponse.json(
+        { error: 'Missing practice_id parameter' },
+        { status: 400 }
+      )
+    }
+
+    // Fetch reminders for practice, ordered by creation date
+    const { data: reminders, error } = await supabaseAdmin
+      .from('appointment_reminders')
+      .select('*')
+      .eq('practice_id', practice_id)
+      .order('created_at', { ascending: false })
+      .limit(50)
+
+    if (error) {
+      console.error('Error fetching reminders:', error)
+      return NextResponse.json(
+        { error: 'Failed to fetch reminders' },
+        { status: 500 }
+      )
+    }
+
+    return NextResponse.json({
+      reminders: reminders || [],
+    })
+  } catch (error) {
+    console.error('Error in GET /api/reminders:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
