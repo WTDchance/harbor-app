@@ -129,6 +129,7 @@ export async function POST(request: NextRequest) {
         hours: body.hours || null,
         location: body.location || null,
         telehealth: body.telehealth ?? true,
+        emotional_support_enabled: true,
         insurance_accepted: body.insurance_accepted || [],
         system_prompt: systemPrompt,
         created_at: new Date().toISOString(),
