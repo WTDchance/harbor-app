@@ -1,6 +1,6 @@
 'use client'
-export const dynamic = 'force-dynamic'
 
+import { Suspense } from 'react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { CreditCard, AlertCircle, CheckCircle } from 'lucide-react'
@@ -17,7 +17,7 @@ interface PracticeWithBilling {
   billing_email: string | null
 }
 
-export default function BillingPage() {
+function BillingPageContent() {
   const [practice, setPractice] = useState<PracticeWithBilling | null>(null)
   const [loading, setLoading] = useState(true)
   const [redirecting, setRedirecting] = useState(false)
@@ -32,13 +32,11 @@ export default function BillingPage() {
         setLoading(false)
         return
       }
-
       const { data: practiceData } = await supabase
         .from('practices')
         .select('*')
         .eq('notification_email', user.email)
         .single()
-
       if (practiceData) {
         setPractice(practiceData)
       }
@@ -50,14 +48,12 @@ export default function BillingPage() {
   const handleManageBilling = async () => {
     if (!practice?.notification_email) return
     setRedirecting(true)
-
     try {
       const res = await fetch('/api/billing/portal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: practice.notification_email }),
       })
-
       if (res.ok) {
         const { url } = await res.json()
         window.location.href = url
@@ -74,31 +70,21 @@ export default function BillingPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active':
-        return 'bg-green-50 border-green-200 text-green-700'
-      case 'trialing':
-        return 'bg-blue-50 border-blue-200 text-blue-700'
-      case 'past_due':
-        return 'bg-red-50 border-red-200 text-red-700'
-      case 'cancelled':
-        return 'bg-gray-50 border-gray-200 text-gray-700'
-      default:
-        return 'bg-gray-50 border-gray-200 text-gray-700'
+      case 'active': return 'bg-green-50 border-green-200 text-green-700'
+      case 'trialing': return 'bg-blue-50 border-blue-200 text-blue-700'
+      case 'past_due': return 'bg-red-50 border-red-200 text-red-700'
+      case 'cancelled': return 'bg-gray-50 border-gray-200 text-gray-700'
+      default: return 'bg-gray-50 border-gray-200 text-gray-700'
     }
   }
 
   const getStatusBadge = (status: string) => {
     switch (status) {
-      case 'active':
-        return { label: 'Active', icon: CheckCircle, color: 'text-green-600' }
-      case 'trialing':
-        return { label: 'Trial', icon: CheckCircle, color: 'text-blue-600' }
-      case 'past_due':
-        return { label: 'Payment Failed', icon: AlertCircle, color: 'text-red-600' }
-      case 'cancelled':
-        return { label: 'Cancelled', icon: AlertCircle, color: 'text-gray-600' }
-      default:
-        return { label: 'Unknown', icon: AlertCircle, color: 'text-gray-600' }
+      case 'active': return { label: 'Active', icon: CheckCircle, color: 'text-green-600' }
+      case 'trialing': return { label: 'Trial', icon: CheckCircle, color: 'text-blue-600' }
+      case 'past_due': return { label: 'Payment Failed', icon: AlertCircle, color: 'text-red-600' }
+      case 'cancelled': return { label: 'Cancelled', icon: AlertCircle, color: 'text-gray-600' }
+      default: return { label: 'Unknown', icon: AlertCircle, color: 'text-gray-600' }
     }
   }
 
@@ -142,7 +128,6 @@ export default function BillingPage() {
         <p className="text-gray-500 mt-1">Manage your Harbor subscription</p>
       </div>
 
-      {/* Success banner */}
       {success && (
         <div className="mb-6 bg-green-50 border border-green-200 rounded-xl p-4 flex items-start gap-3">
           <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
@@ -153,7 +138,6 @@ export default function BillingPage() {
         </div>
       )}
 
-      {/* Current plan card */}
       <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
         <div className="flex items-start justify-between mb-6">
           <div>
@@ -167,13 +151,11 @@ export default function BillingPage() {
         </div>
 
         <div className="space-y-4">
-          {/* Price */}
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-bold text-gray-900">$499</span>
             <span className="text-gray-500">/month</span>
           </div>
 
-          {/* Trial info */}
           {practice.subscription_status === 'trialing' && trialEndsAt && daysUntilTrialEnds !== null && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
               <p className="text-sm text-blue-900">
@@ -184,7 +166,6 @@ export default function BillingPage() {
             </div>
           )}
 
-          {/* Past due alert */}
           {practice.subscription_status === 'past_due' && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <p className="text-sm font-medium text-red-900">Payment failed</p>
@@ -192,7 +173,6 @@ export default function BillingPage() {
             </div>
           )}
 
-          {/* Cancelled info */}
           {practice.subscription_status === 'cancelled' && (
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
               <p className="text-sm font-medium text-gray-900">Subscription cancelled</p>
@@ -200,7 +180,6 @@ export default function BillingPage() {
             </div>
           )}
 
-          {/* Billing email */}
           <div className="pt-2">
             <p className="text-xs text-gray-500">Billing email</p>
             <p className="text-sm font-medium text-gray-900">{practice.billing_email || practice.notification_email}</p>
@@ -208,7 +187,6 @@ export default function BillingPage() {
         </div>
       </div>
 
-      {/* Manage billing button */}
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <h3 className="font-semibold text-gray-900 mb-4">Manage Billing</h3>
         <p className="text-sm text-gray-500 mb-4">Update your payment method, billing information, or cancel your subscription.</p>
@@ -222,7 +200,6 @@ export default function BillingPage() {
         </button>
       </div>
 
-      {/* Resubscribe button for cancelled */}
       {practice.subscription_status === 'cancelled' && (
         <div className="mt-6 bg-teal-50 border border-teal-200 rounded-xl p-6">
           <h3 className="font-semibold text-gray-900 mb-2">Reactivate your subscription?</h3>
@@ -239,3 +216,17 @@ export default function BillingPage() {
     </div>
   )
 }
+
+export default function BillingPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-64">
+          <div className="w-6 h-6 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+        </div>
+      }
+    >
+      <BillingPageContent />
+    </Suspense>
+  )
+    }
