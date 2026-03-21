@@ -8,6 +8,24 @@ import { generateCallSummary } from '@/lib/claude'
 import { getCallSummaryPrompt } from '@/lib/ai-prompts'
 import { sendEmail, buildCallSummaryEmail } from '@/lib/email'
 import type { VapiWebhookPayload } from '@/types'
+import twilio from 'twilio'
+
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID
+const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN
+const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER
+
+// Crisis keywords to detect in transcripts
+const CRISIS_KEYWORDS = [
+  'suicide',
+  'kill myself',
+  'end my life',
+  'hurt myself',
+  'self-harm',
+  "don't want to be here",
+  'overdose',
+  'crisis',
+  'not worth living',
+]
 
 /**
  * POST /api/vapi/webhook
@@ -114,6 +132,18 @@ async function handleCallEnded(
     const durationSeconds = call.durationSeconds || 0
     const phoneNumber = call.phoneNumber || 'Unknown'
 
+    // Check for crisis keywords in transcript
+    let crisisDetected = false
+    const foundKeywords: string[] = []
+    const lowerTranscript = transcript.toLowerCase()
+
+    for (const keyword of CRISIS_KEYWORDS) {
+      if (lowerTranscript.includes(keyword)) {
+        crisisDetected = true
+        foundKeywords.push(keyword)
+      }
+    }
+
     // Generate summary using Claude
     let summary = null
     if (transcript) {
@@ -129,7 +159,7 @@ async function handleCallEnded(
     }
 
     // Log call to database using service role
-    const { data, error } = await supabaseAdmin
+    const { data: callLogData, error: callLogError } = await supabaseAdmin
       .from('call_logs')
       .insert({
         practice_id: practiceId,
@@ -138,14 +168,65 @@ async function handleCallEnded(
         transcript: transcript || null,
         summary: summary,
         vapi_call_id: callId,
+        crisis_detected: crisisDetected,
         created_at: new Date().toISOString(),
       })
       .select()
+      .single()
 
-    if (error) {
-      console.error('Error inserting call log:', error)
+    if (callLogError) {
+      console.error('Error inserting call log:', callLogError)
     } else {
       console.log(`✓ Call logged: ${callId}`)
+    }
+
+    // If crisis detected, insert crisis alert and send SMS
+    if (crisisDetected && callLogData) {
+      console.warn(`🚨 CRISIS DETECTED in call ${callId}`)
+
+      // Insert crisis alert record
+      const { error: crisisError } = await supabaseAdmin
+        .from('crisis_alerts')
+        .insert({
+          practice_id: practiceId,
+          call_log_id: callLogData.id,
+          patient_phone: phoneNumber,
+          keywords_found: foundKeywords,
+        })
+
+      if (crisisError) {
+        console.error('Error inserting crisis alert:', crisisError)
+      }
+
+      // Send SMS alert to therapist if phone is configured
+      try {
+        const { data: practice } = await supabaseAdmin
+          .from('practices')
+          .select('name, therapist_phone')
+          .eq('id', practiceId)
+          .single()
+
+        if (practice?.therapist_phone && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER) {
+          const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+          const message = `🚨 HARBOR CRISIS ALERT\nA caller to ${practice.name} may be in crisis.\nCaller: ${phoneNumber}\nPlease review immediately: https://harbor-app-production.up.railway.app/dashboard/calls\nIf unreachable, call 988 for guidance.`
+
+          await twilioClient.messages.create({
+            to: practice.therapist_phone,
+            from: TWILIO_PHONE_NUMBER,
+            body: message,
+          })
+
+          console.log(`✓ Crisis SMS sent to ${practice.therapist_phone}`)
+
+          // Mark SMS as sent in crisis alert
+          await supabaseAdmin
+            .from('crisis_alerts')
+            .update({ sms_sent: true })
+            .eq('call_log_id', callLogData.id)
+        }
+      } catch (smsErr) {
+        console.error('Error sending crisis SMS:', smsErr)
+      }
     }
 
     // Send post-call email summary to the practice
@@ -165,9 +246,14 @@ async function handleCallEnded(
           minute: '2-digit',
         })
 
+        let emailSubject = `${practice.name} — New Call from ${phoneNumber}`
+        if (crisisDetected) {
+          emailSubject = `🚨 ${emailSubject} (CRISIS FLAG)`
+        }
+
         await sendEmail({
           to: practice.notification_email,
-          subject: `${practice.name} — New Call from ${phoneNumber}`,
+          subject: emailSubject,
           html: buildCallSummaryEmail({
             practiceName: practice.name,
             therapistName: practice.therapist_name || practice.ai_name || 'Ellie',
@@ -176,6 +262,7 @@ async function handleCallEnded(
             summary: summary || 'No summary available.',
             transcript,
             callTime,
+            crisisDetected,
           }),
         })
         console.log(`✓ Post-call email sent to ${practice.notification_email}`)
@@ -191,6 +278,7 @@ async function handleCallEnded(
 /**
  * Handle function-call event
  * Vapi can call functions during a call for things like:
+ * - Submitting intake screening (PHQ-2, GAD-2)
  * - Booking appointments
  * - Getting practice information
  * - Updating patient records
@@ -206,6 +294,36 @@ async function handleFunctionCall(
 
   try {
     console.log(`⚙️ Function call: ${name}`, args)
+
+    // Handle intake screening submission
+    if (name === 'submitIntakeScreening') {
+      const { phq2_score, gad2_score, phq2_flag, gad2_flag, patient_phone } = args
+
+      // Get the call log to link to this screening
+      const { data: callLog } = await supabaseAdmin
+        .from('call_logs')
+        .select('id')
+        .eq('vapi_call_id', callId)
+        .single()
+
+      const { error } = await supabaseAdmin
+        .from('intake_screenings')
+        .insert({
+          practice_id: practiceId,
+          call_log_id: callLog?.id || null,
+          patient_phone: patient_phone || 'Unknown',
+          phq2_score: phq2_score ?? 0,
+          gad2_score: gad2_score ?? 0,
+          phq2_flag: phq2_flag ?? false,
+          gad2_flag: gad2_flag ?? false,
+        })
+
+      if (error) {
+        console.error('Error submitting intake screening:', error)
+      } else {
+        console.log(`✓ Intake screening submitted for ${patient_phone}`)
+      }
+    }
 
     // Example: booking an appointment
     if (name === 'book_appointment') {
