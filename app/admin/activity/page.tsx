@@ -16,6 +16,17 @@ interface ActivityLog {
   }
 }
 
+interface PatientArrival {
+  id: string
+  patient_name: string | null
+  patient_phone: string
+  arrived_at: string
+  therapist_notified: boolean
+  practices?: {
+    name: string
+  }
+}
+
 function formatDuration(seconds: number) {
   if (!seconds) return '0:00'
   const m = Math.floor(seconds / 60)
@@ -55,6 +66,7 @@ function getDateRange(range: string): { start: Date; end: Date } {
 
 export default function AdminActivityPage() {
   const [logs, setLogs] = useState<ActivityLog[]>([])
+  const [arrivals, setArrivals] = useState<PatientArrival[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'crisis' | '24h' | '7d'>('all')
   const supabase = createClient()
@@ -82,6 +94,19 @@ export default function AdminActivityPage() {
 
     fetchLogs()
   }, [filter, supabase])
+
+  useEffect(() => {
+    const fetchArrivals = async () => {
+      const { data } = await supabase
+        .from('patient_arrivals')
+        .select('id, patient_name, patient_phone, arrived_at, therapist_notified, practices(name)')
+        .order('arrived_at', { ascending: false })
+        .limit(20)
+      setArrivals(data || [])
+    }
+
+    fetchArrivals()
+  }, [supabase])
 
   const crisisCount = logs.filter(l => l.crisis_detected).length
   const today = logs.filter(l => {
@@ -133,6 +158,49 @@ export default function AdminActivityPage() {
             {label}
           </button>
         ))}
+      </div>
+
+      {/* Recent Arrivals */}
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="px-6 py-4 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-900">Recent Arrivals</h2>
+        </div>
+        {arrivals.length === 0 ? (
+          <div className="p-12 text-center">
+            <p className="text-gray-500 text-sm">No patient arrivals recorded yet</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="px-6 py-3 text-left font-semibold text-gray-700">Practice</th>
+                  <th className="px-6 py-3 text-left font-semibold text-gray-700">Patient</th>
+                  <th className="px-6 py-3 text-left font-semibold text-gray-700">Arrived</th>
+                  <th className="px-6 py-3 text-left font-semibold text-gray-700">Therapist Notified</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {arrivals.map(arrival => (
+                  <tr key={arrival.id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 font-medium text-gray-900">{(arrival.practices as any)?.name || '-'}</td>
+                    <td className="px-6 py-4 text-gray-600">{arrival.patient_name || arrival.patient_phone}</td>
+                    <td className="px-6 py-4 text-gray-600">{timeAgo(arrival.arrived_at)}</td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${
+                        arrival.therapist_notified
+                          ? 'bg-green-100 text-green-700'
+                          : 'bg-yellow-100 text-yellow-700'
+                      }`}>
+                        {arrival.therapist_notified ? '✓ Yes' : 'Pending'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       {/* Table */}

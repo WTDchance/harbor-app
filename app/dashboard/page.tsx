@@ -13,6 +13,14 @@ interface RecentCall {
   created_at: string
 }
 
+interface PatientArrival {
+  id: string
+  patient_name: string | null
+  patient_phone: string
+  arrived_at: string
+  therapist_notified: boolean
+}
+
 function formatDuration(s: number) {
   if (!s) return '0:00'
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
@@ -31,6 +39,7 @@ export default function DashboardPage() {
   const [practiceName, setPracticeName] = useState('')
   const [practice, setPractice] = useState<any>(null)
   const [recentCalls, setRecentCalls] = useState<RecentCall[]>([])
+  const [arrivals, setArrivals] = useState<PatientArrival[]>([])
   const [stats, setStats] = useState({ today: 0, avgDuration: 0, waitlist: 0, total: 0 })
   const [loading, setLoading] = useState(true)
   const supabase = createClient()
@@ -54,7 +63,7 @@ export default function DashboardPage() {
       const todayStart = new Date()
       todayStart.setHours(0, 0, 0, 0)
 
-      const [callsRes, todayRes, waitlistRes] = await Promise.all([
+      const [callsRes, todayRes, waitlistRes, arrivalsRes] = await Promise.all([
         supabase
           .from('call_logs')
           .select('id, patient_phone, duration_seconds, summary, created_at')
@@ -71,6 +80,12 @@ export default function DashboardPage() {
           .select('id', { count: 'exact' })
           .eq('practice_id', practice.id)
           .eq('status', 'waiting'),
+        supabase
+          .from('patient_arrivals')
+          .select('id, patient_name, patient_phone, arrived_at, therapist_notified')
+          .eq('practice_id', practice.id)
+          .gte('arrived_at', todayStart.toISOString())
+          .order('arrived_at', { ascending: false }),
       ])
 
       const todayCalls = todayRes.data || []
@@ -79,6 +94,7 @@ export default function DashboardPage() {
         : 0
 
       setRecentCalls(callsRes.data || [])
+      setArrivals(arrivalsRes.data || [])
       setStats({
         today: todayRes.count || 0,
         avgDuration: avgDur,
@@ -150,8 +166,30 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* Today's Arrivals */}
+      <div className="bg-white rounded-xl border border-gray-200 p-5">
+        <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
+          <span className="text-lg">🏥</span> Today's Arrivals
+        </h3>
+        {arrivals.length === 0 ? (
+          <p className="text-sm text-gray-400">No arrivals yet today</p>
+        ) : (
+          <div className="space-y-2">
+            {arrivals.map(a => (
+              <div key={a.id} className="flex items-center justify-between text-sm">
+                <span className="font-medium text-gray-700">{a.patient_name || a.patient_phone}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-400">{new Date(a.arrived_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</span>
+                  <span className={`w-2 h-2 rounded-full ${a.therapist_notified ? 'bg-green-500' : 'bg-yellow-400'}`} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Recent calls */}
-      <div className="bg-white rounded-xl border border-gray-200">
+      <div className="bg-white rounded-xl border border-gray-200 mt-8">
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <h2 className="font-semibold text-gray-900">Recent Calls</h2>
           <Link href="/dashboard/calls" className="text-sm text-teal-600 hover:underline">
