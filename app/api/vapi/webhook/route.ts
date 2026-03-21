@@ -6,6 +6,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { generateCallSummary } from '@/lib/claude'
 import { getCallSummaryPrompt } from '@/lib/ai-prompts'
+import { sendEmail, buildCallSummaryEmail } from '@/lib/email'
 import type { VapiWebhookPayload } from '@/types'
 
 /**
@@ -145,6 +146,42 @@ async function handleCallEnded(
       console.error('Error inserting call log:', error)
     } else {
       console.log(`✓ Call logged: ${callId}`)
+    }
+
+    // Send post-call email summary to the practice
+    try {
+      const { data: practice } = await supabaseAdmin
+        .from('practices')
+        .select('name, notification_email, ai_name, therapist_name')
+        .eq('id', practiceId)
+        .single()
+
+      if (practice?.notification_email) {
+        const callTime = new Date().toLocaleString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: '2-digit',
+        })
+
+        await sendEmail({
+          to: practice.notification_email,
+          subject: `${practice.name} — New Call from ${phoneNumber}`,
+          html: buildCallSummaryEmail({
+            practiceName: practice.name,
+            therapistName: practice.therapist_name || practice.ai_name || 'Ellie',
+            callerPhone: phoneNumber,
+            duration: durationSeconds,
+            summary: summary || 'No summary available.',
+            transcript,
+            callTime,
+          }),
+        })
+        console.log(`✓ Post-call email sent to ${practice.notification_email}`)
+      }
+    } catch (emailErr) {
+      console.error('Error sending post-call email:', emailErr)
     }
   } catch (error) {
     console.error('Error in handleCallEnded:', error)
