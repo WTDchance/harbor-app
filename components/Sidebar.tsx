@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle } from 'lucide-react'
+import { Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle, CreditCard, BarChart3, Bell, Plug } from 'lucide-react'
 import clsx from 'clsx'
 import { createClient } from '@/lib/supabase-browser'
 
@@ -49,6 +49,11 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
     { href: '/dashboard/crisis', label: 'Crisis Alerts', icon: AlertTriangle, badge: crisisCount > 0 ? crisisCount : null },
     { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
     { href: '/dashboard/waitlist', label: 'Waitlist', icon: Users },
+    { href: '/dashboard/analytics', label: 'Analytics', icon: BarChart3 },
+    { href: '/dashboard/reminders', label: 'Reminders', icon: Bell },
+    { href: '/dashboard/team', label: 'Team', icon: Users },
+    { href: '/dashboard/billing', label: 'Billing', icon: CreditCard },
+    { href: '/dashboard/integrations', label: 'Integrations', icon: Plug },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   ]
 

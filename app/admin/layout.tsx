@@ -4,10 +4,11 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import clsx from 'clsx'
-import { LayoutDashboard, Users, PlusCircle, LogOut, Activity } from 'lucide-react'
+import { LayoutDashboard, Users, PlusCircle, LogOut, Activity, BarChart3 } from 'lucide-react'
 
 const navItems = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
+  { href: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/admin/practices', label: 'All Practices', icon: Users },
   { href: '/admin/provision', label: 'Add Therapist', icon: PlusCircle },
   { href: '/admin/activity', label: 'Activity Feed', icon: Activity },
