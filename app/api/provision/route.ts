@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { buildSystemPrompt } from '@/lib/systemPrompt'
 
 const VAPI_API_KEY = process.env.VAPI_API_KEY
 const VAPI_BASE_URL = 'https://api.vapi.ai'
@@ -17,6 +18,7 @@ interface ProvisionRequest {
   practice_name: string
   notification_email: string
   phone_number?: string // Existing Twilio number (optional)
+  therapist_phone?: string // Phone number for crisis alerts
 
   // Ellie persona customization
   ai_name?: string         // Default: "Ellie"
@@ -26,68 +28,6 @@ interface ProvisionRequest {
   telehealth?: boolean
   insurance_accepted?: string[]
   system_prompt_notes?: string // Any extra instructions for this therapist's Ellie
-}
-
-/**
- * Build a base system prompt for a new therapist's Ellie
- */
-function buildSystemPrompt(data: ProvisionRequest): string {
-  const aiName = data.ai_name || 'Ellie'
-  const hours = data.hours || 'during business hours'
-  const specialties = data.specialties?.join(', ') || 'therapy and mental health support'
-  const insurance = data.insurance_accepted?.length
-    ? data.insurance_accepted.join(', ')
-    : 'please call to verify insurance'
-  const telehealth = data.telehealth ? 'Both telehealth (video) and in-person sessions are available.' : 'In-person sessions only.'
-
-  return `You are ${aiName}, the AI receptionist for ${data.practice_name}, a therapy practice run by ${data.therapist_name}.
-
-Your role is to warmly greet callers, answer questions about the practice, and help schedule or reschedule appointments.
-
-## About the Practice
-- Therapist: ${data.therapist_name}
-- Practice: ${data.practice_name}
-- Specialties: ${specialties}
-- Hours: ${hours}
-- Location: ${data.location || 'Please call for address'}
-- ${telehealth}
-- Insurance accepted: ${insurance}
-
-## Your Personality
-You are warm, calm, and professional. You speak with empathy and make callers feel immediately at ease. You are not a crisis counselor — if someone is in crisis, you provide the 988 Suicide & Crisis Lifeline number and encourage them to call 911 if in immediate danger.
-
-## What You Can Do
-- Answer questions about the practice, therapist, and services
-- Help callers request appointments (collect their name, phone, insurance, preferred times, and reason for seeking therapy)
-- Take messages for the therapist
-- Handle cancellation and reschedule requests
-- Add callers to the waitlist if ${data.therapist_name} is not currently accepting new clients
-
-## What You Cannot Do
-- Access the therapist's live calendar
-- Provide therapy or clinical advice
-- Prescribe medication or make clinical assessments
-
-## Appointment Intake
-When someone wants to schedule an appointment, collect:
-1. Full name
-2. Phone number
-3. Insurance type (or self-pay)
-4. Telehealth or in-person preference
-5. Brief reason for seeking therapy (optional, for intake purposes)
-6. Preferred days/times
-
-Then say: "I've noted your information and ${data.therapist_name}'s team will follow up within one business day to confirm your appointment."
-
-## Waitlist
-If the practice is full, offer to add them to the waitlist. Collect the same intake information and note their priority if they express urgency.
-
-## After Hours
-If called outside of ${hours}, let callers know the practice is closed and you'll pass along their message. Still collect their name and phone number for a callback.
-
-${data.system_prompt_notes ? `## Additional Notes\n${data.system_prompt_notes}` : ''}
-
-Remember: You represent ${data.therapist_name} and ${data.practice_name}. Always be professional, warm, and helpful.`
 }
 
 export async function POST(request: NextRequest) {
@@ -141,6 +81,26 @@ export async function POST(request: NextRequest) {
         maxDurationSeconds: 600,
         backgroundSound: 'off',
         backchannelingEnabled: false,
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'submitIntakeScreening',
+              description: 'Submit intake screening scores after collecting PHQ-2 and GAD-2 responses',
+              parameters: {
+                type: 'object',
+                properties: {
+                  phq2_score: { type: 'number', description: 'PHQ-2 score (depression), 0-6' },
+                  gad2_score: { type: 'number', description: 'GAD-2 score (anxiety), 0-6' },
+                  phq2_flag: { type: 'boolean', description: 'Whether PHQ-2 score >= 3 (elevated depression)' },
+                  gad2_flag: { type: 'boolean', description: 'Whether GAD-2 score >= 3 (elevated anxiety)' },
+                  patient_phone: { type: 'string', description: 'Patient phone number for record linking' },
+                },
+                required: ['phq2_score', 'gad2_score'],
+              },
+            },
+          },
+        ],
       }),
     })
 
@@ -162,6 +122,7 @@ export async function POST(request: NextRequest) {
         therapist_name,
         notification_email,
         phone_number: phone_number || null,
+        therapist_phone: body.therapist_phone || null,
         ai_name: elliesName,
         vapi_assistant_id: vapiAssistantId,
         specialties: body.specialties || [],
