@@ -3,10 +3,9 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { generateSMSResponse, generateSMSResponse as claudeResponse } from '@/lib/claude'
-import { getSmsReceptionistPrompt, buildSmsContextPrompt } from '@/lib/ai-prompts'
+import { generateSMSResponse as claudeGenerateSMS, detectCrisisIndicators } from '@/lib/claude'
+import { getSmsReceptionistPrompt } from '@/lib/ai-prompts'
 import { generateSMSResponse as generateTwilioResponse, extractPhoneFromTwilioPayload } from '@/lib/twilio'
-import { detectCrisisIndicators } from '@/lib/claude'
 import type { SMSMessage } from '@/types'
 
 /**
@@ -103,7 +102,7 @@ export async function POST(request: NextRequest) {
 
     let aiResponse: string
     try {
-      aiResponse = await claudeResponse(body, systemPrompt, conversationHistory)
+      aiResponse = await claudeGenerateSMS(body, systemPrompt, conversationHistory)
     } catch (error) {
       console.error('Error generating response:', error)
       aiResponse = `Thanks for your message! Our team will get back to you soon.`
