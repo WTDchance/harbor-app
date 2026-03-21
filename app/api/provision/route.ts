@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
-const VAPI_API_KEY = process.env.VAPI_API_KEY || 'VAPI_API_KEY_REMOVED'
+const VAPI_API_KEY = process.env.VAPI_API_KEY
 const VAPI_BASE_URL = 'https://api.vapi.ai'
 
 // ElevenLabs Bella voice — default for all Harbor assistants
