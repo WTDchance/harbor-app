@@ -2,76 +2,69 @@
 
 import { useState, useEffect } from 'react'
 import { MessageSquare } from 'lucide-react'
-import { MessageThread } from '@/components/MessageThread'
-import type { SMSConversation } from '@/types'
+import { createClient } from '@/lib/supabase-browser'
+
+interface Message {
+  direction: 'inbound' | 'outbound'
+  content: string
+  timestamp: string
+  message_sid?: string
+}
+
+interface Conversation {
+  id: string
+  practice_id: string
+  patient_phone: string
+  patient_name?: string
+  messages_json: Message[]
+  last_message_at: string
+}
 
 export default function MessagesPage() {
-  const [conversations, setConversations] = useState<SMSConversation[]>([])
+  const [conversations, setConversations] = useState<Conversation[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Fetch SMS conversations
     const fetchConversations = async () => {
       try {
-        // Mock data for demo
-        setConversations([
-          {
-            id: 'conv-001',
-            practice_id: 'practice-001',
-            patient_phone: '+15551112222',
-            messages_json: [
-              {
-                direction: 'outbound',
-                content:
-                  'Hi Jessica! This is Sam from Hope and Harmony. Just confirming your appointment tomorrow at 2 PM. Reply YES to confirm or call us at 555-1234567.',
-                timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-              },
-              {
-                direction: 'inbound',
-                content: 'YES, confirmed! See you tomorrow',
-                timestamp: new Date(Date.now() - 1.5 * 60 * 60 * 1000).toISOString(),
-              },
-              {
-                direction: 'outbound',
-                content:
-                  "Perfect! We'll see you tomorrow at 2 PM. Thank you for choosing Hope and Harmony.",
-                timestamp: new Date(Date.now() - 1.4 * 60 * 60 * 1000).toISOString(),
-              },
-            ],
-            last_message_at: new Date(Date.now() - 1.4 * 60 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-          },
-          {
-            id: 'conv-002',
-            practice_id: 'practice-001',
-            patient_phone: '+15551113333',
-            messages_json: [
-              {
-                direction: 'inbound',
-                content: 'Can I schedule an appointment for next week?',
-                timestamp: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-              },
-              {
-                direction: 'outbound',
-                content:
-                  'Of course! I have availability Monday at 10am, Tuesday at 2pm, or Thursday at 4pm. Which works best for you?',
-                timestamp: new Date(Date.now() - 2.9 * 60 * 60 * 1000).toISOString(),
-              },
-              {
-                direction: 'inbound',
-                content: 'Tuesday at 2pm is perfect',
-                timestamp: new Date(Date.now() - 2.5 * 60 * 60 * 1000).toISOString(),
-              },
-            ],
-            last_message_at: new Date(Date.now() - 2.5 * 60 * 60 * 1000).toISOString(),
-            created_at: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-          },
-        ])
+        const supabase = createClient()
 
-        setSelectedId('conv-001')
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) {
+          setLoading(false)
+          return
+        }
+
+        const { data: practice } = await supabase
+          .from('practices')
+          .select('id')
+          .eq('notification_email', user.email)
+          .single()
+
+        if (!practice) {
+          setLoading(false)
+          return
+        }
+
+        const { data, error } = await supabase
+          .from('sms_conversations')
+          .select('*')
+          .eq('practice_id', practice.id)
+          .order('last_message_at', { ascending: false })
+
+        if (error) {
+          console.error('Error fetching conversations:', error)
+          setConversations([])
+        } else {
+          setConversations(data || [])
+          if (data && data.length > 0) {
+            setSelectedId(data[0].id)
+          }
+        }
       } catch (error) {
         console.error('Error fetching conversations:', error)
+        setConversations([])
       } finally {
         setLoading(false)
       }
@@ -84,54 +77,87 @@ export default function MessagesPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Messages</h1>
         <p className="text-gray-600 mt-2">SMS conversations with patients</p>
       </div>
 
       {loading ? (
-        <div className="text-center py-8">
-          <p className="text-gray-500">Loading messages...</p>
+        <div className="flex items-center justify-center h-64">
+          <div className="w-6 h-6 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Conversation list */}
           <div className="lg:col-span-1">
             <div className="bg-white rounded-lg border border-gray-200 divide-y overflow-hidden">
               {conversations.length === 0 ? (
                 <div className="p-8 text-center">
                   <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-                  <p className="text-gray-600">No conversations yet</p>
+                  <p className="text-gray-600 font-medium">No messages yet</p>
+                  <p className="text-sm text-gray-500 mt-1">Patient SMS conversations will appear here</p>
                 </div>
               ) : (
-                conversations.map((conversation) => (
-                  <button
-                    key={conversation.id}
-                    onClick={() => setSelectedId(conversation.id)}
-                    className={`w-full p-4 text-left hover:bg-gray-50 transition-colors ${
-                      selectedId === conversation.id ? 'bg-teal-50 border-l-4 border-teal-600' : ''
-                    }`}
-                  >
-                    <p className="font-mono text-sm font-semibold text-gray-900">
-                      {conversation.patient_phone}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(conversation.last_message_at).toLocaleDateString()}
-                    </p>
-                    <p className="text-xs text-gray-600 mt-1 line-clamp-1">
-                      {conversation.messages_json[conversation.messages_json.length - 1]?.content}
-                    </p>
-                  </button>
-                ))
+                conversations.map((conversation) => {
+                  const lastMsg = conversation.messages_json?.[conversation.messages_json.length - 1]
+                  return (
+                    <button
+                      key={conversation.id}
+                      onClick={() => setSelectedId(conversation.id)}
+                      className={`w-full p-4 text-left hover:bg-gray-50 transition-colors ${
+                        selectedId === conversation.id ? 'bg-teal-50 border-l-4 border-teal-600' : ''
+                      }`}
+                    >
+                      <p className="font-semibold text-gray-900 text-sm">
+                        {conversation.patient_name || conversation.patient_phone}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        {new Date(conversation.last_message_at).toLocaleDateString('en-US', {
+                          month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'
+                        })}
+                      </p>
+                      {lastMsg && (
+                        <p className="text-xs text-gray-600 mt-1 line-clamp-1">
+                          {lastMsg.direction === 'outbound' ? '→ ' : ''}{lastMsg.content}
+                        </p>
+                      )}
+                    </button>
+                  )
+                })
               )}
             </div>
           </div>
 
-          {/* Conversation detail */}
           <div className="lg:col-span-2">
             {selectedConversation ? (
-              <MessageThread conversation={selectedConversation} />
+              <div className="bg-white rounded-lg border border-gray-200 flex flex-col h-[600px]">
+                <div className="p-4 border-b">
+                  <p className="font-semibold text-gray-900">
+                    {selectedConversation.patient_name || selectedConversation.patient_phone}
+                  </p>
+                  <p className="text-sm text-gray-500">{selectedConversation.patient_phone}</p>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                  {(selectedConversation.messages_json || []).map((msg, i) => (
+                    <div
+                      key={i}
+                      className={`flex ${msg.direction === 'outbound' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      <div
+                        className={`max-w-xs lg:max-w-md px-4 py-2 rounded-2xl text-sm ${
+                          msg.direction === 'outbound'
+                            ? 'bg-teal-600 text-white rounded-br-sm'
+                            : 'bg-gray-100 text-gray-900 rounded-bl-sm'
+                        }`}
+                      >
+                        <p>{msg.content}</p>
+                        <p className={`text-xs mt-1 ${msg.direction === 'outbound' ? 'text-teal-100' : 'text-gray-400'}`}>
+                          {new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : (
               <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
                 <MessageSquare className="w-12 h-12 text-gray-300 mx-auto mb-4" />
