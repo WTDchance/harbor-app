@@ -227,9 +227,3 @@ async function handlePaymentFailed(invoice: any) {
     console.error('Error in handlePaymentFailed:', error)
   }
 }
-
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-}
