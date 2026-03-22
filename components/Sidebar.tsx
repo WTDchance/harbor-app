@@ -3,10 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import {
-  Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle,
-  CreditCard, BarChart3, Bell, Plug, FileText, TrendingUp, CalendarDays, Calendar
-} from 'lucide-react'
+import { Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle, CreditCard, BarChart3, Bell, Plug, FileText, TrendingUp, CalendarDays, Calendar, Shield } from 'lucide-react'
 import clsx from 'clsx'
 import { createClient } from '@/lib/supabase-browser'
 
@@ -97,7 +94,14 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
           })}
         </ul>
       </nav>
-      <div className="p-4 border-t border-teal-700">
+      <div className="p-4 border-t border-teal-700 space-y-1">
+        <Link
+          href="/admin"
+          className="flex items-center gap-3 w-full px-4 py-2.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white transition-colors text-sm font-medium"
+        >
+          <Shield className="w-4 h-4" />
+          <span>Admin Console</span>
+        </Link>
         <button
           onClick={handleSignOut}
           className="flex items-center gap-3 w-full px-4 py-3 rounded-lg text-teal-100 hover:bg-teal-700 hover:text-white transition-colors text-sm"
