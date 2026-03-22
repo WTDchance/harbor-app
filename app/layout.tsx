@@ -34,15 +34,13 @@ export default function RootLayout({
       </head>
       <body className="bg-gray-50 font-sans antialiased">
         {children}
-        <script>
-          {`
-            if ('serviceWorker' in navigator) {
-              navigator.serviceWorker.register('/sw.js').catch(function(error) {
-                console.log('Service Worker registration failed:', error)
-              })
-            }
-          `}
-        </script>
+        <script dangerouslySetInnerHTML={{__html: `
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(function(error) {
+              console.log('Service Worker registration failed:', error)
+            })
+          }
+        `}} />
       </body>
     </html>
   )
