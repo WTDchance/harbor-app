@@ -17,13 +17,11 @@ const CRISIS_KEYWORDS = [
 
 export async function POST(request: NextRequest) {
   try {
-    // Auth check
     const secret = request.nextUrl.searchParams.get('secret')
     if (process.env.VAPI_WEBHOOK_SECRET && secret !== process.env.VAPI_WEBHOOK_SECRET) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Vapi wraps the payload in a "message" object — unwrap it
     const body = await request.json()
     const message = body.message || body
     const type = message.type
@@ -36,31 +34,26 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ received: true })
     }
 
-    // Vapi fires "end-of-call-report" (not "call-ended") for real phone calls
     if (type === 'end-of-call-report' || type === 'call-ended') {
       const callId = call?.id
-
-      // Transcript can be on message OR call object depending on Vapi version
       const transcript = message.transcript || call?.transcript || ''
 
-      // Duration: prefer message.durationSeconds, fall back to calculating from timestamps
       const duration =
-        message.durationSeconds ||
-        (call?.endedAt && call?.startedAt
+        message.durationSeconds
+          ? Math.round(message.durationSeconds)
+          : call?.endedAt && call?.startedAt
           ? Math.round(
               (new Date(call.endedAt).getTime() - new Date(call.startedAt).getTime()) / 1000
             )
-          : 0)
+          : 0
 
       const lowerTranscript = transcript.toLowerCase()
       const crisisDetected = CRISIS_KEYWORDS.some((kw) => lowerTranscript.includes(kw))
       const patientPhone = call?.customer?.number || 'unknown'
 
-      // Resolve practiceId: prefer metadata, then look up by called phone number
       let practiceId: string | null = call?.metadata?.practiceId || null
 
       if (!practiceId) {
-        // Vapi can put the called number in multiple places
         const calledNumber =
           call?.phoneNumber?.number ||
           message?.phoneNumber?.number ||
@@ -70,7 +63,6 @@ export async function POST(request: NextRequest) {
         console.log('Looking up practice by phone number:', calledNumber)
 
         if (calledNumber) {
-          // Try exact match first
           const { data: exactMatch } = await supabaseAdmin
             .from('practices')
             .select('id')
@@ -81,7 +73,6 @@ export async function POST(request: NextRequest) {
             practiceId = exactMatch.id
             console.log('Resolved practiceId via exact phone match:', practiceId)
           } else {
-            // Try normalized last-10-digits match
             const digits = calledNumber.replace(/\D/g, '').slice(-10)
             const { data: allPractices } = await supabaseAdmin
               .from('practices')
@@ -101,22 +92,16 @@ export async function POST(request: NextRequest) {
       }
 
       if (!practiceId) {
-        console.warn(
-          'Could not resolve practiceId — skipping DB save.',
-          'Call ID:', callId,
-          'Payload preview:', JSON.stringify(body).substring(0, 600)
-        )
+        console.warn('Could not resolve practiceId -- skipping DB save.', 'Call ID:', callId)
         return NextResponse.json({ received: true, callId })
       }
 
-      // Fetch practice details (includes notification_emails if column exists)
       const { data: practice } = await supabaseAdmin
         .from('practices')
         .select('*')
         .eq('id', practiceId)
         .single()
 
-      // Get primary contact email from users table
       const { data: userRecord } = await supabaseAdmin
         .from('users')
         .select('email')
@@ -125,14 +110,8 @@ export async function POST(request: NextRequest) {
 
       const primaryEmail = userRecord?.email || null
       const notificationEmails: string[] = (practice as any)?.notification_emails || []
+      const allEmails = [...new Set([...(primaryEmail ? [primaryEmail] : []), ...notificationEmails])]
 
-      // All unique recipients
-      const allEmails = [...new Set([
-        ...(primaryEmail ? [primaryEmail] : []),
-        ...notificationEmails,
-      ])]
-
-      // Generate AI summary (use Vapi's summary if provided, else generate)
       let aiSummary = message.summary || ''
       if (!aiSummary && transcript) {
         try {
@@ -144,7 +123,6 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Save to call_logs
       const { error: dbError } = await supabaseAdmin.from('call_logs').insert({
         vapi_call_id: callId,
         practice_id: practiceId,
@@ -156,7 +134,6 @@ export async function POST(request: NextRequest) {
 
       if (dbError) console.error('Failed to save call record:', dbError)
 
-      // Send summary email to all recipients
       if (allEmails.length > 0) {
         try {
           const emailHtml = buildCallSummaryEmail({
@@ -167,13 +144,10 @@ export async function POST(request: NextRequest) {
             crisisDetected,
             transcript,
           })
-
           for (const email of allEmails) {
             await sendEmail({
               to: email,
-              subject: crisisDetected
-                ? 'CRISIS ALERT - Call Summary from Harbor'
-                : 'Call Summary from Harbor',
+              subject: crisisDetected ? 'CRISIS ALERT - Call Summary from Harbor' : 'Call Summary from Harbor',
               html: emailHtml,
             }).catch((err) => console.error('Failed to send email to', email, err))
           }
@@ -182,16 +156,13 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Crisis SMS alert
       if (crisisDetected && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER) {
         try {
           const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
           const alertNumber = (practice as any)?.crisis_alert_phone
           if (alertNumber && alertNumber.startsWith('+')) {
             await twilioClient.messages.create({
-              body:
-                'CRISIS ALERT: A caller may be in distress. Please review the call recording immediately. Call ID: ' +
-                callId,
+              body: 'CRISIS ALERT: A caller may be in distress. Please review the call recording immediately. Call ID: ' + callId,
               from: TWILIO_PHONE_NUMBER,
               to: alertNumber,
             })
@@ -210,8 +181,7 @@ export async function POST(request: NextRequest) {
 
       if (functionName === 'checkAvailability') {
         return NextResponse.json({
-          result:
-            'I can check availability for you. Our next available appointments are typically within the next 1-2 weeks. Would you like me to have someone from the practice follow up with you directly to schedule?',
+          result: 'I can check availability for you. Our next available appointments are typically within the next 1-2 weeks. Would you like me to have someone from the practice follow up with you directly to schedule?',
         })
       }
 
@@ -229,8 +199,7 @@ export async function POST(request: NextRequest) {
             .catch((err: unknown) => console.error('Failed to save intake data:', err))
         }
         return NextResponse.json({
-          result:
-            'Thank you for sharing that information. Someone from our team will follow up with you soon.',
+          result: 'Thank you for sharing that information. Someone from our team will follow up with you soon.',
         })
       }
 
