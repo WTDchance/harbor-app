@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import clsx from 'clsx'
-import { LayoutDashboard, Users, PlusCircle, LogOut, Activity, BarChart3 } from 'lucide-react'
+import { LayoutDashboard, Users, PlusCircle, LogOut, Activity, BarChart3, ArrowLeftRight } from 'lucide-react'
 
 const navItems = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
@@ -38,7 +38,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           </div>
         </div>
-
         <nav className="flex-1 px-4 py-6">
           <ul className="space-y-1">
             {navItems.map(({ href, label, icon: Icon, exact }) => {
@@ -62,9 +61,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             })}
           </ul>
         </nav>
-
-        <div className="p-4 border-t border-slate-700">
-          <p className="text-xs text-slate-500 mb-3 px-1">Signed in as admin</p>
+        <div className="p-4 border-t border-slate-700 space-y-1">
+          <Link
+            href="/dashboard"
+            className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white transition-colors text-sm font-medium"
+          >
+            <ArrowLeftRight className="w-4 h-4" />
+            <span>Practice Dashboard</span>
+          </Link>
+          <p className="text-xs text-slate-500 mb-1 px-1 pt-2">Signed in as admin</p>
           <button
             onClick={handleSignOut}
             className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-sm"
@@ -74,7 +79,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </button>
         </div>
       </aside>
-
       <main className="flex-1 overflow-auto">
         <div className="p-8">{children}</div>
       </main>
