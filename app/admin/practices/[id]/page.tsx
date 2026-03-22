@@ -12,6 +12,7 @@ interface Practice {
   timezone: string
   insurance_accepted: string[]
   hours_json: any
+  notification_emails: string[]
   created_at: string
   updated_at: string
 }
@@ -48,6 +49,7 @@ export default function PracticeDetailPage({ params }: { params: { id: string } 
   const [editTimezone, setEditTimezone] = useState('')
   const [editInsurance, setEditInsurance] = useState('')
   const [editEmail, setEditEmail] = useState('')
+  const [editNotificationEmails, setEditNotificationEmails] = useState('')
 
   const supabase = createClient()
 
@@ -107,6 +109,11 @@ export default function PracticeDetailPage({ params }: { params: { id: string } 
         : practice.insurance_accepted || ''
     )
     setEditEmail(contactEmail || '')
+    setEditNotificationEmails(
+      Array.isArray(practice.notification_emails) && practice.notification_emails.length > 0
+        ? practice.notification_emails.join(', ')
+        : ''
+    )
     setEditing(true)
     setSaveError(null)
     setSaveSuccess(false)
@@ -135,6 +142,10 @@ export default function PracticeDetailPage({ params }: { params: { id: string } 
         phone_number: editPhone,
         timezone: editTimezone,
         insurance_accepted: insuranceArray,
+        notification_emails: editNotificationEmails
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
         updated_at: new Date().toISOString(),
       })
       .eq('id', practice.id)
@@ -266,6 +277,14 @@ export default function PracticeDetailPage({ params }: { params: { id: string } 
                   : '—'}
               </p>
             </div>
+            <div className="col-span-2">
+              <p className="text-sm text-gray-500">Additional Notification Emails</p>
+              <p className="font-medium text-gray-900">
+                {Array.isArray(practice.notification_emails) && practice.notification_emails.length > 0
+                  ? practice.notification_emails.join(', ')
+                  : 'None set'}
+              </p>
+            </div>
             <div>
               <p className="text-sm text-gray-500">Member Since</p>
               <p className="font-medium text-gray-900">
@@ -336,6 +355,18 @@ export default function PracticeDetailPage({ params }: { params: { id: string } 
                 value={editInsurance}
                 onChange={(e) => setEditInsurance(e.target.value)}
                 placeholder="Aetna, Blue Cross, Cigna..."
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Additional Notification Emails <span className="text-gray-400 font-normal">(comma-separated — everyone gets call summaries)</span>
+              </label>
+              <input
+                type="text"
+                value={editNotificationEmails}
+                onChange={(e) => setEditNotificationEmails(e.target.value)}
+                placeholder="dr.trace@email.com, office@practice.com..."
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
