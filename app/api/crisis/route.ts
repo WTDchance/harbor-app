@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const { data: practice } = await supabase
       .from('practices')
       .select('id, name, phone_number, crisis_phone, provider_name')
-      .eq('user_id', user.id)
+      .eq('auth_user_id', user.id)
       .single()
 
     let alertSent = false
