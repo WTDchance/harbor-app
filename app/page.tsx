@@ -72,7 +72,7 @@ export default function LandingPage() {
             {[
               { step: "01", title: "We personalize your AI", desc: "Tell us your specialties, hours, insurance, and location. We build a custom AI receptionist tuned to your practice." },
               { step: "02", title: "Ellie answers every call", desc: "Warm, calm, and professional — Ellie greets callers, answers questions, collects intake info, and screens new patients." },
-              { step: "03", title: "You get a full summary", desc: "After every call: caller details, AI summary, PHQ-9/GAD-7 screening scores, appointment request, and full transcript — all in your dashboard within seconds." },
+              { step: "03", title: "You get a full summary", desc: "After every call: caller details, AI summary, PHQ-2/GAD-2 scores, appointment request, and full transcript — all in your dashboard within seconds." },
             ].map(({ step, title, desc }) => (
               <div key={step} className="relative">
                 <div className="text-5xl font-bold text-teal-100 mb-4">{step}</div>
@@ -94,7 +94,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
               { icon: "🚨", title: "Crisis Detection", desc: "Ellie recognizes warning signs in real time, provides 988 resources, and immediately texts you — no other platform does this." },
-              { icon: "🧠", title: "Mental Health Screening", desc: "Clinically validated PHQ-9 (depression) and GAD-7 (anxiety) scores collected on intake and waiting in your dashboard before the first session." },
+              { icon: "🧠", title: "Mental Health Screening", desc: "PHQ-2 and GAD-2 scores captured live on every call. Full PHQ-9 and GAD-7 intake assessments sent automatically for deeper clinical outcomes tracking." },
               { icon: "📱", title: "Smart Waitlist Filling", desc: "When an appointment cancels, Ellie texts the next patient automatically. They have 10 minutes to claim the slot." },
               { icon: "📧", title: "Post-Call Summaries", desc: "Every call generates a full transcript, AI summary, and action items delivered to your inbox." },
               { icon: "⚙️", title: "Real-Time Updates", desc: "Change your hours, specialties, or availability in your settings dashboard — Ellie updates instantly." },
