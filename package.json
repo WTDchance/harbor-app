@@ -1,5 +1,5 @@
 {
-  "name": "theralink",
+    "name": "harbor-app",
   "version": "0.1.0",
   "private": true,
   "scripts": {
