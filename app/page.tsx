@@ -72,7 +72,7 @@ export default function LandingPage() {
             {[
               { step: "01", title: "We personalize your AI", desc: "Tell us your specialties, hours, insurance, and location. We build a custom AI receptionist tuned to your practice." },
               { step: "02", title: "Ellie answers every call", desc: "Warm, calm, and professional — Ellie greets callers, answers questions, collects intake info, and screens new patients." },
-              { step: "03", title: "You get a full summary", desc: "After every call: caller info, AI summary, PHQ-2/GAD-2 scores, appointment request, and full transcript in your inbox." },
+              { step: "03", title: "You get a full summary", desc: "After every call: caller details, AI summary, PHQ-9/GAD-7 screening scores, appointment request, and full transcript — all in your dashboard within seconds." },
             ].map(({ step, title, desc }) => (
               <div key={step} className="relative">
                 <div className="text-5xl font-bold text-teal-100 mb-4">{step}</div>
@@ -94,7 +94,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
               { icon: "🚨", title: "Crisis Detection", desc: "Ellie recognizes warning signs in real time, provides 988 resources, and immediately texts you — no other platform does this." },
-              { icon: "🧠", title: "Mental Health Screening", desc: "PHQ-2 and GAD-2 scores collected during intake calls and sent to you before the first session." },
+              { icon: "🧠", title: "Mental Health Screening", desc: "Clinically validated PHQ-9 (depression) and GAD-7 (anxiety) scores collected on intake and waiting in your dashboard before the first session." },
               { icon: "📱", title: "Smart Waitlist Filling", desc: "When an appointment cancels, Ellie texts the next patient automatically. They have 10 minutes to claim the slot." },
               { icon: "📧", title: "Post-Call Summaries", desc: "Every call generates a full transcript, AI summary, and action items delivered to your inbox." },
               { icon: "⚙️", title: "Real-Time Updates", desc: "Change your hours, specialties, or availability in your settings dashboard — Ellie updates instantly." },
@@ -117,8 +117,8 @@ export default function LandingPage() {
           <blockquote className="text-xl text-gray-700 italic mb-6">
             "I used to miss 3–4 calls a week. Now Ellie handles everything — she even screens new patients with mental health questions before I meet them. It's like having a full-time receptionist for a fraction of the cost."
           </blockquote>
-          <div className="font-semibold text-gray-900">Dr. Sarah M.</div>
-          <div className="text-sm text-gray-500">Licensed Therapist · Seattle, WA</div>
+          <div className="font-semibold text-gray-900">Trace Wonser, PhD</div>
+          <div className="text-sm text-gray-500">Licensed Psychologist · Private Practice</div>
         </div>
       </section>
 
@@ -159,7 +159,7 @@ export default function LandingPage() {
               <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> 30-day money-back guarantee</li>
             </ul>
 
-            <a href="/register" className="block w-full text-center bg-teal-600 hover:bg-teal-700 text-white font-bold py-4 rounded-xl text-lg transition-colors">
+            <a href="/onboard" className="block w-full text-center bg-teal-600 hover:bg-teal-700 text-white font-bold py-4 rounded-xl text-lg transition-colors">
               Claim Your Founding Practice Spot
             </a>
             <p className="text-gray-400 text-sm mt-3">No contracts. Cancel anytime. Regular price $297/mo after founding spots fill.</p>
