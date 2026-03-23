@@ -50,6 +50,7 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
     { href: '/dashboard/calendar', label: 'Calendar', icon: Calendar },
     { href: '/dashboard/reminders', label: 'Reminders', icon: Bell },
     { href: '/dashboard/messages', label: 'Messages', icon: MessageSquare },
+    { href: '/dashboard/insurance', label: 'Insurance', icon: Shield },
     { href: '/dashboard/billing', label: 'Billing', icon: CreditCard },
     { href: '/dashboard/team', label: 'Team', icon: Users },
     { href: '/dashboard/integrations', label: 'Integrations', icon: Plug },
