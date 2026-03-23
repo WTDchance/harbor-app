@@ -25,3 +25,7 @@ export async function createServerSupabase() {
     }
   )
 }
+
+// Alias for API routes — returns Promise<SupabaseClient>
+// Usage: const supabase = await createClient()
+export const createClient = createServerSupabase
