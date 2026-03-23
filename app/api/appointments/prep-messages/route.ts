@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
     const { data: practice } = await supabase
       .from('practices')
       .select('id, name, provider_name, prep_message_enabled, prep_message_template')
-      .eq('user_id', user.id)
+      .eq('auth_user_id', user.id)
       .single()
 
     if (!practice) {
@@ -120,7 +120,7 @@ export async function GET(req: NextRequest) {
     const { data: practice } = await supabase
       .from('practices')
       .select('id, name, provider_name, prep_message_enabled, prep_message_template')
-      .eq('user_id', user.id)
+      .eq('auth_user_id', user.id)
       .single()
 
     if (!practice) {
