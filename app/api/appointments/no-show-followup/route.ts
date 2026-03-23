@@ -190,7 +190,7 @@ export async function POST(req: NextRequest) {
       .from('practices')
       .select('id, name, provider_name, phone_number')
       .eq('id', appt.practice_id)
-      .eq('user_id', user.id)
+      .eq('auth_user_id', user.id)
       .single()
 
     if (!practice) {
@@ -336,7 +336,7 @@ export async function GET(req: NextRequest) {
       .from('practices')
       .select('id, name, provider_name')
       .eq('id', appt.practice_id)
-      .eq('user_id', user.id)
+      .eq('auth_user_id', user.id)
       .single()
 
     if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 403 })
