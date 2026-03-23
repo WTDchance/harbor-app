@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const { data: practice } = await supabase
       .from('practices')
       .select('id, name, provider_name, intake_enabled')
-      .eq('user_id', user.id)
+      .eq('auth_user_id', user.id)
       .single()
 
     if (!practice) {
