@@ -20,6 +20,11 @@ const PAYER_IDS: Record<string, string> = {
   'Tricare': 'TRICR',
   'Medicaid': '77003',
   'Medicare': '00120',
+  'Oregon Health Plan': 'OREMD',
+  'OHP': 'OREMD',
+  'Oregon Medicaid': 'OREMD',
+  'Cascade Health Alliance': '93688',
+  'CHA': '93688',
 }
 
 export async function POST(req: NextRequest) {
