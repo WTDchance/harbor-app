@@ -25,7 +25,7 @@ export default function LandingPage() {
             <Link href="/onboard" className="bg-white text-teal-700 px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-50 transition-colors">Get Started Free →</Link>
             <a href="#how-it-works" className="border border-teal-400 text-white px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-700 transition-colors">See How It Works</a>
           </div>
-          <p className="text-teal-300 mt-6 text-sm">$499/month · No contracts · Setup in 5 minutes</p>
+          <p className="text-teal-300 mt-6 text-sm">Starting at $97/month · No contracts · Setup in 5 minutes</p>
         </div>
       </section>
 
@@ -123,34 +123,57 @@ export default function LandingPage() {
       </section>
 
       {/* Pricing */}
-      <section className="px-6 py-20 bg-teal-600 text-white text-center">
-        <div className="max-w-xl mx-auto">
-          <h2 className="text-3xl font-bold mb-2">Simple, transparent pricing</h2>
-          <p className="text-teal-200 mb-8">One plan. Everything included.</p>
-          <div className="bg-white/10 backdrop-blur rounded-2xl p-8 mb-8">
-            <div className="text-5xl font-bold mb-1">$499</div>
-            <div className="text-teal-300 mb-6">per month, per practice</div>
-            <ul className="text-left space-y-3 text-sm mb-0">
-              {[
-                "Unlimited calls answered 24/7",
-                "Custom AI receptionist (your practice, your voice)",
-                "Crisis detection + therapist SMS alerts",
-                "PHQ-2/GAD-2 intake screening",
-                "Smart waitlist with auto-fill SMS",
-                "Post-call summaries to your inbox",
-                "Real-time settings dashboard",
-                "Full call transcripts",
-              ].map(item => (
-                <li key={item} className="flex items-center gap-2">
-                  <span className="text-green-400">✓</span> {item}
-                </li>
-              ))}
-            </ul>
+      <section className="py-20 px-4 bg-white">
+        <div className="max-w-5xl mx-auto">
+          <h2 className="text-3xl font-bold text-gray-900 text-center mb-3">Simple, transparent pricing.</h2>
+          <p className="text-gray-500 text-center mb-4">All plans include a 30-day money-back guarantee. No contracts.</p>
+          <div className="text-center mb-10">
+            <span className="inline-block bg-orange-100 text-orange-700 text-sm font-semibold px-4 py-2 rounded-full">
+              🔒 Founding Practice offer: lock in Starter pricing forever — only 50 spots
+            </span>
           </div>
-          <Link href="/onboard" className="bg-white text-teal-700 px-8 py-4 rounded-xl font-bold text-lg hover:bg-teal-50 transition-colors inline-block">
-            Start Your Practice →
-          </Link>
-          <p className="text-teal-300 mt-4 text-sm">No setup fee · No contracts · Cancel anytime</p>
+          <div className="grid md:grid-cols-3 gap-6">
+            <div className="border-2 border-teal-500 rounded-2xl p-8 relative">
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-teal-500 text-white text-xs font-bold px-3 py-1 rounded-full">MOST POPULAR</div>
+              <div className="text-lg font-semibold text-gray-900 mb-1">Starter</div>
+              <div className="text-4xl font-bold text-gray-900 mb-1">$97<span className="text-lg font-normal text-gray-500">/mo</span></div>
+              <p className="text-gray-500 text-sm mb-6">Solo practice, 1 provider</p>
+              <ul className="space-y-2 text-sm text-gray-700 mb-8">
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> AI receptionist (24/7 call answering)</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Appointment booking &amp; calendar sync</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Automated SMS reminders</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Bulk messaging</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Insurance tracking</li>
+              </ul>
+              <a href="/register" className="block w-full text-center bg-teal-600 hover:bg-teal-700 text-white font-semibold py-3 rounded-xl transition-colors">Start Free Trial</a>
+            </div>
+            <div className="border border-gray-200 rounded-2xl p-8">
+              <div className="text-lg font-semibold text-gray-900 mb-1">Growth</div>
+              <div className="text-4xl font-bold text-gray-900 mb-1">$197<span className="text-lg font-normal text-gray-500">/mo</span></div>
+              <p className="text-gray-500 text-sm mb-6">Up to 3 providers</p>
+              <ul className="space-y-2 text-sm text-gray-700 mb-8">
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Everything in Starter</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Multi-provider support</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Live insurance verification</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Advanced analytics</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Priority support</li>
+              </ul>
+              <a href="/register" className="block w-full text-center border-2 border-teal-600 text-teal-600 hover:bg-teal-50 font-semibold py-3 rounded-xl transition-colors">Get Started</a>
+            </div>
+            <div className="border border-gray-200 rounded-2xl p-8">
+              <div className="text-lg font-semibold text-gray-900 mb-1">Pro</div>
+              <div className="text-4xl font-bold text-gray-900 mb-1">$297<span className="text-lg font-normal text-gray-500">/mo</span></div>
+              <p className="text-gray-500 text-sm mb-6">Unlimited providers</p>
+              <ul className="space-y-2 text-sm text-gray-700 mb-8">
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Everything in Growth</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Unlimited providers</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Custom AI voice &amp; script</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> White-glove onboarding</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500">✓</span> Dedicated success manager</li>
+              </ul>
+              <a href="/register" className="block w-full text-center border-2 border-gray-300 text-gray-700 hover:bg-gray-50 font-semibold py-3 rounded-xl transition-colors">Get Started</a>
+            </div>
+          </div>
         </div>
       </section>
 
