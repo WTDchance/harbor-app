@@ -5,7 +5,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'chancewonser@gmail.com'
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request })
