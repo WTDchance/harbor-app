@@ -46,55 +46,55 @@ function RecentCallCard({ call }: { call: RecentCall }) {
                         >
                         <div className="w-8 h-8 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
                                   <Phone className="w-3.5 h-3.5 text-teal-600" />
-                        </div>div>
+                        </div>
                         <div className="flex-1 min-w-0">
                                   <div className="flex items-center justify-between gap-2">
                                               <div className="flex items-center gap-2">
-                                                            <p className="font-medium text-gray-900 text-sm">{call.patient_phone}</p>p>
+                                                            <p className="font-medium text-gray-900 text-sm">{call.patient_phone}</p>
                                                 {call.crisis_detected && (
                                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
                                                             <AlertCircle className="w-3 h-3" />
                                                             Crisis
-                                          </span>span>
+                                          </span>
                                                             )}
-                                              </div>div>
+                                              </div>
                                               <div className="flex items-center gap-2 text-xs text-gray-400 flex-shrink-0">
-                                                            <span>{formatDuration(call.duration_seconds)}</span>span>
-                                                            <span>·</span>span>
-                                                            <span>{timeAgo(call.created_at)}</span>span>
+                                                            <span>{formatDuration(call.duration_seconds)}</span>
+                                                            <span>·</span>
+                                                            <span>{timeAgo(call.created_at)}</span>
                                                 {expanded ? (
                                           <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
                                         ) : (
                                           <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
                                         )}
-                                              </div>div>
-                                  </div>div>
+                                              </div>
+                                  </div>
                           {call.summary && (
                                       <p className={`text-sm text-gray-500 mt-0.5 ${expanded ? '' : 'truncate'}`}>
                                         {call.summary}
-                                      </p>p>
+                                      </p>
                                   )}
-                        </div>div>
-                </div>div>
+                        </div>
+                </div>
             {expanded && (
                     <div className="px-5 pb-4 pt-0 space-y-3 bg-gray-50">
                       {call.summary && (
                                   <div>
-                                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">AI Summary</p>p>
-                                                <p className="text-sm text-gray-700 bg-teal-50 rounded-lg p-3">{call.summary}</p>p>
-                                  </div>div>
+                                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">AI Summary</p>
+                                                <p className="text-sm text-gray-700 bg-teal-50 rounded-lg p-3">{call.summary}</p>
+                                  </div>
                               )}
                       {call.transcript && (
                                   <div>
-                                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Transcript</p>p>
+                                                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Transcript</p>
                                                 <pre className="text-xs text-gray-600 bg-white rounded-lg p-3 whitespace-pre-wrap font-sans max-h-48 overflow-y-auto border border-gray-200">
                                                   {call.transcript}
-                                                </pre>pre>
-                                  </div>div>
+                                                </pre>
+                                  </div>
                               )}
-                    </div>div>
+                    </div>
                 )}
-          </div>div>
+          </div>
         )
 }
 
@@ -178,9 +178,9 @@ export default function DashboardPage() {
                                                 <div className="mb-8">
                                                         <h1 className="text-2xl font-bold text-gray-900">
                                                           {practiceName || 'Dashboard'}
-                                                        </h1>h1>
-                                                        <p className="text-gray-500 mt-1">Here&apos;s what Ellie has been up to today</p>p>
-                                                </div>div>
+                                                        </h1>
+                                                        <p className="text-gray-500 mt-1">Here&apos;s what Ellie has been up to today</p>
+                                                </div>
                                           
                                             {/* Ellie Status Card */}
                                             {!loading && (
@@ -192,15 +192,15 @@ export default function DashboardPage() {
                                                                           <div>
                                                                                         <p className={`font-medium text-sm ${practice?.phone_number ? 'text-green-800' : 'text-yellow-800'}`}>
                                                                                           {practice?.phone_number ? `${practice.ai_name || 'Ellie'} is live` : 'Phone number not configured'}
-                                                                                          </p>p>
+                                                                                          </p>
                                                                                         <p className={`text-xs mt-0.5 ${practice?.phone_number ? 'text-green-600' : 'text-yellow-600'}`}>
                                                                                           {practice?.phone_number
                                                                                                               ? `Answering calls at ${practice.phone_number}`
                                                                                                               : 'Contact Harbor support to activate your phone line'}
-                                                                                          </p>p>
-                                                                          </div>div>
-                                                              </div>div>
-                                                    </div>div>
+                                                                                          </p>
+                                                                          </div>
+                                                              </div>
+                                                    </div>
                                                 )}
                                           
                                             {/* Stats */}
@@ -208,83 +208,83 @@ export default function DashboardPage() {
                                                         <div className="bg-white rounded-xl border border-gray-200 p-5">
                                                                   <div className="w-10 h-10 bg-teal-50 rounded-lg flex items-center justify-center mb-3">
                                                                               <Phone className="w-5 h-5 text-teal-600" />
-                                                                  </div>div>
-                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.today}</p>p>
-                                                                  <p className="text-sm text-gray-500 mt-0.5">Calls Today</p>p>
-                                                        </div>div>
+                                                                  </div>
+                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.today}</p>
+                                                                  <p className="text-sm text-gray-500 mt-0.5">Calls Today</p>
+                                                        </div>
                                                         <div className="bg-white rounded-xl border border-gray-200 p-5">
                                                                   <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
                                                                               <Clock className="w-5 h-5 text-blue-600" />
-                                                                  </div>div>
-                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : formatDuration(stats.avgDuration)}</p>p>
-                                                                  <p className="text-sm text-gray-500 mt-0.5">Avg Duration</p>p>
-                                                        </div>div>
+                                                                  </div>
+                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : formatDuration(stats.avgDuration)}</p>
+                                                                  <p className="text-sm text-gray-500 mt-0.5">Avg Duration</p>
+                                                        </div>
                                                         <div className="bg-white rounded-xl border border-gray-200 p-5">
                                                                   <div className="w-10 h-10 bg-orange-50 rounded-lg flex items-center justify-center mb-3">
                                                                               <Users className="w-5 h-5 text-orange-600" />
-                                                                  </div>div>
-                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.waitlist}</p>p>
-                                                                  <p className="text-sm text-gray-500 mt-0.5">On Waitlist</p>p>
-                                                        </div>div>
+                                                                  </div>
+                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.waitlist}</p>
+                                                                  <p className="text-sm text-gray-500 mt-0.5">On Waitlist</p>
+                                                        </div>
                                                         <div className="bg-white rounded-xl border border-gray-200 p-5">
                                                                   <div className="w-10 h-10 bg-purple-50 rounded-lg flex items-center justify-center mb-3">
                                                                               <TrendingUp className="w-5 h-5 text-purple-600" />
-                                                                  </div>div>
-                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.total}</p>p>
-                                                                  <p className="text-sm text-gray-500 mt-0.5">Total Calls</p>p>
-                                                        </div>div>
-                                                </div>div>
+                                                                  </div>
+                                                                  <p className="text-2xl font-bold text-gray-900">{loading ? '—' : stats.total}</p>
+                                                                  <p className="text-sm text-gray-500 mt-0.5">Total Calls</p>
+                                                        </div>
+                                                </div>
                                           
                                             {/* Today's Arrivals */}
                                                 <div className="bg-white rounded-xl border border-gray-200 p-5 mb-8">
                                                         <h3 className="font-semibold text-gray-900 mb-3 flex items-center gap-2">
-                                                                  <span className="text-lg">🏥</span>span>
+                                                                  <span className="text-lg">🏥</span>
                                                                   Today's Arrivals
-                                                        </h3>h3>
+                                                        </h3>
                                                   {arrivals.length === 0 ? (
-                                                      <p className="text-sm text-gray-400">No arrivals yet today</p>p>
+                                                      <p className="text-sm text-gray-400">No arrivals yet today</p>
                                                     ) : (
                                                       <div className="space-y-2">
                                                         {arrivals.map(a => (
                                                                       <div key={a.id} className="flex items-center justify-between text-sm">
-                                                                                      <span className="font-medium text-gray-700">{a.patient_name || a.patient_phone}</span>span>
+                                                                                      <span className="font-medium text-gray-700">{a.patient_name || a.patient_phone}</span>
                                                                                       <div className="flex items-center gap-2">
                                                                                                         <span className="text-gray-400">
                                                                                                           {new Date(a.arrived_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                                                                                                          </span>span>
+                                                                                                          </span>
                                                                                                         <span className={`w-2 h-2 rounded-full ${a.therapist_notified ? 'bg-green-500' : 'bg-yellow-400'}`} />
-                                                                                        </div>div>
-                                                                      </div>div>
+                                                                                        </div>
+                                                                      </div>
                                                                     ))}
-                                                      </div>div>
+                                                      </div>
                                                         )}
-                                                </div>div>
+                                                </div>
                                           
                                             {/* Recent Calls */}
                                                 <div className="bg-white rounded-xl border border-gray-200">
                                                         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-                                                                  <h2 className="font-semibold text-gray-900">Recent Calls</h2>h2>
+                                                                  <h2 className="font-semibold text-gray-900">Recent Calls</h2>
                                                                   <Link href="/dashboard/calls" className="text-sm text-teal-600 hover:underline">
                                                                               View all →
-                                                                  </Link>Link>
-                                                        </div>div>
+                                                                  </Link>
+                                                        </div>
                                                   {loading ? (
                                                       <div className="flex items-center justify-center h-32">
                                                                   <div className="w-5 h-5 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
-                                                      </div>div>
+                                                      </div>
                                                     ) : recentCalls.length === 0 ? (
                                                       <div className="p-12 text-center">
                                                                   <Phone className="w-8 h-8 text-gray-300 mx-auto mb-3" />
-                                                                  <p className="text-gray-500 text-sm">No calls yet — Ellie is ready and waiting</p>p>
-                                                      </div>div>
+                                                                  <p className="text-gray-500 text-sm">No calls yet — Ellie is ready and waiting</p>
+                                                      </div>
                                                     ) : (
                                                       <div>
                                                         {recentCalls.map(call => (
                                                                       <RecentCallCard key={call.id} call={call} />
                                                                     ))}
-                                                      </div>div>
+                                                      </div>
                                                         )}
-                                                </div>div>
-                                          </div>div>
+                                                </div>
+                                          </div>
                                         )
                                       }</div>
