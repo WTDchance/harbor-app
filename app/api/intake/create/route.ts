@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
+import { sendEmail, buildIntakeEmail } from '@/lib/email'
 import { randomBytes } from 'crypto'
 
 function generateToken(): string {
@@ -14,16 +15,26 @@ export async function POST(req: NextRequest) {
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
-    const { appointment_id, patient_name, patient_phone, questionnaire_type = 'phq9_gad7' } = body
+    const {
+      appointment_id,
+      patient_name,
+      patient_phone,
+      patient_email,
+      questionnaire_type = 'phq9_gad7',
+    } = body
 
-    if (!appointment_id || !patient_phone) {
-      return NextResponse.json({ error: 'appointment_id and patient_phone are required' }, { status: 400 })
+    if (!appointment_id || (!patient_phone && !patient_email)) {
+      return NextResponse.json(
+        { error: 'appointment_id and at least one of patient_phone or patient_email are required' },
+        { status: 400 }
+      )
     }
 
+    // Look up practice by notification_email (matches dashboard auth pattern)
     const { data: practice } = await supabase
       .from('practices')
       .select('id, name, provider_name, intake_enabled')
-      .eq('auth_user_id', user.id)
+      .eq('notification_email', user.email)
       .single()
 
     if (!practice) {
@@ -36,9 +47,8 @@ export async function POST(req: NextRequest) {
 
     const token = generateToken()
     const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 7) // expires in 7 days
+    expiresAt.setDate(expiresAt.getDate() + 7)
 
-    // Store token in DB
     const { data: intake, error: intakeError } = await supabase
       .from('intake_forms')
       .insert({
@@ -46,11 +56,12 @@ export async function POST(req: NextRequest) {
         practice_id: practice.id,
         appointment_id,
         patient_name: patient_name || null,
-        patient_phone,
+        patient_phone: patient_phone || null,
+        patient_email: patient_email || null,
         questionnaire_type,
         status: 'pending',
         expires_at: expiresAt.toISOString(),
-        created_at: new Date().toISOString()
+        created_at: new Date().toISOString(),
       })
       .select()
       .single()
@@ -60,32 +71,49 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to create intake form' }, { status: 500 })
     }
 
-    // Determine app URL
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
     const intakeUrl = `${appUrl}/intake/${token}`
 
-    // Send SMS to patient
-    const patientLabel = patient_name ? `Hi ${patient_name}` : 'Hi'
-    const smsMessage = [
-      `${patientLabel}, ${practice.provider_name || practice.name} has sent you a brief intake questionnaire to complete before your first appointment.`,
-      '',
-      `It takes about 2 minutes: ${intakeUrl}`,
-      '',
-      'Your responses help your therapist prepare for your session.'
-    ].join('\n')
-
     let smsSent = false
-    try {
-      await sendSMS(patient_phone, smsMessage)
-      smsSent = true
-    } catch (smsError) {
-      console.error('Failed to send intake SMS:', smsError)
+    let emailSent = false
+
+    // Send SMS if phone provided
+    if (patient_phone) {
+      const patientLabel = patient_name ? `Hi ${patient_name}` : 'Hi there'
+      const smsMessage = [
+        `${patientLabel}, ${practice.provider_name || practice.name} sent you a brief intake form to complete before your first appointment.`,
+        '',
+        `Takes ~2 min: ${intakeUrl}`,
+        '',
+        'Your responses go directly to your therapist.',
+      ].join('\n')
+      try {
+        await sendSMS(patient_phone, smsMessage)
+        smsSent = true
+      } catch (err) {
+        console.error('Failed to send intake SMS:', err)
+      }
     }
 
-    // Update intake form with SMS sent status
+    // Send email if email address provided
+    if (patient_email) {
+      const { subject, html } = buildIntakeEmail({
+        practiceName: practice.name,
+        providerName: practice.provider_name,
+        patientName: patient_name,
+        intakeUrl,
+      })
+      emailSent = await sendEmail({ to: patient_email, subject, html })
+    }
+
     await supabase
       .from('intake_forms')
-      .update({ sms_sent: smsSent, sms_sent_at: smsSent ? new Date().toISOString() : null })
+      .update({
+        sms_sent: smsSent,
+        sms_sent_at: smsSent ? new Date().toISOString() : null,
+        email_sent: emailSent,
+        email_sent_at: emailSent ? new Date().toISOString() : null,
+      })
       .eq('id', intake.id)
 
     return NextResponse.json({
@@ -94,9 +122,9 @@ export async function POST(req: NextRequest) {
       token,
       intake_url: intakeUrl,
       sms_sent: smsSent,
-      expires_at: expiresAt.toISOString()
+      email_sent: emailSent,
+      expires_at: expiresAt.toISOString(),
     })
-
   } catch (error) {
     console.error('Intake create error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
