@@ -7,6 +7,7 @@ interface Appointment {
   id: string
   patient_name: string
   patient_phone: string
+  patient_email: string | null
   appointment_date: string
   appointment_time: string
   duration_minutes: number
@@ -45,6 +46,7 @@ export default function AppointmentsPage() {
   const [form, setForm] = useState({
     patient_name: '',
     patient_phone: '',
+    patient_email: '',
     appointment_date: new Date().toISOString().split('T')[0],
     appointment_time: '09:00',
     duration_minutes: 50,
@@ -53,6 +55,11 @@ export default function AppointmentsPage() {
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [sendingIntake, setSendingIntake] = useState<string | null>(null)
+  const [intakeSentMap, setIntakeSentMap] = useState<Record<string, 'sms' | 'email' | 'both'>>({})
+  const [intakeModal, setIntakeModal] = useState<Appointment | null>(null)
+  const [intakePhone, setIntakePhone] = useState('')
+  const [intakeEmail, setIntakeEmail] = useState('')
 
   const weekDates = getWeekDates(weekOffset)
   const weekStart = weekDates[0].toISOString().split('T')[0]
@@ -423,6 +430,61 @@ export default function AppointmentsPage() {
           </div>
         </div>
       )}
-  </>
+  
+    {/* Intake Send Modal */}
+    {intakeModal && (
+      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm">
+          <div className="p-6 border-b border-gray-100">
+            <h2 className="text-lg font-semibold text-gray-900">Send Intake Form</h2>
+            <p className="text-sm text-gray-500 mt-1">to {intakeModal.patient_name}</p>
+          </div>
+          <div className="p-6 space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Phone (SMS)</label>
+              <input
+                type="tel"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                value={intakePhone}
+                onChange={e => setIntakePhone(e.target.value)}
+                placeholder="+1 (555) 000-0000"
+              />
+            </div>
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <div className="flex-1 border-t border-gray-100" />
+              <span>and / or</span>
+              <div className="flex-1 border-t border-gray-100" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+              <input
+                type="email"
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                value={intakeEmail}
+                onChange={e => setIntakeEmail(e.target.value)}
+                placeholder="patient@email.com"
+              />
+            </div>
+            <p className="text-xs text-gray-400">We'll send a secure link with the PHQ-9 & GAD-7 intake form. Link expires in 7 days.</p>
+          </div>
+          <div className="p-6 border-t border-gray-100 flex justify-end gap-3">
+            <button
+              onClick={() => setIntakeModal(null)}
+              className="px-4 py-2 text-sm text-gray-600 hover:text-gray-800"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSendIntake}
+              disabled={!intakePhone && !intakeEmail}
+              className="px-6 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 disabled:opacity-40"
+            >
+              Send Intake →
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+</>
   )
 }
