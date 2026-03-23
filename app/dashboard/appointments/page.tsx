@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Sidebar } from '@/components/Sidebar'
 import { CalendarDays, Plus, ChevronLeft, ChevronRight, Clock, Phone, User, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
 
 interface Appointment {
@@ -157,8 +156,7 @@ export default function AppointmentsPage() {
   const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      <Sidebar />
+  <>
       <main className="flex-1 p-8">
         <div className="max-w-6xl mx-auto">
           {/* Header */}
@@ -425,6 +423,6 @@ export default function AppointmentsPage() {
           </div>
         </div>
       )}
-    </div>
+  </>
   )
 }
