@@ -5,6 +5,7 @@ import { generateCallSummary } from '@/lib/claude'
 import { getCallSummaryPrompt } from '@/lib/ai-prompts'
 import { sendEmail, buildCallSummaryEmail } from '@/lib/email'
 import twilio from 'twilio'
+import { formatPhoneNumber } from '@/lib/twilio'
 
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN
@@ -159,13 +160,14 @@ export async function POST(request: NextRequest) {
                       try {
                                   const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
                                   const alertNumber = (practice as any)?.crisis_alert_phone
-                                  if (alertNumber && alertNumber.startsWith('+')) {
+            const formattedAlert = alertNumber ? formatPhoneNumber(alertNumber) : null
+                                  if (formattedAlert) {
                                                 await twilioClient.messages.create({
                                                                 body:
                                                                                   'CRISIS ALERT: A caller may be in distress. Please review the call recording immediately. Call ID: ' +
                                                                                   callId,
                                                                 from: TWILIO_PHONE_NUMBER,
-                                                                to: alertNumber,
+                                                                to: formattedAlert,
                                                 })
                                   }
                       } catch (smsErr) {
