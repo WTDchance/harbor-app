@@ -8,7 +8,7 @@ const fromNumber = process.env.TWILIO_PHONE_NUMBER || ''
 
 // Optional: Messaging Service SID enables RCS with automatic SMS fallback.
 // Create a Messaging Service in Twilio Console → Messaging → Services, enable RCS,
-// then add TWILIO_MESSAGING_SERVICE_SID to your environment variables.
+// then add TWILIO_MESSAGING_SERVICE_SID to your environment variables.h
 const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID || ''
 
 if (!accountSid || !authToken || !fromNumber) {
@@ -189,12 +189,13 @@ export function generateSMSResponse(message: string): string {
  * Helper to escape XML special characters
  * Important for SMS message bodies
  */
-function escapeXml(unsafe: string): string {
-  return unsafe
-    .replace(/[<]/g, '&lt;')
-    .replace(/[>]/g, '&gt;')
-    .replace(/[&]/g, '&amp;')
-    .replace(/['"]/g, '&quot;')
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
 }
 
 /**
