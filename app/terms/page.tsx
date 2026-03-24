@@ -1,170 +1,215 @@
-'use client'
+// app/terms/page.tsx
+// Harbor — Terms and Conditions
 
-import Link from 'next/link'
+import type { Metadata } from "next";
+
+export const metadata: Metadata = {
+  title: "Terms & Conditions | Harbor Receptionist",
+  description: "Harbor Receptionist terms and conditions of use.",
+};
 
 export default function TermsPage() {
   return (
-    <div className="min-h-screen bg-white">
-      {/* Header */}
-      <div className="bg-gradient-to-br from-teal-50 to-white border-b border-gray-200">
-        <div className="max-w-2xl mx-auto px-4 py-12">
-          <Link href="/" className="text-teal-600 hover:text-teal-700 text-sm font-medium mb-4 inline-block">
-            ← Back to Harbor
-          </Link>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Terms of Service</h1>
-          <p className="text-gray-600">Effective date: March 2026</p>
-        </div>
-      </div>
+    <main className="max-w-3xl mx-auto px-6 py-16 text-gray-800">
+      <h1 className="text-3xl font-bold mb-2 text-[#021E26]">Terms and Conditions</h1>
+      <p className="text-sm text-gray-500 mb-10">Last updated: March 2026</p>
 
-      {/* Content */}
-      <div className="max-w-2xl mx-auto px-4 py-12">
-        <div className="prose prose-sm max-w-none space-y-6 text-gray-700">
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">1. Service Description</h2>
-            <p>
-              Harbor is an AI receptionist platform designed specifically for therapy practices. The service allows therapists to receive AI-powered call answering, intake screening, crisis detection, and automated patient communications.
-            </p>
-          </section>
+      <section className="mb-8">
+        <p className="mb-4">
+          These Terms and Conditions ("Terms") govern your use of Harbor
+          Receptionist ("Harbor," "we," "us," or "our") services, including our
+          AI receptionist platform, website, and SMS appointment reminder program
+          accessible at{" "}
+          <a href="https://harborreceptionist.com" className="text-[#028090] underline">
+            harborreceptionist.com
+          </a>
+          .
+        </p>
+        <p>
+          By using our services, you agree to be bound by these Terms. If you do
+          not agree to these Terms, please do not use our services.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">2. Acceptable Use</h2>
-            <p>
-              By using Harbor, you agree to use the service only for operating a licensed therapy practice. You agree to:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li>Comply with all applicable laws and regulations, including HIPAA</li>
-              <li>Not use Harbor for any purpose other than legitimate therapy practice operations</li>
-              <li>Not attempt to reverse-engineer, hack, or compromise the service</li>
-              <li>Not share your account credentials with unauthorized individuals</li>
-              <li>Ensure patients are informed that calls may be answered by AI</li>
-            </ul>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">1. SMS Messaging Program</h2>
+        <p className="mb-3">
+          <strong>Program Name:</strong> Harbor Receptionist SMS Appointment
+          Reminders
+        </p>
+        <p className="mb-3">
+          <strong>Description:</strong> Harbor sends SMS appointment confirmations
+          and reminders to patients who have scheduled appointments with therapy
+          practices using the Harbor platform. Messages may include booking
+          confirmations, appointment reminders, and links to complete intake
+          forms prior to your appointment.
+        </p>
+        <p className="mb-3">
+          <strong>Message Frequency:</strong> Message frequency varies based on
+          your scheduled appointments. You may receive messages for each
+          appointment you schedule (confirmation, 24-hour reminder, and same-day
+          reminder).
+        </p>
+        <p className="mb-3">
+          <strong>Message and Data Rates:</strong> Message and data rates may
+          apply. Check with your mobile carrier for applicable rates.
+        </p>
+        <p className="mb-3">
+          <strong>Opt-Out:</strong> You may opt out of SMS messages at any time
+          by replying <strong>STOP</strong> to any message. After opting out,
+          you will receive one final confirmation message and no further messages
+          will be sent.
+        </p>
+        <p className="mb-3">
+          <strong>Help:</strong> Reply <strong>HELP</strong> to any message or
+          contact us at{" "}
+          <a href="mailto:support@harborreceptionist.com" className="text-[#028090] underline">
+            support@harborreceptionist.com
+          </a>{" "}
+          for assistance.
+        </p>
+        <p>
+          <strong>Supported Carriers:</strong> Major US carriers including AT&amp;T,
+          T-Mobile, Verizon, and others. Carriers are not liable for delayed or
+          undelivered messages.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">3. Subscription and Billing</h2>
-            <p>
-              Harbor Pro costs <strong>$499 per month</strong> with a <strong>14-day free trial</strong>. Key terms:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li>Subscriptions are billed monthly on the same date you signed up</li>
-              <li>You may cancel your subscription anytime; no refunds are issued for partial months</li>
-              <li>Your subscription will automatically renew each month unless cancelled</li>
-              <li>You can manage your subscription and payment method in the Billing Portal</li>
-              <li>If payment fails, we will retry up to 3 times over 2 weeks. After that, your account may be suspended</li>
-            </ul>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">2. Use of Services</h2>
+        <p className="mb-3">You agree to use Harbor services only for lawful purposes and in accordance with these Terms. You agree not to:</p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>Use the services in any way that violates applicable laws or regulations</li>
+          <li>Impersonate any person or entity or misrepresent your affiliation</li>
+          <li>Interfere with or disrupt the integrity or performance of the services</li>
+          <li>Attempt to gain unauthorized access to any portion of the services</li>
+        </ul>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">4. Trial Period</h2>
-            <p>
-              Your free trial lasts for 14 days from the date you sign up. After the trial ends, your subscription will automatically convert to a paid monthly subscription unless you cancel beforehand. You will be charged on the first billing date following your trial.
-            </p>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">3. For Therapy Practices</h2>
+        <p className="mb-3">
+          Therapy practices using Harbor as their AI receptionist agree to:
+        </p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>
+            Maintain a valid Business Associate Agreement (BAA) with Harbor
+            where required by HIPAA
+          </li>
+          <li>
+            Only provide patient contact information for patients who have
+            consented to receive appointment-related communications
+          </li>
+          <li>
+            Ensure their own practices comply with applicable healthcare privacy
+            laws including HIPAA
+          </li>
+          <li>
+            Notify Harbor promptly of any security incidents or unauthorized
+            disclosures of patient information
+          </li>
+        </ul>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">5. Cancellation</h2>
-            <p>
-              You can cancel your subscription at any time through the Billing Portal. Cancellations are effective at the end of your current billing period. No refunds are issued for partial months.
-            </p>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">4. Subscription and Billing</h2>
+        <p className="mb-3">
+          Harbor offers subscription plans for therapy practices. Subscriptions
+          are billed monthly. The current pricing is as follows:
+        </p>
+        <ul className="list-disc pl-6 space-y-2">
+          <li>
+            <strong>Founding Practice Plan:</strong> $197/month (available to
+            the first 50 practices; price locked for life)
+          </li>
+          <li>
+            <strong>Standard Plan:</strong> $397/month
+          </li>
+        </ul>
+        <p className="mt-3">
+          Harbor reserves the right to change pricing with 30 days' notice.
+          Founding Practice pricing is grandfathered and exempt from standard
+          price increases.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">6. HIPAA Responsibility</h2>
-            <p>
-              Harbor is designed to be HIPAA-compliant, but compliance is a shared responsibility:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li><strong>Harbor's Responsibility:</strong> We provide security controls, encryption, access logging, and data retention policies</li>
-              <li><strong>Your Responsibility:</strong> You must obtain a Business Associate Agreement (BAA), train staff on HIPAA, obtain patient consent, and follow HIPAA security rules</li>
-              <li>Harbor cannot be held liable for your violation of HIPAA or misuse of the service</li>
-            </ul>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">5. Intellectual Property</h2>
+        <p>
+          The Harbor platform, including all software, content, logos, and
+          trademarks, is owned by Harbor Receptionist and protected by
+          intellectual property laws. You may not copy, modify, distribute, or
+          create derivative works without our express written permission.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">7. Disclaimer of Warranties</h2>
-            <p>
-              Harbor is provided "AS IS" without warranties of any kind, either express or implied. We do not guarantee:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li>Uninterrupted or error-free service</li>
-              <li>100% accuracy of AI-generated summaries or crisis detection</li>
-              <li>That the service will meet your specific needs</li>
-            </ul>
-            <p className="mt-3">
-              Harbor is a tool to assist your practice, not replace your clinical judgment. Always review AI-generated content for accuracy.
-            </p>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">6. Disclaimers</h2>
+        <p className="mb-3">
+          Harbor is an administrative and communication tool for scheduling and
+          appointment management. Harbor is <strong>not a medical provider</strong>{" "}
+          and does not provide medical advice, diagnosis, or treatment. The
+          services are provided "as is" without warranties of any kind, express
+          or implied.
+        </p>
+        <p>
+          Harbor does not guarantee uninterrupted or error-free operation of
+          the services. SMS delivery depends on mobile carrier availability and
+          is not guaranteed.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">8. Limitation of Liability</h2>
-            <p>
-              To the extent permitted by law, Harbor is not liable for:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li>Indirect, incidental, or consequential damages</li>
-              <li>Loss of revenue, data, or profits</li>
-              <li>Clinical decisions made based on Harbor output</li>
-              <li>Patient harm or negative outcomes related to AI responses</li>
-            </ul>
-            <p className="mt-3">
-              Harbor's total liability for any claim shall not exceed the fees you paid in the past 12 months.
-            </p>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">7. Limitation of Liability</h2>
+        <p>
+          To the maximum extent permitted by law, Harbor shall not be liable
+          for any indirect, incidental, special, consequential, or punitive
+          damages, including loss of data, revenue, or business opportunities,
+          arising out of or related to your use of the services.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">9. Data Ownership</h2>
-            <p>
-              You retain full ownership of your practice data and patient information. Harbor retains the right to:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li>Use aggregated, anonymized data to improve our service</li>
-              <li>Analyze call patterns and performance metrics to optimize AI responses</li>
-              <li>Delete your data according to our Privacy Policy</li>
-            </ul>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">8. Governing Law</h2>
+        <p>
+          These Terms are governed by the laws of the State of Oregon, without
+          regard to its conflict of law provisions. Any disputes shall be
+          resolved in the courts located in Oregon.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">10. Governing Law</h2>
-            <p>
-              These Terms of Service are governed by and construed in accordance with the laws of the State of Oregon, USA, without regard to its conflict of law principles. You agree to submit to the exclusive jurisdiction of the courts located in Oregon.
-            </p>
-          </section>
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">9. Changes to Terms</h2>
+        <p>
+          We reserve the right to modify these Terms at any time. Material
+          changes will be communicated to active users. Continued use of the
+          services after changes constitutes acceptance of the updated Terms.
+        </p>
+      </section>
 
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">11. Changes to Terms</h2>
-            <p>
-              We may update these Terms of Service from time to time. Material changes will be notified to you via email. Continued use of Harbor after notification constitutes acceptance of the updated Terms.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">12. Termination</h2>
-            <p>
-              We reserve the right to terminate your account if you:
-            </p>
-            <ul className="list-disc list-inside space-y-2 ml-2">
-              <li>Violate these Terms of Service</li>
-              <li>Engage in illegal activity or misuse of the service</li>
-              <li>Fail to pay fees for more than 30 days</li>
-              <li>Pose a security risk to Harbor or other users</li>
-            </ul>
-            <p className="mt-3">
-              Upon termination, you lose access to Harbor. We will retain your data according to our Privacy Policy.
-            </p>
-          </section>
-
-          <section>
-            <h2 className="text-xl font-bold text-gray-900 mb-3">13. Contact Information</h2>
-            <p>
-              For questions about these Terms of Service, please contact:
-            </p>
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mt-3">
-              <p className="font-medium text-gray-900">Harbor Legal Team</p>
-              <p className="text-sm text-gray-600">Email: legal@harbor.ai</p>
-            </div>
-          </section>
-        </div>
-      </div>
-    </div>
-  )
+      <section className="mb-8">
+        <h2 className="text-xl font-semibold mb-3 text-[#021E26]">10. Contact</h2>
+        <p>Questions about these Terms? Contact us:</p>
+        <address className="mt-3 not-italic">
+          <strong>Harbor Receptionist</strong>
+          <br />
+          Email:{" "}
+          <a
+            href="mailto:support@harborreceptionist.com"
+            className="text-[#028090] underline"
+          >
+            support@harborreceptionist.com
+          </a>
+          <br />
+          Website:{" "}
+          <a
+            href="https://harborreceptionist.com"
+            className="text-[#028090] underline"
+          >
+            harborreceptionist.com
+          </a>
+        </address>
+      </section>
+    </main>
+  );
 }
