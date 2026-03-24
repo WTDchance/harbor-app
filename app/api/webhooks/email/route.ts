@@ -1,5 +1,36 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createHmac } from 'crypto'
 import { getMessage } from '@/lib/agentmail'
+
+function verifySvixSignature(
+  rawBody: string,
+  headers: {
+    'svix-id': string
+    'svix-timestamp': string
+    'svix-signature': string
+  },
+  secret: string
+): boolean {
+  const msgId = headers['svix-id']
+  const msgTimestamp = headers['svix-timestamp']
+  const msgSignature = headers['svix-signature']
+
+  if (!msgId || !msgTimestamp || !msgSignature) return false
+
+  // Reject old timestamps (>5 min)
+  const ts = parseInt(msgTimestamp)
+  if (Math.abs(Date.now() / 1000 - ts) > 300) return false
+
+  const toSign = msgId + '.' + msgTimestamp + '.' + rawBody
+  const secretBytes = Buffer.from(secret.replace(/^whsec_/, ''), 'base64')
+  const computed = createHmac('sha256', secretBytes).update(toSign).digest('base64')
+
+  // Compare against all signatures in the header (space-separated, prefixed with v1,)
+  return msgSignature.split(' ').some(sig => {
+    const [version, b64] = sig.split(',')
+    return version === 'v1' && b64 === computed
+  })
+}
 
 export async function POST(req: NextRequest) {
   const rawBody = await req.text()
@@ -9,16 +40,18 @@ export async function POST(req: NextRequest) {
 
   // Verify webhook signature if secret is configured
   if (process.env.AGENTMAIL_WEBHOOK_SECRET) {
-    try {
-      const { Webhook } = await import('svix')
-      const wh = new Webhook(process.env.AGENTMAIL_WEBHOOK_SECRET)
-      wh.verify(rawBody, {
+    const verified = verifySvixSignature(
+      rawBody,
+      {
         'svix-id': svixId ?? '',
         'svix-timestamp': svixTimestamp ?? '',
         'svix-signature': svixSignature ?? '',
-      })
-    } catch (err) {
-      console.error('[email-webhook] Signature verification failed:', err)
+      },
+      process.env.AGENTMAIL_WEBHOOK_SECRET
+    )
+
+    if (!verified) {
+      console.error('[email-webhook] Signature verification failed')
       return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
     }
   }
@@ -61,7 +94,6 @@ async function handleInboundEmail(data: any) {
     // TODO: Route to the correct practice based on inbox_id
     // TODO: Trigger AI agent processing
     // TODO: Log to Supabase conversation history
-
   } catch (err) {
     console.error('[email-webhook] handleInboundEmail error:', err)
   }
