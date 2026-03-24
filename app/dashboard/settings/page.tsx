@@ -294,6 +294,15 @@ export default function SettingsPage() {
                 {calCopied ? '\u2713 Copied!' : 'Copy Link'}
               </button>
             </div>
+            <a
+              href={(calFeedUrl || '').replace('https://', 'webcal://')}
+              className="inline-flex items-center gap-1.5 text-sm text-teal-600 hover:text-teal-700 font-medium"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+              Open in Apple Calendar
+            </a>
             <div className="text-xs text-gray-500 space-y-1">
               <p><strong>Apple Calendar:</strong> File \u2192 New Calendar Subscription \u2192 paste URL</p>
               <p><strong>Google Calendar:</strong> Other calendars \u2192 From URL \u2192 paste URL</p>
