@@ -7,7 +7,7 @@ import { sendEmail, buildCallSummaryEmail } from '@/lib/email'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID
+const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SIDh
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER
 
@@ -156,7 +156,7 @@ export async function POST(request: NextRequest) {
                       }
             }
 
-            if (crisisDetected && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER) {
+            if (crisisDetected && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER && process.env.SMS_ENABLED === 'true') {
                       try {
                                   const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
                                   const alertNumber = (practice as any)?.crisis_alert_phone
