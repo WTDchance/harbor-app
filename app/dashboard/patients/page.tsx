@@ -1,7 +1,6 @@
 "use client";
 // app/dashboard/patients/page.tsx
 // Harbor — Patient Hub List View
-// Aggregates unique patients from completed intake forms with outcome history
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -11,8 +10,6 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 type Patient = {
   key: string;
@@ -30,12 +27,8 @@ type Patient = {
   gad7_history: { date: string; score: number }[];
 };
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 async function getAuthToken(): Promise<string | null> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token ?? null;
 }
 
@@ -43,15 +36,9 @@ async function apiFetch(url: string, options?: RequestInit) {
   const token = await getAuthToken();
   return fetch(url, {
     ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options?.headers ?? {}),
-    },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(options?.headers ?? {}) },
   });
 }
-
-// ─── Severity badge ───────────────────────────────────────────────────────────
 
 const SEVERITY_COLORS: Record<string, string> = {
   Minimal: "bg-green-100 text-green-800",
@@ -61,68 +48,33 @@ const SEVERITY_COLORS: Record<string, string> = {
   Severe: "bg-red-200 text-red-900",
 };
 
-function SeverityBadge({
-  score,
-  severity,
-  label,
-}: {
-  score: number | null;
-  severity: string | null;
-  label: string;
-}) {
-  if (score === null || severity === null) {
-    return <span className="text-gray-400 text-xs">—</span>;
-  }
+function SeverityBadge({ score, severity, label }: { score: number | null; severity: string | null; label: string }) {
+  if (score === null || severity === null) return <span className="text-gray-400 text-xs">—</span>;
   return (
     <div>
-      <span
-        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-          SEVERITY_COLORS[severity] ?? "bg-gray-100 text-gray-700"
-        }`}
-      >
-        {severity}
-      </span>
-      <span className="ml-1.5 text-xs text-gray-500">
-        {label}: {score}
-      </span>
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${SEVERITY_COLORS[severity] ?? "bg-gray-100 text-gray-700"}`}>{severity}</span>
+      <span className="ml-1.5 text-xs text-gray-500">{label}: {score}</span>
     </div>
   );
 }
 
-// ─── Mini sparkline ──────────────────────────────────────────────────────────
-
-function Sparkline({
-  data,
-  color,
-  max = 27,
-}: {
-  data: { date: string; score: number }[];
-  color: string;
-  max?: number;
-}) {
+function Sparkline({ data, color, max = 27 }: { data: { date: string; score: number }[]; color: string; max?: number }) {
   if (data.length < 2) return null;
-  const w = 64;
-  const h = 24;
-  const pts = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * w;
-    const y = h - (d.score / max) * h;
-    return `${x},${y}`;
-  });
+  const w = 64, h = 24;
+  const pts = data.map((d, i) => `${(i / (data.length - 1)) * w},${h - (d.score / max) * h}`);
   return (
     <svg width={w} height={h} className="inline-block">
-      <polyline
-        points={pts.join(" ")}
-        fill="none"
-        stroke={color}
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <polyline points={pts.join(" ")} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-// ─── Main Page ────────────────────────────────────────────────────────────────
+const EHR_FORMATS = [
+  { value: "harbor", label: "Harbor (full data)" },
+  { value: "simplepractice", label: "SimplePractice" },
+  { value: "therapynotes", label: "TherapyNotes" },
+  { value: "jane", label: "Jane App" },
+];
 
 export default function PatientsPage() {
   const router = useRouter();
@@ -131,6 +83,8 @@ export default function PatientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [exportFormat, setExportFormat] = useState("harbor");
+  const [exporting, setExporting] = useState(false);
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300);
@@ -143,12 +97,8 @@ export default function PatientsPage() {
     try {
       const params = new URLSearchParams();
       if (debouncedSearch) params.set("search", debouncedSearch);
-
       const res = await apiFetch(`/api/patients?${params.toString()}`);
-      if (res.status === 401) {
-        router.push("/login");
-        return;
-      }
+      if (res.status === 401) { router.push("/login"); return; }
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Failed to load");
       setPatients(json.patients ?? []);
@@ -159,41 +109,53 @@ export default function PatientsPage() {
     }
   }, [debouncedSearch, router]);
 
-  useEffect(() => {
-    fetchPatients();
-  }, [fetchPatients]);
+  useEffect(() => { fetchPatients(); }, [fetchPatients]);
 
-  const elevated = patients.filter(
-    (p) =>
-      (p.latest_phq9_score !== null && p.latest_phq9_score >= 10) ||
-      (p.latest_gad7_score !== null && p.latest_gad7_score >= 10)
+  const handleExport = async () => {
+    setExporting(true);
+    try {
+      const token = await getAuthToken();
+      const res = await fetch(`/api/patients/export?format=${exportFormat}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) throw new Error("Export failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const cd = res.headers.get("content-disposition") ?? "";
+      const match = cd.match(/filename="([^"]+)"/);
+      a.download = match ? match[1] : `harbor-patients-${exportFormat}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Export error:", err);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const elevated = patients.filter((p) =>
+    (p.latest_phq9_score !== null && p.latest_phq9_score >= 10) ||
+    (p.latest_gad7_score !== null && p.latest_gad7_score >= 10)
   ).length;
 
-  const avgIntakes =
-    patients.length > 0
-      ? Math.round(
-          patients.reduce((sum, p) => sum + p.intake_count, 0) / patients.length
-        )
-      : null;
+  const avgIntakes = patients.length > 0
+    ? Math.round(patients.reduce((sum, p) => sum + p.intake_count, 0) / patients.length)
+    : null;
 
   function formatDate(iso: string | null) {
     if (!iso) return "—";
-    return new Date(iso).toLocaleDateString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   }
 
-  function patientId(key: string) {
-    return Buffer.from(key).toString("base64url");
-  }
+  function patientId(key: string) { return Buffer.from(key).toString("base64url"); }
 
   function ageFromDob(dob: string | null) {
     if (!dob) return null;
-    const age = Math.floor(
-      (Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000)
-    );
+    const age = Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
     return isNaN(age) ? null : age;
   }
 
@@ -203,9 +165,7 @@ export default function PatientsPage() {
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Patient Hub</h1>
-            <p className="text-sm text-gray-500 mt-0.5">
-              Unified patient profiles with outcome tracking
-            </p>
+            <p className="text-sm text-gray-500 mt-0.5">Unified patient profiles with outcome tracking</p>
           </div>
           <div className="flex items-center gap-3">
             <a href="/dashboard/intake" className="text-sm text-gray-500 hover:text-teal-600 transition-colors">Intake</a>
@@ -231,14 +191,31 @@ export default function PatientsPage() {
           ))}
         </div>
 
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search by name, email, or phone…"
-            className="flex-1 px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+            className="flex-1 min-w-48 px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
           />
+          <div className="flex items-center gap-2">
+            <select
+              value={exportFormat}
+              onChange={(e) => setExportFormat(e.target.value)}
+              className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 text-gray-700"
+            >
+              {EHR_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+            </select>
+            <button
+              onClick={handleExport}
+              disabled={exporting || patients.length === 0}
+              className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              {exporting ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <span>↓</span>}
+              Export CSV
+            </button>
+          </div>
         </div>
 
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
@@ -255,9 +232,7 @@ export default function PatientsPage() {
             <div className="p-12 text-center text-gray-400">
               <p className="text-4xl mb-3">👤</p>
               <p className="font-medium text-gray-600">No patients found</p>
-              <p className="text-sm mt-1">
-                {debouncedSearch ? "Try a different search term" : "Patients will appear here once they complete an intake form"}
-              </p>
+              <p className="text-sm mt-1">{debouncedSearch ? "Try a different search term" : "Patients will appear here once they complete an intake form"}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -306,4 +281,4 @@ export default function PatientsPage() {
       </div>
     </div>
   );
-        }
+          }
