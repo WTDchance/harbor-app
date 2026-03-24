@@ -10,8 +10,7 @@ import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
-// ─── Nav items ───────────────────────────────────────────────────────────────────────────────
-
+// ─── Nav items ────────────────────────────────────────────────────────────────
 const NAV = [
   {
     href: "/dashboard",
@@ -75,22 +74,40 @@ const NAV = [
   },
 ];
 
-// ─── Layout ───────────────────────────────────────────────────────────────────────────────────
-
+// ─── Layout ───────────────────────────────────────────────────────────────────
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState<string | null>(null);
+  const [practiceName, setPracticeName] = useState<string | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (!session) {
         router.replace("/login");
       } else {
         setUserEmail(session.user.email ?? null);
         setCheckingAuth(false);
+
+        // Fetch practice name
+        try {
+          const { data: userRecord } = await supabase
+            .from("users")
+            .select("practice_id")
+            .eq("email", session.user.email)
+            .single();
+
+          if (userRecord?.practice_id) {
+            const { data: practice } = await supabase
+              .from("practices")
+              .select("name")
+              .eq("id", userRecord.practice_id)
+              .single();
+            if (practice?.name) setPracticeName(practice.name);
+          }
+        } catch {}
       }
     });
 
@@ -121,9 +138,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return pathname.startsWith(item.href);
   }
 
-  const initials = userEmail
-    ? userEmail.slice(0, 2).toUpperCase()
-    : "—";
+  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : "—";
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
@@ -134,6 +149,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         />
       )}
 
+      {/* Sidebar */}
       <aside
         className={`
           fixed md:static inset-y-0 left-0 z-30
@@ -142,18 +158,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
         `}
       >
-        <div className="flex items-center gap-3 px-5 py-5 border-b border-gray-100">
-          <div className="w-8 h-8 rounded-lg bg-teal-600 flex items-center justify-center shrink-0">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-              <path d="M8 1C4.1 1 1 4.1 1 8s3.1 7 7 7 7-3.1 7-7-3.1-7-7-7zm0 2c.8 0 1.5.7 1.5 1.5S8.8 6 8 6s-1.5-.7-1.5-1.5S7.2 3 8 3zm0 8c-2 0-3.7-1-4.7-2.5.4-.9 1.4-1.5 2.5-1.5.2 0 .4 0 .6.1.5.2 1 .4 1.6.4s1.1-.2 1.6-.4c.2-.1.4-.1.6-.1 1.1 0 2.1.6 2.5 1.5C11.7 10 10 11 8 11z" fill="white" />
+        {/* Logo + Practice Name */}
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-3 px-5 py-5 border-b border-gray-100 hover:bg-gray-50 transition-colors"
+          onClick={() => setMobileOpen(false)}
+        >
+          <div className="w-9 h-9 rounded-xl bg-teal-600 flex items-center justify-center shrink-0 shadow-sm">
+            <svg width="18" height="18" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M14 3C8 3 3 8 3 14s5 11 11 11 11-5 11-11S20 3 14 3z" fill="white" fillOpacity="0.2" />
+              <path d="M14 6c-4.4 0-8 3.6-8 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 10c-2.7 0-5-1.3-6.4-3.4.6-1.2 2-2 3.4-2 .3 0 .6.1.9.2.6.3 1.3.5 2.1.5s1.5-.2 2.1-.5c.3-.1.6-.2.9-.2 1.4 0 2.8.8 3.4 2C19 17.7 16.7 19 14 19z" fill="white" />
             </svg>
           </div>
-          <div>
-            <p className="text-sm font-bold text-gray-900 leading-tight">Harbor</p>
-            <p className="text-xs text-gray-400 leading-tight">Practice Dashboard</p>
+          <div className="min-w-0">
+            <p className="text-sm font-bold text-gray-900 leading-tight truncate">
+              {practiceName || "Harbor"}
+            </p>
+            <p className="text-xs text-teal-600 leading-tight font-medium">Practice Dashboard</p>
           </div>
-        </div>
+        </Link>
 
+        {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {NAV.map((item) => {
             const active = isActive(item);
@@ -182,6 +207,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           })}
         </nav>
 
+        {/* User footer */}
         <div className="px-3 py-4 border-t border-gray-100">
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
             <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center shrink-0">
@@ -203,7 +229,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
 
+      {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Mobile header */}
         <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-white border-b border-gray-100">
           <button
             onClick={() => setMobileOpen(true)}
@@ -213,7 +241,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
-          <span className="text-sm font-semibold text-gray-900">Harbor</span>
+          <span className="text-sm font-semibold text-gray-900">
+            {practiceName || "Harbor"}
+          </span>
         </div>
 
         <main className="flex-1 overflow-auto">
