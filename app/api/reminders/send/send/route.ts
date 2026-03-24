@@ -12,6 +12,11 @@ function formatTime(time: string) {
         }
 
         async function sendSMS(to: string, body: string) {
+          // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
+          if (process.env.SMS_ENABLED !== 'true') {
+            console.log(`[SMS DISABLED] Would have sent to ${to}: ${body}`)
+            return { sid: null, status: 'disabled' }
+          }
           const sid = process.env.TWILIO_ACCOUNT_SID!
             const token = process.env.TWILIO_AUTH_TOKEN!
               const from = process.env.TWILIO_PHONE_NUMBER!
