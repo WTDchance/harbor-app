@@ -33,6 +33,12 @@ export async function sendSMS(
   toNumber: string,
   body: string
 ): Promise<string | null> {
+  // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
+  if (process.env.SMS_ENABLED !== 'true') {
+    console.log(`[SMS DISABLED] Would have sent to ${toNumber}: ${body}`)
+    return null
+  }
+
   if (!twilioClient) {
     console.warn('⚠️ Twilio not configured - message not sent')
     return null
@@ -74,6 +80,12 @@ export async function sendSMSFromNumber(
   toNumber: string,
   body: string
 ): Promise<string | null> {
+  // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
+  if (process.env.SMS_ENABLED !== 'true') {
+    console.log(`[SMS DISABLED] Would have sent from ${fromTwilioNumber} to ${toNumber}: ${body}`)
+    return null
+  }
+
   if (!twilioClient) {
     console.warn('⚠️ Twilio not configured - SMS not sent')
     return null
