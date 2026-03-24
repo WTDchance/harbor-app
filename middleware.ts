@@ -35,7 +35,7 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   // Allow public routes
-  const publicPaths = ['/login', '/api/', '/onboard', '/_next', '/favicon', '/privacy', '/terms']
+  const publicPaths = ['/login', '/api/', '/onboard', '/intake', '/_next', '/favicon', '/privacy', '/terms']
   const exactPublicPaths = ['/']
   if (exactPublicPaths.includes(pathname) || publicPaths.some(p => pathname.startsWith(p))) {
     return supabaseResponse
