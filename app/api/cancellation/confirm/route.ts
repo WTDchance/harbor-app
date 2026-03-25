@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { sendEmail } from '@/lib/email'
 import twilio from 'twilio'
+import { triggerCheckinNotification } from '@/lib/kasa'
 
 export async function POST(request: NextRequest) {
   try {
@@ -23,7 +24,7 @@ export async function POST(request: NextRequest) {
 
       const { data: reminder } = await supabaseAdmin
         .from('appointment_reminders')
-        .select('*, practices(name, therapist_name, therapist_phone)')
+        .select('*, practices(name, therapist_name, therapist_phone, kasa_email, kasa_password, kasa_device_alias, kasa_auto_off_minutes)')
         .eq('patient_phone', from)
         .gte('appointment_time', today.toISOString())
         .order('appointment_time', { ascending: true })
@@ -67,6 +68,26 @@ export async function POST(request: NextRequest) {
           .eq('patient_phone', from)
           .order('arrived_at', { ascending: false })
           .limit(1)
+
+        // Trigger smart device check-in notification (e.g., turn on a light/plug)
+        if (practice?.kasa_email && practice?.kasa_password && practice?.kasa_device_alias) {
+          const autoOffMinutes = practice.kasa_auto_off_minutes || 5
+          triggerCheckinNotification(
+            reminder.practice_id,
+            practice.kasa_email,
+            practice.kasa_password,
+            practice.kasa_device_alias,
+            autoOffMinutes
+          ).then((result) => {
+            if (result.success) {
+              console.log(`✓ Smart device "${result.deviceName}" triggered for ${reminder.patient_name}`)
+            } else {
+              console.warn(`⚠️ Smart device trigger failed: ${result.error}`)
+            }
+          }).catch((err) => {
+            console.error('Smart device trigger error:', err)
+          })
+        }
 
         // Reply to patient
         return new Response(
