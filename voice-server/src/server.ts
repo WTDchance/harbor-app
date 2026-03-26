@@ -33,6 +33,27 @@ const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY })
 // Voice model — Claude 3.5 Haiku: fast (~300-500ms), cheap, great at conversation
 const VOICE_MODEL = 'claude-3-5-haiku-20241022'
 
+// Startup API check — fail fast if key is bad
+;(async () => {
+  if (!ANTHROPIC_API_KEY) {
+    console.error('❌ ANTHROPIC_API_KEY is NOT set!')
+    return
+  }
+  console.log(`🔑 Anthropic key present (${ANTHROPIC_API_KEY.substring(0, 10)}...)`)
+  try {
+    const test = await anthropic.messages.create({
+      model: VOICE_MODEL,
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'Say "ok"' }],
+    })
+    const txt = test.content[0].type === 'text' ? test.content[0].text : '?'
+    console.log(`✅ Haiku API verified: "${txt}"`)
+  } catch (err: any) {
+    console.error(`❌ Haiku API FAILED: ${err?.status} ${err?.message?.substring(0, 200)}`)
+    console.error(`❌ Full error:`, JSON.stringify(err?.error || err, null, 2)?.substring(0, 500))
+  }
+})()
+
 // ── Practice cache ─────────────────────────────────────────────────────────
 let practiceCache: any[] = []
 let practiceCacheTime = 0
@@ -395,7 +416,9 @@ async function getLLMResponse(session: CallSession, utterance: string): Promise<
     return text
   } catch (error: any) {
     const latency = Date.now() - t0
-    console.error(`Haiku error (${latency}ms):`, error?.message?.substring(0, 120) || error)
+    console.error(`❌ Haiku error (${latency}ms):`, error?.status, error?.message?.substring(0, 200) || error)
+    console.error(`❌ Error detail:`, JSON.stringify(error?.error || {}, null, 2)?.substring(0, 500))
+    console.error(`❌ Messages sent:`, JSON.stringify(trimmed.map(m => ({ role: m.role, len: m.content.length }))))
 
     // Remove user message on failure
     session.messages.pop()
