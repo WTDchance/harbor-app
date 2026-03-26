@@ -168,7 +168,12 @@ wss.on('connection', async (ws: WebSocket, req) => {
 
   ws.on('message', async (data) => {
     try {
-      const message = JSON.parse(data.toString())
+      const raw = data.toString()
+      const message = JSON.parse(raw)
+
+      // Log ALL incoming messages for debugging (truncate long ones)
+      const logPreview = raw.length > 200 ? raw.substring(0, 200) + '...' : raw
+      console.log(`📨 WS msg [${message.type || 'no-type'}]: ${logPreview}`)
 
       switch (message.type) {
         case 'setup':
@@ -189,10 +194,11 @@ wss.on('connection', async (ws: WebSocket, req) => {
           break
 
         default:
-          console.log(`❓ Unknown message type: ${message.type}`, message)
+          console.log(`❓ Unknown message type: ${message.type}`, JSON.stringify(message).substring(0, 300))
       }
     } catch (error) {
       console.error('WebSocket message error:', error)
+      console.error('Raw data:', data.toString().substring(0, 500))
     }
   })
 
@@ -368,13 +374,16 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
     return
   }
 
-  // ── Normal conversation — Gemini Flash with streaming ────────────────
-  // Stream tokens to ConversationRelay for lowest latency
-  const response = await streamGeminiToRelay(ws, session, utterance)
-  if (!response) {
-    // Streaming failed, fall back to non-streaming
-    const fallback = await getGeminiResponse(session, utterance)
-    streamToConversationRelay(ws, session, utterance, fallback)
+  // ── Normal conversation — Gemini Flash ────────────────────────────────
+  // Using non-streaming for reliability. Streaming can be re-enabled once stable.
+  try {
+    const response = await getGeminiResponse(session, utterance)
+    sendText(ws, response, true)
+    session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${response}`)
+    console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 100)}..."`)
+  } catch (err) {
+    console.error('Gemini response error in handlePrompt:', err)
+    sendText(ws, "I'm sorry, I'm having a brief technical issue. Could you repeat that?", true)
   }
 }
 
@@ -423,6 +432,17 @@ async function handleDisconnect(sessionId: string) {
 
 // ── Gemini Flash integration ───────────────────────────────────────────────
 
+// Timeout helper — prevents any API call from hanging forever
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val) },
+      (err) => { clearTimeout(timer); reject(err) }
+    )
+  })
+}
+
 async function getGeminiResponse(session: CallSession, utterance: string): Promise<string> {
   // Add user message to conversation history
   session.conversationHistory.push({
@@ -444,7 +464,14 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
   // Try up to 2 times for transient errors
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await genai.models.generateContent(geminiConfig)
+      const t0 = Date.now()
+      const response = await withTimeout(
+        genai.models.generateContent(geminiConfig),
+        8000,  // 8 second hard timeout
+        'Gemini generateContent'
+      )
+      const latency = Date.now() - t0
+      console.log(`⚡ Gemini response in ${latency}ms`)
 
       const text = response.text || "I'm sorry, I didn't catch that. Could you say that again?"
 
@@ -471,6 +498,8 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
     }
   }
 
+  // Remove the user message since we couldn't get a response
+  session.conversationHistory.pop()
   return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
 }
 
