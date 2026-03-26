@@ -479,6 +479,7 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
       maxOutputTokens: 150,   // Keep responses short for voice
       temperature: 0.6,       // Natural but focused — less rambling
       topP: 0.85,
+      thinkingConfig: { thinkingBudget: 0 },  // CRITICAL: disable thinking for speed
     },
   }
 
@@ -488,7 +489,7 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
       const t0 = Date.now()
       const response = await withTimeout(
         genai.models.generateContent(geminiConfig),
-        8000,  // 8 second hard timeout
+        12000,  // 12 second hard timeout (generous for retries)
         'Gemini generateContent'
       )
       const latency = Date.now() - t0
