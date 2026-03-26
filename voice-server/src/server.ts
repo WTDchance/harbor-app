@@ -146,20 +146,21 @@ app.post('/twiml', async (req, res) => {
   const wsProtocol = process.env.NODE_ENV === 'production' ? 'wss' : 'ws'
   const wsUrl = `${wsProtocol}://${wsHost}/ws?callerPhone=${encodeURIComponent(callerNumber)}&calledNumber=${encodeURIComponent(calledNumber)}`
 
-  // Use ElevenLabs for most natural voice if configured, otherwise Google
-  const useElevenLabs = !!ELEVENLABS_VOICE_ID
-  const voiceAttrs = useElevenLabs
-    ? `voice="${ELEVENLABS_VOICE_ID}"
-      ttsProvider="ElevenLabs"`
-    : `voice="Google.en-US-Journey-F"
-      ttsProvider="Google"`
+  // ElevenLabs voice config — natively supported by Twilio ConversationRelay (no API key needed)
+  // Format: voiceId-speed_stability_similarity
+  // Speed: 0.7-1.2 (0.9 = slightly slower, warm/calm for receptionist)
+  // Stability: 0.0-1.0 (0.7 = consistent but not robotic)
+  // Similarity: 0.0-1.0 (0.8 = very natural sounding)
+  const voiceId = ELEVENLABS_VOICE_ID || 'UgBBYS2sOqTuMpoF3BR0' // Twilio default en-US ElevenLabs voice
+  const voiceWithSettings = `${voiceId}-0.9_0.7_0.8`
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
       url="${wsUrl.replace(/&/g, '&amp;')}"
-      ${voiceAttrs}
+      voice="${voiceWithSettings}"
+      ttsProvider="ElevenLabs"
       transcriptionProvider="Google"
       speechModel="telephony"
       language="en-US"
@@ -557,7 +558,7 @@ server.listen(PORT, () => {
 ║  Anthropic: ${ANTHROPIC_API_KEY ? '✓' : '✗'}                                    ║
 ║  Supabase:  ${SUPABASE_URL ? '✓' : '✗'}                                    ║
 ║  Twilio:    ${TWILIO_ACCOUNT_SID ? '✓' : '✗'}                                    ║
-║  Voice:     ${ELEVENLABS_VOICE_ID ? 'ElevenLabs' : 'Google Journey-F'}                          ║
+║  Voice:     ElevenLabs Flash 2.5                     ║
 ╚══════════════════════════════════════════════════╝
   `)
 })
