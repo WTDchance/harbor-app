@@ -1,7 +1,6 @@
 // Harbor Voice Server
-// Standalone WebSocket server for Twilio ConversationRelay + LLM
+// Standalone WebSocket server for Twilio ConversationRelay + Gemini
 // Handles real-time voice AI receptionist with crisis detection
-// Supports Groq (fastest) and Gemini as LLM backends
 
 import 'dotenv/config'
 import express from 'express'
@@ -23,22 +22,15 @@ const PORT = parseInt(process.env.PORT || '3001', 10)
 const SUPABASE_URL = process.env.SUPABASE_URL || ''
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
-const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || ''
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || ''
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || ''
-
-// ── LLM Backend Selection ──────────────────────────────────────────────────
-// Groq is ~200-400ms (fastest inference available). Gemini is fallback.
-const USE_GROQ = !!GROQ_API_KEY
-const LLM_BACKEND = USE_GROQ ? 'groq' : 'gemini'
 
 // ── Clients ────────────────────────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
 // ── Practice cache (avoid DB hit on every call) ───────────────────────────
-// Caches practice data in memory, refreshes every 5 minutes
 let practiceCache: any[] = []
 let practiceCacheTime = 0
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
@@ -65,15 +57,58 @@ async function getCachedPractices(): Promise<any[]> {
 // Pre-load cache on startup
 getCachedPractices().catch(console.error)
 
+// ── Model auto-detection at startup ──────────────────────────────────────
+// Try gemini-2.0-flash-lite first (non-thinking, fastest).
+// If unavailable (404), fall back to gemini-2.5-flash-lite.
+let activeModel = 'gemini-2.0-flash-lite' // optimistic default
+
+async function detectBestModel() {
+  try {
+    const response = await genai.models.generateContent({
+      model: 'gemini-2.0-flash-lite',
+      contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+      config: { maxOutputTokens: 5 },
+    })
+    if (response.text) {
+      activeModel = 'gemini-2.0-flash-lite'
+      console.log('🧠 Model: gemini-2.0-flash-lite (non-thinking, fastest)')
+      return
+    }
+  } catch (err: any) {
+    console.log(`ℹ️ gemini-2.0-flash-lite not available: ${err?.message?.substring(0, 80)}`)
+  }
+
+  // Try gemini-2.0-flash
+  try {
+    const response = await genai.models.generateContent({
+      model: 'gemini-2.0-flash',
+      contents: [{ role: 'user', parts: [{ text: 'Hi' }] }],
+      config: { maxOutputTokens: 5 },
+    })
+    if (response.text) {
+      activeModel = 'gemini-2.0-flash'
+      console.log('🧠 Model: gemini-2.0-flash (non-thinking)')
+      return
+    }
+  } catch (err: any) {
+    console.log(`ℹ️ gemini-2.0-flash not available: ${err?.message?.substring(0, 80)}`)
+  }
+
+  // Fall back to 2.5-flash-lite with thinking disabled
+  activeModel = 'gemini-2.5-flash-lite'
+  console.log('🧠 Model: gemini-2.5-flash-lite (thinking disabled)')
+}
+
+// Run model detection at startup (non-blocking)
+detectBestModel().catch(console.error)
+
 // ── Session tracking ───────────────────────────────────────────────────────
 interface CallSession {
   callSid: string
   practiceId: string | null
   practiceConfig: PracticeConfig | null
   systemPrompt: string
-  // Groq uses OpenAI format, Gemini uses its own format
-  groqHistory: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
-  geminiHistory: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }>
+  conversationHistory: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }>
   transcript: string[]
   callerPhone: string | null
   crisisState: CrisisAssessment | null
@@ -82,11 +117,10 @@ interface CallSession {
 
 const sessions = new Map<string, CallSession>()
 
-// Max conversation turns to send to Gemini (system prompt + last N exchanges)
-// Keeps context small for speed. 6 user+model pairs = 12 messages + 2 system = 14 total
+// Max conversation turns to keep (6 user+model pairs = 12 messages)
 const MAX_HISTORY_TURNS = 12
 
-// ── Express app (health check + TwiML endpoint) ───────────────────────────
+// ── Express app ────────────────────────────────────────────────────────────
 const app = express()
 app.use(express.urlencoded({ extended: true }))
 app.use(express.json())
@@ -95,14 +129,13 @@ app.get('/health', (_req, res) => {
   res.json({
     status: 'ok',
     service: 'harbor-voice-server',
+    model: activeModel,
     activeCalls: sessions.size,
     uptime: process.uptime(),
   })
 })
 
 // TwiML endpoint — Twilio calls this when a voice call comes in.
-// Returns TwiML that connects the call to our WebSocket via ConversationRelay.
-// Does a quick practice lookup so the welcome greeting is personalized.
 app.post('/twiml', async (req, res) => {
   const callerNumber = req.body.From || 'unknown'
   const calledNumber = req.body.To || ''
@@ -110,7 +143,7 @@ app.post('/twiml', async (req, res) => {
 
   console.log(`📞 Incoming call: ${callerNumber} → ${calledNumber} (${callSid})`)
 
-  // Fast practice lookup from cache (no DB hit per call)
+  // Fast practice lookup from cache
   let welcomeGreeting = 'Thank you for calling, how can I help you today?'
   try {
     if (calledNumber) {
@@ -127,25 +160,20 @@ app.post('/twiml', async (req, res) => {
       }
     }
   } catch (err) {
-    console.warn('⚠️ Could not look up practice for greeting, using default:', err)
+    console.warn('⚠️ Could not look up practice for greeting:', err)
   }
 
-  // XML-escape the greeting for safe embedding in TwiML
   const greetingEscaped = welcomeGreeting
     .replace(/&/g, '&amp;')
     .replace(/"/g, '&quot;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
 
-  // The WebSocket URL where ConversationRelay will connect
   const wsHost = process.env.VOICE_SERVER_HOST || req.headers.host || 'localhost:3001'
   const wsProtocol = process.env.NODE_ENV === 'production' ? 'wss' : 'ws'
   const wsUrl = `${wsProtocol}://${wsHost}/ws?callerPhone=${encodeURIComponent(callerNumber)}&calledNumber=${encodeURIComponent(calledNumber)}`
-
-  // XML-escape the URL (& → &amp;) so TwiML parses correctly
   const wsUrlEscaped = wsUrl.replace(/&/g, '&amp;')
 
-  // Return TwiML that connects to ConversationRelay
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
@@ -177,22 +205,17 @@ wss.on('connection', async (ws: WebSocket, req) => {
 
   console.log(`🔌 WebSocket connected | caller: ${callerPhone} | called: ${calledNumber}`)
 
-  // Temp session ID until we get the callSid from the setup message
   let sessionId = `temp-${Date.now()}`
 
-  // Keep WebSocket alive — ping every 20s to prevent timeout disconnects
+  // Keep WebSocket alive — ping every 20s
   const pingInterval = setInterval(() => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.ping()
-    }
+    if (ws.readyState === WebSocket.OPEN) ws.ping()
   }, 20000)
 
   ws.on('message', async (data) => {
     try {
       const raw = data.toString()
       const message = JSON.parse(raw)
-
-      // Log ALL incoming messages for debugging (truncate long ones)
       const logPreview = raw.length > 200 ? raw.substring(0, 200) + '...' : raw
       console.log(`📨 WS msg [${message.type || 'no-type'}]: ${logPreview}`)
 
@@ -201,21 +224,17 @@ wss.on('connection', async (ws: WebSocket, req) => {
           await handleSetup(ws, message, callerPhone, calledNumber)
           sessionId = message.callSid
           break
-
         case 'prompt':
           await handlePrompt(ws, message, sessionId)
           break
-
         case 'interrupt':
           handleInterrupt(sessionId, message)
           break
-
         case 'dtmf':
-          console.log(`🔢 DTMF received: ${message.digit} (call: ${sessionId})`)
+          console.log(`🔢 DTMF: ${message.digit} (${sessionId})`)
           break
-
         default:
-          console.log(`❓ Unknown message type: ${message.type}`, JSON.stringify(message).substring(0, 300))
+          console.log(`❓ Unknown: ${message.type}`, JSON.stringify(message).substring(0, 300))
       }
     } catch (error) {
       console.error('WebSocket message error:', error)
@@ -223,15 +242,8 @@ wss.on('connection', async (ws: WebSocket, req) => {
     }
   })
 
-  ws.on('close', () => {
-    clearInterval(pingInterval)
-    handleDisconnect(sessionId)
-  })
-
-  ws.on('error', (error) => {
-    clearInterval(pingInterval)
-    console.error(`WebSocket error (${sessionId}):`, error)
-  })
+  ws.on('close', () => { clearInterval(pingInterval); handleDisconnect(sessionId) })
+  ws.on('error', (error) => { clearInterval(pingInterval); console.error(`WS error (${sessionId}):`, error) })
 })
 
 // ── Message handlers ───────────────────────────────────────────────────────
@@ -245,20 +257,16 @@ async function handleSetup(
   const callSid = message.callSid
   console.log(`📋 Setup for call: ${callSid}`)
 
-  // Look up practice by the Twilio number that was called
   let practiceId: string | null = null
   let practiceConfig: PracticeConfig | null = null
 
   if (calledNumber) {
     const digits = calledNumber.replace(/\D/g, '').slice(-10)
-
     const practices = await getCachedPractices()
-
     if (practices.length > 0) {
       const match = practices.find(
         (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
       )
-
       if (match) {
         practiceId = match.id
         practiceConfig = {
@@ -282,30 +290,24 @@ async function handleSetup(
   }
 
   if (!practiceConfig) {
-    console.warn('⚠️ Could not match practice — using default config')
-    practiceConfig = {
-      therapist_name: 'the therapist',
-      practice_name: 'the practice',
-    }
+    console.warn('⚠️ No practice match — using defaults')
+    practiceConfig = { therapist_name: 'the therapist', practice_name: 'the practice' }
   }
 
-  // Build the system prompt — stored separately, passed as systemInstruction to Gemini
   const systemPrompt = buildVoiceSystemPrompt(practiceConfig)
 
-  // Create session
   const session: CallSession = {
     callSid,
     practiceId,
     practiceConfig,
     systemPrompt,
-    groqHistory: [{ role: 'system', content: systemPrompt }],
-    geminiHistory: [],
+    conversationHistory: [],
     transcript: [],
     callerPhone,
     crisisState: null,
     startTime: new Date(),
   }
-  console.log(`🧠 LLM backend: ${LLM_BACKEND} | prompt: ${systemPrompt.length} chars`)
+  console.log(`🧠 Using model: ${activeModel} | prompt: ${systemPrompt.length} chars`)
 
   sessions.set(callSid, session)
 }
@@ -313,56 +315,42 @@ async function handleSetup(
 async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
   const session = sessions.get(sessionId)
   if (!session) {
-    console.warn(`No session found for ${sessionId}`)
-    sendText(ws, "I'm sorry, I'm having a technical issue. Could you please call back?", true)
+    console.warn(`No session for ${sessionId}`)
+    sendText(ws, "I'm sorry, I'm having a technical issue. Could you please call back?")
     return
   }
 
   const utterance = message.voicePrompt || ''
-  const historyLen = USE_GROQ ? session.groqHistory.length : session.geminiHistory.length
-  console.log(`🗣️ Caller: "${utterance}" (${sessionId}) [history: ${historyLen} msgs]`)
+  console.log(`🗣️ Caller: "${utterance}" (${sessionId}) [history: ${session.conversationHistory.length} msgs]`)
 
-  // Don't waste a Gemini call if the WebSocket already closed
   if (ws.readyState !== WebSocket.OPEN) {
-    console.warn(`⚠️ WebSocket closed before handling prompt (${sessionId})`)
+    console.warn(`⚠️ WS closed before prompt (${sessionId})`)
     return
   }
 
-  // Save to raw transcript
   session.transcript.push(`Caller: ${utterance}`)
 
-  // ── Crisis tripwire scan ─────────────────────────────────────────────
+  // ── Crisis tripwire ──────────────────────────────────────────────────
   const scan = scanUtterance(utterance)
 
   if (scan.immediateCrisis) {
-    // Tier 1: Immediate crisis — skip LLM, respond with crisis protocol NOW
-    console.log(`🚨 IMMEDIATE CRISIS DETECTED: ${scan.matchedPhrases.join(', ')} (${sessionId})`)
-
+    console.log(`🚨 CRISIS: ${scan.matchedPhrases.join(', ')} (${sessionId})`)
     const crisisResponse = getCrisisResponse(session.practiceConfig?.therapist_name || 'your therapist')
-    sendText(ws, crisisResponse, true)
+    sendText(ws, crisisResponse)
     session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${crisisResponse}`)
-
-    // Update crisis state
     session.crisisState = {
-      level: 'crisis',
-      immediate: true,
-      triggerPhrases: scan.matchedPhrases,
-      recommendedAction: 'crisis_protocol',
+      level: 'crisis', immediate: true,
+      triggerPhrases: scan.matchedPhrases, recommendedAction: 'crisis_protocol',
     }
-
-    // Fire-and-forget: alert therapist, log to DB
     alertTherapist(session, scan.matchedPhrases).catch(console.error)
     logCrisisAlert(session, scan.matchedPhrases).catch(console.error)
     return
   }
 
   if (scan.tripwireTriggered) {
-    // Tier 2: Tripwire fired — get Gemini response AND run Sonnet analysis in parallel
-    console.log(`⚠️ Tripwire triggered: ${scan.matchedPhrases.join(', ')} (${sessionId})`)
-
-    // Run both in parallel
-    const [geminiResponse, sonnetAssessment] = await Promise.all([
-      getLLMResponse(session, utterance),
+    console.log(`⚠️ Tripwire: ${scan.matchedPhrases.join(', ')} (${sessionId})`)
+    const [llmResponse, sonnetAssessment] = await Promise.all([
+      getGeminiResponse(session, utterance),
       analyzeWithSonnet(
         session.transcript.join('\n'),
         scan.matchedPhrases,
@@ -374,57 +362,48 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
     ])
 
     session.crisisState = sonnetAssessment
-    console.log(`🔍 Sonnet assessment: ${sonnetAssessment.level} → ${sonnetAssessment.recommendedAction}`)
+    console.log(`🔍 Sonnet: ${sonnetAssessment.level} → ${sonnetAssessment.recommendedAction}`)
 
     if (sonnetAssessment.recommendedAction === 'crisis_protocol') {
-      // Sonnet says this is a real crisis — override Gemini's response
       const crisisResponse = getCrisisResponse(session.practiceConfig?.therapist_name || 'your therapist')
-      sendText(ws, crisisResponse, true)
+      sendText(ws, crisisResponse)
       session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${crisisResponse}`)
       alertTherapist(session, scan.matchedPhrases).catch(console.error)
       logCrisisAlert(session, scan.matchedPhrases).catch(console.error)
     } else if (sonnetAssessment.recommendedAction === 'gentle_checkin') {
-      // Sonnet recommends a gentle check-in — use its suggested response or default
       const checkinResponse = getGentleCheckinResponse(
         session.practiceConfig?.therapist_name || 'your therapist',
         sonnetAssessment.sonnetAnalysis
       )
-      sendText(ws, checkinResponse, true)
+      sendText(ws, checkinResponse)
       session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${checkinResponse}`)
-    } else if (sonnetAssessment.recommendedAction === 'escalate_therapist') {
-      // Send Gemini's response but also quietly alert the therapist
-      sendText(ws, geminiResponse, true)
-      session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${geminiResponse}`)
-      alertTherapist(session, scan.matchedPhrases).catch(console.error)
     } else {
-      // False positive — just use Gemini's response
-      sendText(ws, geminiResponse, true)
-      session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${geminiResponse}`)
+      sendText(ws, llmResponse)
+      session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${llmResponse}`)
+      if (sonnetAssessment.recommendedAction === 'escalate_therapist') {
+        alertTherapist(session, scan.matchedPhrases).catch(console.error)
+      }
     }
     return
   }
 
-  // ── Normal conversation ──────────────────────────────────────────────
+  // ── Normal conversation ────────────────────────────────────────────────
   try {
-    const response = await getLLMResponse(session, utterance)
-    sendText(ws, response, true)
+    const response = await getGeminiResponse(session, utterance)
+    sendText(ws, response)
     session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${response}`)
     console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 100)}..."`)
   } catch (err) {
-    console.error('LLM response error in handlePrompt:', err)
-    sendText(ws, "I'm sorry, I'm having a brief technical issue. Could you repeat that?", true)
+    console.error('LLM error:', err)
+    sendText(ws, "I'm sorry, I'm having a brief technical issue. Could you repeat that?")
   }
 }
 
 function handleInterrupt(sessionId: string, message: any) {
   const session = sessions.get(sessionId)
   if (!session) return
-
   console.log(`🤚 Interrupted (${sessionId}): "${message.utteranceUntilInterrupt}"`)
-  // We don't need to do anything special — ConversationRelay handles stopping TTS.
-  // Just note it in the transcript for context.
   if (message.utteranceUntilInterrupt) {
-    // Update the last assistant message to show what was actually heard
     const lastIdx = session.transcript.length - 1
     if (lastIdx >= 0 && session.transcript[lastIdx].startsWith(session.practiceConfig?.ai_name || 'Harbor')) {
       session.transcript[lastIdx] += ` [interrupted after: "${message.utteranceUntilInterrupt}"]`
@@ -439,7 +418,6 @@ async function handleDisconnect(sessionId: string) {
   const duration = Math.round((Date.now() - session.startTime.getTime()) / 1000)
   console.log(`📴 Call ended: ${sessionId} (${duration}s)`)
 
-  // Log the call to Supabase
   try {
     if (session.practiceId) {
       await supabase.from('call_logs').insert({
@@ -447,10 +425,10 @@ async function handleDisconnect(sessionId: string) {
         patient_phone: session.callerPhone || 'unknown',
         transcript: session.transcript.join('\n'),
         duration_seconds: duration,
-        summary: '', // Could generate with Sonnet post-call if needed
+        summary: '',
         crisis_detected: session.crisisState?.level === 'crisis',
       })
-      console.log(`✓ Call logged to DB (${sessionId})`)
+      console.log(`✓ Call logged (${sessionId})`)
     }
   } catch (error) {
     console.error('Failed to log call:', error)
@@ -459,10 +437,8 @@ async function handleDisconnect(sessionId: string) {
   sessions.delete(sessionId)
 }
 
-// ── LLM Integration ──────────────────────────────────────────────────────
-// Routes to Groq (fastest) or Gemini based on available API keys
+// ── Gemini LLM ──────────────────────────────────────────────────────────
 
-// Timeout helper — prevents any API call from hanging forever
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
@@ -473,159 +449,79 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   })
 }
 
-async function getLLMResponse(session: CallSession, utterance: string): Promise<string> {
-  if (USE_GROQ) {
-    return getGroqResponse(session, utterance)
-  }
-  return getGeminiResponse(session, utterance)
-}
+async function getGeminiResponse(session: CallSession, utterance: string): Promise<string> {
+  session.conversationHistory.push({ role: 'user', parts: [{ text: utterance }] })
 
-// ── Groq (Llama 3.3 70B — ~200-400ms responses) ─────────────────────────
+  const trimmedHistory = session.conversationHistory.slice(-MAX_HISTORY_TURNS)
 
-async function getGroqResponse(session: CallSession, utterance: string): Promise<string> {
-  // Add user message
-  session.groqHistory.push({ role: 'user', content: utterance })
-  // Also track in Gemini format for crisis detection fallback
-  session.geminiHistory.push({ role: 'user', parts: [{ text: utterance }] })
-
-  // Trim: keep system message (index 0) + last N messages
-  const systemMsg = session.groqHistory[0]
-  const recentMsgs = session.groqHistory.slice(1).slice(-MAX_HISTORY_TURNS)
-  const messages = [systemMsg, ...recentMsgs]
-
-  const body = {
-    model: 'llama-3.3-70b-versatile',
-    messages,
-    max_tokens: 150,
+  // Build config based on model — non-thinking models don't need thinkingConfig
+  const isThinkingModel = activeModel.includes('2.5')
+  const config: any = {
+    systemInstruction: session.systemPrompt,
+    maxOutputTokens: 150,
     temperature: 0.6,
-    top_p: 0.85,
+    topP: 0.85,
+  }
+  if (isThinkingModel) {
+    config.thinkingConfig = { thinkingBudget: 0 }
   }
 
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const t0 = Date.now()
-      const res = await withTimeout(
-        fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${GROQ_API_KEY}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(body),
-        }),
-        8000,  // 8s timeout — Groq should respond in <1s
-        'Groq chat'
-      )
-      const latency = Date.now() - t0
-
-      if (!res.ok) {
-        const errText = await res.text().catch(() => 'unknown')
-        throw new Error(`Groq ${res.status}: ${errText.substring(0, 200)}`)
-      }
-
-      const data = await res.json() as any
-      const text = data.choices?.[0]?.message?.content || "I'm sorry, I didn't catch that. Could you say that again?"
-      console.log(`⚡ Groq response in ${latency}ms | len=${text.length} | model=llama-3.3-70b | history=${messages.length} msgs`)
-
-      // Save to history
-      session.groqHistory.push({ role: 'assistant', content: text })
-      session.geminiHistory.push({ role: 'model', parts: [{ text }] })
-
-      return text
-    } catch (error: any) {
-      console.error(`Groq error (attempt ${attempt + 1}):`, error?.message || error)
-      if (attempt === 0) {
-        await new Promise(resolve => setTimeout(resolve, 200))
-      }
-    }
-  }
-
-  // If Groq fails, try Gemini as fallback
-  console.warn('⚠️ Groq failed, falling back to Gemini')
-  // Remove the user message we added (getGeminiResponse will add it again)
-  session.groqHistory.pop()
-  session.geminiHistory.pop()
-  return getGeminiResponse(session, utterance)
-}
-
-// ── Gemini (fallback or primary if no Groq key) ─────────────────────────
-
-async function getGeminiResponse(session: CallSession, utterance: string): Promise<string> {
-  session.geminiHistory.push({ role: 'user', parts: [{ text: utterance }] })
-  if (USE_GROQ) {
-    // Also sync to Groq history for consistency
-    session.groqHistory.push({ role: 'user', content: utterance })
-  }
-
-  const trimmedHistory = session.geminiHistory.slice(-MAX_HISTORY_TURNS)
-
-  // Try non-thinking models first, then thinking model as last resort
-  const modelAttempts = [
-    { model: 'gemini-2.0-flash-lite', config: { maxOutputTokens: 150, temperature: 0.6, topP: 0.85 } },
-    { model: 'gemini-2.5-flash-lite', config: { maxOutputTokens: 150, temperature: 0.6, topP: 0.85, thinkingConfig: { thinkingBudget: 0 } } },
-  ]
-
-  for (const { model, config } of modelAttempts) {
-    try {
-      const t0 = Date.now()
       const response = await withTimeout(
         genai.models.generateContent({
-          model,
+          model: activeModel,
           contents: trimmedHistory,
-          config: {
-            systemInstruction: session.systemPrompt,
-            ...config,
-          },
+          config,
         }),
         10000,
-        `Gemini ${model}`
+        `Gemini ${activeModel}`
       )
       const latency = Date.now() - t0
       const rawText = response.text
       const text = rawText || "I'm sorry, I didn't catch that. Could you say that again?"
-      console.log(`⚡ Gemini response in ${latency}ms | model=${model} | len=${text.length} | history=${trimmedHistory.length} msgs`)
+      console.log(`⚡ ${activeModel} in ${latency}ms | len=${text.length} | history=${trimmedHistory.length}`)
 
-      session.geminiHistory.push({ role: 'model', parts: [{ text }] })
-      if (USE_GROQ) {
-        session.groqHistory.push({ role: 'assistant', content: text })
-      }
+      session.conversationHistory.push({ role: 'model', parts: [{ text }] })
       return text
     } catch (error: any) {
-      console.error(`Gemini ${model} error:`, error?.message?.substring(0, 100) || error)
-      // If 404 (model not available), try next model
-      if (error?.message?.includes('404') || error?.status === 404) continue
-      // For other errors, also try next model
-      continue
+      console.error(`Gemini error (attempt ${attempt + 1}, ${activeModel}):`, error?.message?.substring(0, 120) || error)
+
+      // If current model 404s, switch to fallback
+      if (error?.message?.includes('404') || error?.message?.includes('not found')) {
+        if (activeModel === 'gemini-2.0-flash-lite') {
+          activeModel = 'gemini-2.0-flash'
+          console.log('🔄 Switching to gemini-2.0-flash')
+        } else if (activeModel === 'gemini-2.0-flash') {
+          activeModel = 'gemini-2.5-flash-lite'
+          console.log('🔄 Switching to gemini-2.5-flash-lite (with thinkingBudget:0)')
+        }
+        continue
+      }
+
+      if (attempt === 0) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
     }
   }
 
-  // All models failed
-  session.geminiHistory.pop()
-  if (USE_GROQ) session.groqHistory.pop()
+  session.conversationHistory.pop()
   return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
 }
 
 // ── Send text to ConversationRelay ─────────────────────────────────────────
 
-function sendText(ws: WebSocket, text: string, last: boolean = true) {
+function sendText(ws: WebSocket, text: string) {
   if (ws.readyState !== WebSocket.OPEN) return
-
-  // For ConversationRelay, send the full text as a single token
-  // ConversationRelay handles the TTS chunking
-  ws.send(JSON.stringify({
-    type: 'text',
-    token: text,
-    last: true,
-  }))
+  ws.send(JSON.stringify({ type: 'text', token: text, last: true }))
 }
 
 // ── Crisis alerting ────────────────────────────────────────────────────────
 
 async function alertTherapist(session: CallSession, phrases: string[]) {
   if (!session.practiceId) return
-
   try {
-    // Get therapist's alert phone from practice settings
     const { data: practice } = await supabase
       .from('practices')
       .select('crisis_alert_phone, phone_number, provider_name')
@@ -634,32 +530,25 @@ async function alertTherapist(session: CallSession, phrases: string[]) {
 
     const alertPhone = practice?.crisis_alert_phone || practice?.phone_number
     if (!alertPhone || !TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-      console.warn('Cannot send crisis alert — missing phone or Twilio config')
+      console.warn('Cannot send crisis alert — missing config')
       return
     }
 
     const twilio = (await import('twilio')).default
     const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-    const callerLabel = session.callerPhone || 'Unknown number'
-    const alertBody = [
-      '🚨 HARBOR CRISIS ALERT',
-      `Caller: ${callerLabel}`,
-      `Detected: ${phrases.join(', ')}`,
-      '',
-      'A caller on your Harbor line may be in distress.',
-      'Please review and follow up.',
-      '',
-      'If immediate danger: call 911',
-      '988 Suicide & Crisis Lifeline: 988',
-    ].join('\n')
-
     await client.messages.create({
-      body: alertBody,
+      body: [
+        '🚨 HARBOR CRISIS ALERT',
+        `Caller: ${session.callerPhone || 'Unknown'}`,
+        `Detected: ${phrases.join(', ')}`,
+        '', 'A caller may be in distress. Please review.',
+        '', 'If immediate danger: call 911',
+        '988 Suicide & Crisis Lifeline: 988',
+      ].join('\n'),
       from: TWILIO_PHONE_NUMBER,
       to: alertPhone.startsWith('+') ? alertPhone : `+1${alertPhone.replace(/\D/g, '')}`,
     })
-
     console.log(`🚨 Crisis alert sent to ${alertPhone}`)
   } catch (error) {
     console.error('Failed to send crisis alert:', error)
@@ -668,7 +557,6 @@ async function alertTherapist(session: CallSession, phrases: string[]) {
 
 async function logCrisisAlert(session: CallSession, phrases: string[]) {
   if (!session.practiceId) return
-
   try {
     await supabase.from('crisis_alerts').insert({
       practice_id: session.practiceId,
@@ -679,7 +567,7 @@ async function logCrisisAlert(session: CallSession, phrases: string[]) {
       created_at: new Date().toISOString(),
     })
   } catch (error) {
-    console.warn('Failed to log crisis alert (table may not exist):', error)
+    console.warn('Failed to log crisis alert:', error)
   }
 }
 
@@ -694,9 +582,8 @@ server.listen(PORT, () => {
 ║  TwiML:      http://localhost:${PORT}/twiml        ║
 ║  Health:     http://localhost:${PORT}/health        ║
 ║                                                  ║
-║  LLM:        ${USE_GROQ ? '⚡ Groq (fast!)' : 'Gemini'}                       ║
+║  Model:      ${activeModel.padEnd(35)}║
 ║  Gemini:     ${GEMINI_API_KEY ? '✓ configured' : '✗ MISSING'}                         ║
-║  Groq:       ${GROQ_API_KEY ? '✓ configured' : '○ not set (add for speed)'}             ║
 ║  Supabase:   ${SUPABASE_URL ? '✓ configured' : '✗ MISSING'}                         ║
 ║  Twilio:     ${TWILIO_ACCOUNT_SID ? '✓ configured' : '✗ MISSING'}                         ║
 ╚══════════════════════════════════════════════════╝
