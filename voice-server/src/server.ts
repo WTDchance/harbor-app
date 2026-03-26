@@ -72,12 +72,15 @@ app.post('/twiml', (req, res) => {
   const wsProtocol = process.env.NODE_ENV === 'production' ? 'wss' : 'ws'
   const wsUrl = `${wsProtocol}://${wsHost}/ws?callerPhone=${encodeURIComponent(callerNumber)}&calledNumber=${encodeURIComponent(calledNumber)}`
 
+  // XML-escape the URL (& → &amp;) so TwiML parses correctly
+  const wsUrlEscaped = wsUrl.replace(/&/g, '&amp;')
+
   // Return TwiML that connects to ConversationRelay
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
-      url="${wsUrl}"
+      url="${wsUrlEscaped}"
       voice="Google.en-US-Journey-F"
       ttsProvider="Google"
       transcriptionProvider="Google"
