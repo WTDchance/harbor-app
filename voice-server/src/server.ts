@@ -25,6 +25,7 @@ const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || ''
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || ''
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || ''
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || ''
+const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || '' // Optional: ElevenLabs voice for natural sound
 
 // ── Clients ────────────────────────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -145,13 +146,20 @@ app.post('/twiml', async (req, res) => {
   const wsProtocol = process.env.NODE_ENV === 'production' ? 'wss' : 'ws'
   const wsUrl = `${wsProtocol}://${wsHost}/ws?callerPhone=${encodeURIComponent(callerNumber)}&calledNumber=${encodeURIComponent(calledNumber)}`
 
+  // Use ElevenLabs for most natural voice if configured, otherwise Google
+  const useElevenLabs = !!ELEVENLABS_VOICE_ID
+  const voiceAttrs = useElevenLabs
+    ? `voice="${ELEVENLABS_VOICE_ID}"
+      ttsProvider="ElevenLabs"`
+    : `voice="Google.en-US-Journey-F"
+      ttsProvider="Google"`
+
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
       url="${wsUrl.replace(/&/g, '&amp;')}"
-      voice="Google.en-US-Journey-F"
-      ttsProvider="Google"
+      ${voiceAttrs}
       transcriptionProvider="Google"
       speechModel="telephony"
       language="en-US"
@@ -339,10 +347,9 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
     return
   }
 
-  // ── Normal conversation ────────────────────────────────────────────
+  // ── Normal conversation (streamed for lowest latency) ─────────────
   try {
-    const response = await getLLMResponse(session, utterance)
-    sendText(ws, response)
+    const response = await streamLLMResponse(ws, session, utterance)
     session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${response}`)
     console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 100)}..."`)
   } catch (err) {
@@ -387,13 +394,68 @@ async function handleDisconnect(sessionId: string) {
   sessions.delete(sessionId)
 }
 
-// ── Claude Haiku LLM ───────────────────────────────────────────────────────
+// ── Claude Haiku LLM (streaming for lowest latency) ─────────────────────────
 
-async function getLLMResponse(session: CallSession, utterance: string): Promise<string> {
-  // Add to history
+// Streaming: sends tokens to ConversationRelay as they arrive from Haiku
+// TTS starts speaking the first sentence while Haiku is still generating
+async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance: string): Promise<string> {
   session.messages.push({ role: 'user', content: utterance })
+  const trimmed = session.messages.slice(-MAX_HISTORY)
 
-  // Trim to last N messages for speed
+  const t0 = Date.now()
+  let firstTokenTime = 0
+  let fullText = ''
+
+  try {
+    const stream = anthropic.messages.stream({
+      model: VOICE_MODEL,
+      max_tokens: 150,
+      system: session.systemPrompt,
+      messages: trimmed,
+    })
+
+    stream.on('text', (text) => {
+      if (!firstTokenTime) firstTokenTime = Date.now()
+      fullText += text
+      // Stream each token to ConversationRelay — TTS starts immediately
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'text', token: text, last: false }))
+      }
+    })
+
+    // Wait for stream to finish
+    await stream.finalMessage()
+
+    // Signal end of response
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'text', token: '', last: true }))
+    }
+
+    const totalMs = Date.now() - t0
+    const ttfb = firstTokenTime ? firstTokenTime - t0 : totalMs
+    console.log(`⚡ Haiku stream: TTFB=${ttfb}ms total=${totalMs}ms | len=${fullText.length} | history=${trimmed.length}`)
+
+    session.messages.push({ role: 'assistant', content: fullText })
+    return fullText
+  } catch (error: any) {
+    const latency = Date.now() - t0
+    console.error(`❌ Haiku stream error (${latency}ms):`, error?.status, error?.message?.substring(0, 200) || error)
+
+    // If we already sent some tokens, close the stream cleanly
+    if (fullText && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'text', token: '', last: true }))
+      session.messages.push({ role: 'assistant', content: fullText })
+      return fullText
+    }
+
+    session.messages.pop()
+    return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
+  }
+}
+
+// Non-streaming fallback (used for crisis tripwire where we need full text before deciding)
+async function getLLMResponse(session: CallSession, utterance: string): Promise<string> {
+  session.messages.push({ role: 'user', content: utterance })
   const trimmed = session.messages.slice(-MAX_HISTORY)
 
   const t0 = Date.now()
@@ -417,10 +479,7 @@ async function getLLMResponse(session: CallSession, utterance: string): Promise<
   } catch (error: any) {
     const latency = Date.now() - t0
     console.error(`❌ Haiku error (${latency}ms):`, error?.status, error?.message?.substring(0, 200) || error)
-    console.error(`❌ Error detail:`, JSON.stringify(error?.error || {}, null, 2)?.substring(0, 500))
-    console.error(`❌ Messages sent:`, JSON.stringify(trimmed.map(m => ({ role: m.role, len: m.content.length }))))
 
-    // Remove user message on failure
     session.messages.pop()
     return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
   }
@@ -498,6 +557,7 @@ server.listen(PORT, () => {
 ║  Anthropic: ${ANTHROPIC_API_KEY ? '✓' : '✗'}                                    ║
 ║  Supabase:  ${SUPABASE_URL ? '✓' : '✗'}                                    ║
 ║  Twilio:    ${TWILIO_ACCOUNT_SID ? '✓' : '✗'}                                    ║
+║  Voice:     ${ELEVENLABS_VOICE_ID ? 'ElevenLabs' : 'Google Journey-F'}                          ║
 ╚══════════════════════════════════════════════════╝
   `)
 })
