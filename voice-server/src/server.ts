@@ -72,6 +72,10 @@ interface CallSession {
 
 const sessions = new Map<string, CallSession>()
 
+// Max conversation turns to send to Gemini (system prompt + last N exchanges)
+// Keeps context small for speed. 6 user+model pairs = 12 messages + 2 system = 14 total
+const MAX_HISTORY_TURNS = 12
+
 // ── Express app (health check + TwiML endpoint) ───────────────────────────
 const app = express()
 app.use(express.urlencoded({ extended: true }))
@@ -166,6 +170,13 @@ wss.on('connection', async (ws: WebSocket, req) => {
   // Temp session ID until we get the callSid from the setup message
   let sessionId = `temp-${Date.now()}`
 
+  // Keep WebSocket alive — ping every 20s to prevent timeout disconnects
+  const pingInterval = setInterval(() => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.ping()
+    }
+  }, 20000)
+
   ws.on('message', async (data) => {
     try {
       const raw = data.toString()
@@ -203,10 +214,12 @@ wss.on('connection', async (ws: WebSocket, req) => {
   })
 
   ws.on('close', () => {
+    clearInterval(pingInterval)
     handleDisconnect(sessionId)
   })
 
   ws.on('error', (error) => {
+    clearInterval(pingInterval)
     console.error(`WebSocket error (${sessionId}):`, error)
   })
 })
@@ -296,7 +309,13 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
   }
 
   const utterance = message.voicePrompt || ''
-  console.log(`🗣️ Caller: "${utterance}" (${sessionId})`)
+  console.log(`🗣️ Caller: "${utterance}" (${sessionId}) [history: ${session.conversationHistory.length} msgs]`)
+
+  // Don't waste a Gemini call if the WebSocket already closed
+  if (ws.readyState !== WebSocket.OPEN) {
+    console.warn(`⚠️ WebSocket closed before handling prompt (${sessionId})`)
+    return
+  }
 
   // Save to raw transcript
   session.transcript.push(`Caller: ${utterance}`)
@@ -450,9 +469,14 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
     parts: [{ text: utterance }],
   })
 
+  // Trim history: keep system prompt (first 2) + last N messages for speed
+  const systemMessages = session.conversationHistory.slice(0, 2)
+  const recentMessages = session.conversationHistory.slice(2).slice(-MAX_HISTORY_TURNS)
+  const trimmedHistory = [...systemMessages, ...recentMessages]
+
   const geminiConfig = {
     model: 'gemini-2.5-flash-lite',
-    contents: session.conversationHistory,
+    contents: trimmedHistory,
     config: {
       maxOutputTokens: 150,   // Keep responses short for voice
       temperature: 0.6,       // Natural but focused — less rambling
@@ -503,75 +527,6 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
   return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
 }
 
-// ── Streaming Gemini → ConversationRelay for lowest latency ─────────────────
-
-async function streamGeminiToRelay(
-  ws: WebSocket,
-  session: CallSession,
-  utterance: string
-): Promise<string | null> {
-  session.conversationHistory.push({
-    role: 'user',
-    parts: [{ text: utterance }],
-  })
-
-  try {
-    const stream = await genai.models.generateContentStream({
-      model: 'gemini-2.5-flash-lite',
-      contents: session.conversationHistory,
-      config: {
-        maxOutputTokens: 150,
-        temperature: 0.6,
-        topP: 0.85,
-        thinkingConfig: { thinkingBudget: 0 },  // No thinking — pure speed
-      },
-    })
-
-    let fullText = ''
-    let sentenceBuffer = ''
-
-    for await (const chunk of stream) {
-      const text = chunk.text || ''
-      if (!text) continue
-
-      fullText += text
-      sentenceBuffer += text
-
-      // Send complete sentences as they form — this lets TTS start speaking
-      // while we're still generating the rest of the response
-      const sentenceEnd = sentenceBuffer.match(/[.!?]\s*/g)
-      if (sentenceEnd && sentenceBuffer.length > 10) {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: 'text', token: sentenceBuffer, last: false }))
-        }
-        sentenceBuffer = ''
-      }
-    }
-
-    // Send remaining text as the final token
-    if (sentenceBuffer.trim() && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'text', token: sentenceBuffer, last: true }))
-    } else if (ws.readyState === WebSocket.OPEN) {
-      // If buffer was empty, send end signal
-      ws.send(JSON.stringify({ type: 'text', token: '', last: true }))
-    }
-
-    // Save to conversation history and transcript
-    if (fullText) {
-      session.conversationHistory.push({ role: 'model', parts: [{ text: fullText }] })
-      session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${fullText}`)
-      console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${fullText.substring(0, 80)}..."`)
-    }
-
-    return fullText || null
-  } catch (error: any) {
-    console.error('Gemini streaming error:', error?.message || error)
-    // Remove the user message we added since we'll retry via fallback
-    session.conversationHistory.pop()
-    return null
-  }
-}
-
 // ── Send text to ConversationRelay ─────────────────────────────────────────
 
 function sendText(ws: WebSocket, text: string, last: boolean = true) {
@@ -584,17 +539,6 @@ function sendText(ws: WebSocket, text: string, last: boolean = true) {
     token: text,
     last: true,
   }))
-}
-
-function streamToConversationRelay(
-  ws: WebSocket,
-  session: CallSession,
-  utterance: string,
-  response: string
-) {
-  sendText(ws, response, true)
-  session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${response}`)
-  console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 80)}..."`)
 }
 
 // ── Crisis alerting ────────────────────────────────────────────────────────
