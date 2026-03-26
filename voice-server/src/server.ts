@@ -151,7 +151,8 @@ app.post('/twiml', async (req, res) => {
   // Speed: 0.7-1.2 (0.9 = slightly slower, warm/calm for receptionist)
   // Stability: 0.0-1.0 (0.7 = consistent but not robotic)
   // Similarity: 0.0-1.0 (0.8 = very natural sounding)
-  const voiceId = ELEVENLABS_VOICE_ID || 'UgBBYS2sOqTuMpoF3BR0' // Twilio default en-US ElevenLabs voice
+  // Sarah: warm, soft, professional American female — perfect for therapy receptionist
+  const voiceId = ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
   const voiceWithSettings = `${voiceId}-0.9_0.7_0.8`
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
