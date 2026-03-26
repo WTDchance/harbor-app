@@ -30,6 +30,34 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || ''
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 const genai = new GoogleGenAI({ apiKey: GEMINI_API_KEY })
 
+// ── Practice cache (avoid DB hit on every call) ───────────────────────────
+// Caches practice data in memory, refreshes every 5 minutes
+let practiceCache: any[] = []
+let practiceCacheTime = 0
+const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+async function getCachedPractices(): Promise<any[]> {
+  const now = Date.now()
+  if (practiceCache.length > 0 && now - practiceCacheTime < CACHE_TTL) {
+    return practiceCache
+  }
+  try {
+    const { data } = await supabase.from('practices').select('*')
+    if (data && data.length > 0) {
+      practiceCache = data
+      practiceCacheTime = now
+      console.log(`✓ Practice cache refreshed: ${data.length} practices`)
+    }
+    return practiceCache
+  } catch (err) {
+    console.warn('⚠️ Practice cache refresh failed, using stale cache:', err)
+    return practiceCache
+  }
+}
+
+// Pre-load cache on startup
+getCachedPractices().catch(console.error)
+
 // ── Session tracking ───────────────────────────────────────────────────────
 interface CallSession {
   callSid: string
@@ -68,25 +96,20 @@ app.post('/twiml', async (req, res) => {
 
   console.log(`📞 Incoming call: ${callerNumber} → ${calledNumber} (${callSid})`)
 
-  // Quick practice lookup for personalized greeting
+  // Fast practice lookup from cache (no DB hit per call)
   let welcomeGreeting = 'Thank you for calling, how can I help you today?'
   try {
     if (calledNumber) {
       const digits = calledNumber.replace(/\D/g, '').slice(-10)
-      const { data: practices } = await supabase
-        .from('practices')
-        .select('name, provider_name, ai_name, phone_number')
-
-      if (practices) {
-        const match = practices.find(
-          (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
-        )
-        if (match) {
-          const aiName = match.ai_name || 'Harbor'
-          const practiceName = match.name || 'the practice'
-          welcomeGreeting = `Thank you for calling ${practiceName}, this is ${aiName}, how can I help you today?`
-          console.log(`✓ Personalized greeting for: ${practiceName}`)
-        }
+      const practices = await getCachedPractices()
+      const match = practices.find(
+        (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
+      )
+      if (match) {
+        const aiName = match.ai_name || 'Harbor'
+        const practiceName = match.name || 'the practice'
+        welcomeGreeting = `Thank you for calling ${practiceName}, this is ${aiName}, how can I help you today?`
+        console.log(`✓ Personalized greeting for: ${practiceName}`)
       }
     }
   } catch (err) {
@@ -200,11 +223,9 @@ async function handleSetup(
   if (calledNumber) {
     const digits = calledNumber.replace(/\D/g, '').slice(-10)
 
-    const { data: practices } = await supabase
-      .from('practices')
-      .select('*')
+    const practices = await getCachedPractices()
 
-    if (practices) {
+    if (practices.length > 0) {
       const match = practices.find(
         (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
       )
@@ -410,12 +431,13 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
   })
 
   const geminiConfig = {
-    model: 'gemini-2.5-flash',
+    model: 'gemini-2.5-flash-lite',
     contents: session.conversationHistory,
     config: {
       maxOutputTokens: 150,   // Keep responses short for voice
       temperature: 0.6,       // Natural but focused — less rambling
       topP: 0.85,
+      thinkingConfig: { thinkingBudget: 0 },  // No thinking — pure speed
     },
   }
 
@@ -466,12 +488,13 @@ async function streamGeminiToRelay(
 
   try {
     const stream = await genai.models.generateContentStream({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-2.5-flash-lite',
       contents: session.conversationHistory,
       config: {
         maxOutputTokens: 150,
         temperature: 0.6,
         topP: 0.85,
+        thinkingConfig: { thinkingBudget: 0 },  // No thinking — pure speed
       },
     })
 
