@@ -30,8 +30,8 @@ const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || ''
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY })
 
-// Voice model — Claude 3.5 Haiku: fast (~300-500ms), cheap, great at conversation
-const VOICE_MODEL = 'claude-3-5-haiku-20241022'
+// Voice model — Claude Haiku 4.5: fastest model, near-frontier intelligence, $1/$5 per MTok
+const VOICE_MODEL = 'claude-haiku-4-5-20251001'
 
 // Startup API check — fail fast if key is bad
 ;(async () => {
