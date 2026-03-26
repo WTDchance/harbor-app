@@ -60,12 +60,45 @@ app.get('/health', (_req, res) => {
 
 // TwiML endpoint — Twilio calls this when a voice call comes in.
 // Returns TwiML that connects the call to our WebSocket via ConversationRelay.
-app.post('/twiml', (req, res) => {
+// Does a quick practice lookup so the welcome greeting is personalized.
+app.post('/twiml', async (req, res) => {
   const callerNumber = req.body.From || 'unknown'
   const calledNumber = req.body.To || ''
   const callSid = req.body.CallSid || ''
 
   console.log(`📞 Incoming call: ${callerNumber} → ${calledNumber} (${callSid})`)
+
+  // Quick practice lookup for personalized greeting
+  let welcomeGreeting = 'Thank you for calling, how can I help you today?'
+  try {
+    if (calledNumber) {
+      const digits = calledNumber.replace(/\D/g, '').slice(-10)
+      const { data: practices } = await supabase
+        .from('practices')
+        .select('name, provider_name, ai_name, phone_number')
+
+      if (practices) {
+        const match = practices.find(
+          (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
+        )
+        if (match) {
+          const aiName = match.ai_name || 'Harbor'
+          const practiceName = match.name || 'the practice'
+          welcomeGreeting = `Thank you for calling ${practiceName}, this is ${aiName}, how can I help you today?`
+          console.log(`✓ Personalized greeting for: ${practiceName}`)
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ Could not look up practice for greeting, using default:', err)
+  }
+
+  // XML-escape the greeting for safe embedding in TwiML
+  const greetingEscaped = welcomeGreeting
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
 
   // The WebSocket URL where ConversationRelay will connect
   const wsHost = process.env.VOICE_SERVER_HOST || req.headers.host || 'localhost:3001'
@@ -88,7 +121,7 @@ app.post('/twiml', (req, res) => {
       language="en-US"
       interruptible="true"
       dtmfDetection="true"
-      welcomeGreeting="Thank you for calling, how can I help you today?"
+      welcomeGreeting="${greetingEscaped}"
     />
   </Connect>
 </Response>`
@@ -183,9 +216,9 @@ async function handleSetup(
           practice_name: match.name || 'the practice',
           ai_name: match.ai_name || 'Harbor',
           specialties: match.specialties || [],
-          hours: match.office_hours || undefined,
-          location: match.address || undefined,
-          telehealth: match.telehealth_available ?? true,
+          hours: match.hours || match.office_hours || undefined,
+          location: match.location || match.address || undefined,
+          telehealth: match.telehealth ?? match.telehealth_available ?? true,
           insurance_accepted: match.insurance_accepted || [],
           system_prompt_notes: match.system_prompt_notes || undefined,
           emotional_support_enabled: match.emotional_support_enabled ?? true,

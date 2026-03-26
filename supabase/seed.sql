@@ -16,7 +16,7 @@ INSERT INTO practices (
 ) VALUES (
   '550e8400-e29b-41d4-a716-446655440001'::UUID,
   'Hope and Harmony Counseling',
-  'Sam',
+  'Ellie',
   '+15551234567',
   '{
     "monday": {"enabled": true, "openTime": "08:00", "closeTime": "18:00"},
@@ -146,21 +146,21 @@ INSERT INTO call_logs (
   '550e8400-e29b-41d4-a716-446655440001'::UUID,
   '+15551119999',
   447,
-  'Sam: Good afternoon, this is Sam with Hope and Harmony Counseling. How can I help you today?
+  'Ellie: Good afternoon, this is Ellie with Hope and Harmony Counseling. How can I help you today?
 Caller: Hi, I''m looking to schedule an appointment with someone who specializes in anxiety.
-Sam: Of course! I''d be happy to help. First, may I have your name?
+Ellie: Of course! I''d be happy to help. First, may I have your name?
 Caller: It''s Alex Turner.
-Sam: Great, Alex. And what is the best phone number to reach you at?
+Ellie: Great, Alex. And what is the best phone number to reach you at?
 Caller: 555-1119999
-Sam: Perfect. When was the last time you had therapy or counseling?
+Ellie: Perfect. When was the last time you had therapy or counseling?
 Caller: It''s been about 3 years.
-Sam: Thank you for sharing that. We have some great options for anxiety treatment. Would you prefer morning or afternoon appointments?
+Ellie: Thank you for sharing that. We have some great options for anxiety treatment. Would you prefer morning or afternoon appointments?
 Caller: Afternoon would work better for me.
-Sam: Excellent. I have some availability next week. Does Thursday at 2 PM work for you?
+Ellie: Excellent. I have some availability next week. Does Thursday at 2 PM work for you?
 Caller: Thursday at 2 PM is perfect.
-Sam: Wonderful! I''ve scheduled you for Thursday, March 27th at 2:00 PM. Is there anything else I can help you with today?
+Ellie: Wonderful! I''ve scheduled you for Thursday, March 27th at 2:00 PM. Is there anything else I can help you with today?
 Caller: No, that''s all. Thank you!
-Sam: You''re very welcome, Alex. We look forward to seeing you Thursday. Goodbye!',
+Ellie: You''re very welcome, Alex. We look forward to seeing you Thursday. Goodbye!',
   'New patient intake: Alex Turner, anxiety concerns, scheduled for Thursday 2 PM',
   'call_demo_2024_01_001'
 );
@@ -180,7 +180,7 @@ INSERT INTO sms_conversations (
   '[
     {
       "direction": "outbound",
-      "content": "Hi Jessica! This is Sam from Hope and Harmony. Just confirming your appointment tomorrow at 2 PM. Reply YES to confirm or call us at 555-1234567.",
+      "content": "Hi Jessica! This is Ellie from Hope and Harmony. Just confirming your appointment tomorrow at 2 PM. Reply YES to confirm or call us at 555-1234567.",
       "timestamp": "2024-03-20T09:30:00Z"
     },
     {
