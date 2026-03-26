@@ -63,6 +63,7 @@ interface CallSession {
   callSid: string
   practiceId: string | null
   practiceConfig: PracticeConfig | null
+  systemPrompt: string  // Stored separately, passed as systemInstruction to Gemini
   conversationHistory: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }>
   transcript: string[]  // Raw transcript for crisis analysis & logging
   callerPhone: string | null
@@ -279,18 +280,16 @@ async function handleSetup(
     }
   }
 
-  // Build the system prompt
+  // Build the system prompt — stored separately, passed as systemInstruction to Gemini
   const systemPrompt = buildVoiceSystemPrompt(practiceConfig)
 
-  // Create session
+  // Create session — conversation history starts EMPTY (system prompt is separate)
   const session: CallSession = {
     callSid,
     practiceId,
     practiceConfig,
-    conversationHistory: [
-      { role: 'user', parts: [{ text: `System: ${systemPrompt}` }] },
-      { role: 'model', parts: [{ text: 'Understood. I am ready to take calls as the receptionist.' }] },
-    ],
+    systemPrompt,
+    conversationHistory: [],
     transcript: [],
     callerPhone,
     crisisState: null,
@@ -469,19 +468,17 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
     parts: [{ text: utterance }],
   })
 
-  // Trim history: keep system prompt (first 2) + last N messages for speed
-  const systemMessages = session.conversationHistory.slice(0, 2)
-  const recentMessages = session.conversationHistory.slice(2).slice(-MAX_HISTORY_TURNS)
-  const trimmedHistory = [...systemMessages, ...recentMessages]
+  // Trim history to last N messages for speed (system prompt is separate)
+  const trimmedHistory = session.conversationHistory.slice(-MAX_HISTORY_TURNS)
 
   const geminiConfig = {
     model: 'gemini-2.5-flash-lite',
     contents: trimmedHistory,
     config: {
+      systemInstruction: session.systemPrompt,
       maxOutputTokens: 150,   // Keep responses short for voice
       temperature: 0.6,       // Natural but focused — less rambling
       topP: 0.85,
-      thinkingConfig: { thinkingBudget: 0 },  // No thinking — pure speed
     },
   }
 
@@ -495,9 +492,11 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
         'Gemini generateContent'
       )
       const latency = Date.now() - t0
-      console.log(`⚡ Gemini response in ${latency}ms`)
 
-      const text = response.text || "I'm sorry, I didn't catch that. Could you say that again?"
+      // Defensive: log full response shape for debugging
+      const rawText = response.text
+      const text = rawText || "I'm sorry, I didn't catch that. Could you say that again?"
+      console.log(`⚡ Gemini response in ${latency}ms | len=${text.length} | empty=${!rawText} | history=${trimmedHistory.length} msgs`)
 
       // Add assistant response to conversation history
       session.conversationHistory.push({
