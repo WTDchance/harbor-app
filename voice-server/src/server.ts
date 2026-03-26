@@ -347,9 +347,14 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
     return
   }
 
-  // ── Normal conversation — Gemini Flash only ──────────────────────────
-  const response = await getGeminiResponse(session, utterance)
-  streamToConversationRelay(ws, session, utterance, response)
+  // ── Normal conversation — Gemini Flash with streaming ────────────────
+  // Stream tokens to ConversationRelay for lowest latency
+  const response = await streamGeminiToRelay(ws, session, utterance)
+  if (!response) {
+    // Streaming failed, fall back to non-streaming
+    const fallback = await getGeminiResponse(session, utterance)
+    streamToConversationRelay(ws, session, utterance, fallback)
+  }
 }
 
 function handleInterrupt(sessionId: string, message: any) {
@@ -404,29 +409,114 @@ async function getGeminiResponse(session: CallSession, utterance: string): Promi
     parts: [{ text: utterance }],
   })
 
+  const geminiConfig = {
+    model: 'gemini-2.5-flash',
+    contents: session.conversationHistory,
+    config: {
+      maxOutputTokens: 150,   // Keep responses short for voice
+      temperature: 0.6,       // Natural but focused — less rambling
+      topP: 0.85,
+    },
+  }
+
+  // Try up to 2 times for transient errors
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await genai.models.generateContent(geminiConfig)
+
+      const text = response.text || "I'm sorry, I didn't catch that. Could you say that again?"
+
+      // Add assistant response to conversation history
+      session.conversationHistory.push({
+        role: 'model',
+        parts: [{ text }],
+      })
+
+      return text
+    } catch (error: any) {
+      const status = error?.status || error?.code
+      console.error(`Gemini error (attempt ${attempt + 1}):`, error?.message || error)
+
+      // Don't retry on 4xx client errors (except 429 rate limit)
+      if (status && status >= 400 && status < 500 && status !== 429) {
+        break
+      }
+
+      // Wait briefly before retry
+      if (attempt === 0) {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      }
+    }
+  }
+
+  return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
+}
+
+// ── Streaming Gemini → ConversationRelay for lowest latency ─────────────────
+
+async function streamGeminiToRelay(
+  ws: WebSocket,
+  session: CallSession,
+  utterance: string
+): Promise<string | null> {
+  session.conversationHistory.push({
+    role: 'user',
+    parts: [{ text: utterance }],
+  })
+
   try {
-    const response = await genai.models.generateContent({
-      model: 'gemini-2.0-flash',
+    const stream = await genai.models.generateContentStream({
+      model: 'gemini-2.5-flash',
       contents: session.conversationHistory,
       config: {
-        maxOutputTokens: 200,  // Keep responses short for voice
-        temperature: 0.7,      // Natural but not too creative
-        topP: 0.9,
+        maxOutputTokens: 150,
+        temperature: 0.6,
+        topP: 0.85,
       },
     })
 
-    const text = response.text || "I'm sorry, I didn't catch that. Could you say that again?"
+    let fullText = ''
+    let sentenceBuffer = ''
 
-    // Add assistant response to conversation history
-    session.conversationHistory.push({
-      role: 'model',
-      parts: [{ text }],
-    })
+    for await (const chunk of stream) {
+      const text = chunk.text || ''
+      if (!text) continue
 
-    return text
-  } catch (error) {
-    console.error('Gemini error:', error)
-    return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
+      fullText += text
+      sentenceBuffer += text
+
+      // Send complete sentences as they form — this lets TTS start speaking
+      // while we're still generating the rest of the response
+      const sentenceEnd = sentenceBuffer.match(/[.!?]\s*/g)
+      if (sentenceEnd && sentenceBuffer.length > 10) {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'text', token: sentenceBuffer, last: false }))
+        }
+        sentenceBuffer = ''
+      }
+    }
+
+    // Send remaining text as the final token
+    if (sentenceBuffer.trim() && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'text', token: sentenceBuffer, last: true }))
+    } else if (ws.readyState === WebSocket.OPEN) {
+      // If buffer was empty, send end signal
+      ws.send(JSON.stringify({ type: 'text', token: '', last: true }))
+    }
+
+    // Save to conversation history and transcript
+    if (fullText) {
+      session.conversationHistory.push({ role: 'model', parts: [{ text: fullText }] })
+      session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${fullText}`)
+      console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${fullText.substring(0, 80)}..."`)
+    }
+
+    return fullText || null
+  } catch (error: any) {
+    console.error('Gemini streaming error:', error?.message || error)
+    // Remove the user message we added since we'll retry via fallback
+    session.conversationHistory.pop()
+    return null
   }
 }
 
