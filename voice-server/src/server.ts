@@ -1,6 +1,7 @@
 // Harbor Voice Server
-// Standalone WebSocket server for Twilio ConversationRelay + Gemini Flash
+// Standalone WebSocket server for Twilio ConversationRelay + LLM
 // Handles real-time voice AI receptionist with crisis detection
+// Supports Groq (fastest) and Gemini as LLM backends
 
 import 'dotenv/config'
 import express from 'express'
@@ -22,9 +23,15 @@ const PORT = parseInt(process.env.PORT || '3001', 10)
 const SUPABASE_URL = process.env.SUPABASE_URL || ''
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
+const GROQ_API_KEY = process.env.GROQ_API_KEY || ''
 const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID || ''
 const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || ''
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || ''
+
+// ── LLM Backend Selection ──────────────────────────────────────────────────
+// Groq is ~200-400ms (fastest inference available). Gemini is fallback.
+const USE_GROQ = !!GROQ_API_KEY
+const LLM_BACKEND = USE_GROQ ? 'groq' : 'gemini'
 
 // ── Clients ────────────────────────────────────────────────────────────────
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
@@ -63,9 +70,11 @@ interface CallSession {
   callSid: string
   practiceId: string | null
   practiceConfig: PracticeConfig | null
-  systemPrompt: string  // Stored separately, passed as systemInstruction to Gemini
-  conversationHistory: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }>
-  transcript: string[]  // Raw transcript for crisis analysis & logging
+  systemPrompt: string
+  // Groq uses OpenAI format, Gemini uses its own format
+  groqHistory: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
+  geminiHistory: Array<{ role: 'user' | 'model'; parts: [{ text: string }] }>
+  transcript: string[]
   callerPhone: string | null
   crisisState: CrisisAssessment | null
   startTime: Date
@@ -283,18 +292,20 @@ async function handleSetup(
   // Build the system prompt — stored separately, passed as systemInstruction to Gemini
   const systemPrompt = buildVoiceSystemPrompt(practiceConfig)
 
-  // Create session — conversation history starts EMPTY (system prompt is separate)
+  // Create session
   const session: CallSession = {
     callSid,
     practiceId,
     practiceConfig,
     systemPrompt,
-    conversationHistory: [],
+    groqHistory: [{ role: 'system', content: systemPrompt }],
+    geminiHistory: [],
     transcript: [],
     callerPhone,
     crisisState: null,
     startTime: new Date(),
   }
+  console.log(`🧠 LLM backend: ${LLM_BACKEND} | prompt: ${systemPrompt.length} chars`)
 
   sessions.set(callSid, session)
 }
@@ -308,7 +319,8 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
   }
 
   const utterance = message.voicePrompt || ''
-  console.log(`🗣️ Caller: "${utterance}" (${sessionId}) [history: ${session.conversationHistory.length} msgs]`)
+  const historyLen = USE_GROQ ? session.groqHistory.length : session.geminiHistory.length
+  console.log(`🗣️ Caller: "${utterance}" (${sessionId}) [history: ${historyLen} msgs]`)
 
   // Don't waste a Gemini call if the WebSocket already closed
   if (ws.readyState !== WebSocket.OPEN) {
@@ -350,7 +362,7 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
 
     // Run both in parallel
     const [geminiResponse, sonnetAssessment] = await Promise.all([
-      getGeminiResponse(session, utterance),
+      getLLMResponse(session, utterance),
       analyzeWithSonnet(
         session.transcript.join('\n'),
         scan.matchedPhrases,
@@ -392,15 +404,14 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
     return
   }
 
-  // ── Normal conversation — Gemini Flash ────────────────────────────────
-  // Using non-streaming for reliability. Streaming can be re-enabled once stable.
+  // ── Normal conversation ──────────────────────────────────────────────
   try {
-    const response = await getGeminiResponse(session, utterance)
+    const response = await getLLMResponse(session, utterance)
     sendText(ws, response, true)
     session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${response}`)
     console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 100)}..."`)
   } catch (err) {
-    console.error('Gemini response error in handlePrompt:', err)
+    console.error('LLM response error in handlePrompt:', err)
     sendText(ws, "I'm sorry, I'm having a brief technical issue. Could you repeat that?", true)
   }
 }
@@ -448,7 +459,8 @@ async function handleDisconnect(sessionId: string) {
   sessions.delete(sessionId)
 }
 
-// ── Gemini Flash integration ───────────────────────────────────────────────
+// ── LLM Integration ──────────────────────────────────────────────────────
+// Routes to Groq (fastest) or Gemini based on available API keys
 
 // Timeout helper — prevents any API call from hanging forever
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
@@ -461,69 +473,135 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   })
 }
 
-async function getGeminiResponse(session: CallSession, utterance: string): Promise<string> {
-  // Add user message to conversation history
-  session.conversationHistory.push({
-    role: 'user',
-    parts: [{ text: utterance }],
-  })
+async function getLLMResponse(session: CallSession, utterance: string): Promise<string> {
+  if (USE_GROQ) {
+    return getGroqResponse(session, utterance)
+  }
+  return getGeminiResponse(session, utterance)
+}
 
-  // Trim history to last N messages for speed (system prompt is separate)
-  const trimmedHistory = session.conversationHistory.slice(-MAX_HISTORY_TURNS)
+// ── Groq (Llama 3.3 70B — ~200-400ms responses) ─────────────────────────
 
-  const geminiConfig = {
-    model: 'gemini-2.5-flash-lite',
-    contents: trimmedHistory,
-    config: {
-      systemInstruction: session.systemPrompt,
-      maxOutputTokens: 150,   // Keep responses short for voice
-      temperature: 0.6,       // Natural but focused — less rambling
-      topP: 0.85,
-      thinkingConfig: { thinkingBudget: 0 },  // CRITICAL: disable thinking for speed
-    },
+async function getGroqResponse(session: CallSession, utterance: string): Promise<string> {
+  // Add user message
+  session.groqHistory.push({ role: 'user', content: utterance })
+  // Also track in Gemini format for crisis detection fallback
+  session.geminiHistory.push({ role: 'user', parts: [{ text: utterance }] })
+
+  // Trim: keep system message (index 0) + last N messages
+  const systemMsg = session.groqHistory[0]
+  const recentMsgs = session.groqHistory.slice(1).slice(-MAX_HISTORY_TURNS)
+  const messages = [systemMsg, ...recentMsgs]
+
+  const body = {
+    model: 'llama-3.3-70b-versatile',
+    messages,
+    max_tokens: 150,
+    temperature: 0.6,
+    top_p: 0.85,
   }
 
-  // Try up to 2 times for transient errors
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const t0 = Date.now()
-      const response = await withTimeout(
-        genai.models.generateContent(geminiConfig),
-        12000,  // 12 second hard timeout (generous for retries)
-        'Gemini generateContent'
+      const res = await withTimeout(
+        fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${GROQ_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(body),
+        }),
+        8000,  // 8s timeout — Groq should respond in <1s
+        'Groq chat'
       )
       const latency = Date.now() - t0
 
-      // Defensive: log full response shape for debugging
-      const rawText = response.text
-      const text = rawText || "I'm sorry, I didn't catch that. Could you say that again?"
-      console.log(`⚡ Gemini response in ${latency}ms | len=${text.length} | empty=${!rawText} | history=${trimmedHistory.length} msgs`)
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'unknown')
+        throw new Error(`Groq ${res.status}: ${errText.substring(0, 200)}`)
+      }
 
-      // Add assistant response to conversation history
-      session.conversationHistory.push({
-        role: 'model',
-        parts: [{ text }],
-      })
+      const data = await res.json() as any
+      const text = data.choices?.[0]?.message?.content || "I'm sorry, I didn't catch that. Could you say that again?"
+      console.log(`⚡ Groq response in ${latency}ms | len=${text.length} | model=llama-3.3-70b | history=${messages.length} msgs`)
+
+      // Save to history
+      session.groqHistory.push({ role: 'assistant', content: text })
+      session.geminiHistory.push({ role: 'model', parts: [{ text }] })
 
       return text
     } catch (error: any) {
-      const status = error?.status || error?.code
-      console.error(`Gemini error (attempt ${attempt + 1}):`, error?.message || error)
-
-      // Don't retry on 4xx client errors (except 429 rate limit)
-      if (status && status >= 400 && status < 500 && status !== 429) {
-        break
-      }
-
-      // Wait briefly before retry
+      console.error(`Groq error (attempt ${attempt + 1}):`, error?.message || error)
       if (attempt === 0) {
-        await new Promise(resolve => setTimeout(resolve, 300))
+        await new Promise(resolve => setTimeout(resolve, 200))
       }
     }
   }
 
-  // Remove the user message since we couldn't get a response
-  session.conversationHistory.pop()
+  // If Groq fails, try Gemini as fallback
+  console.warn('⚠️ Groq failed, falling back to Gemini')
+  // Remove the user message we added (getGeminiResponse will add it again)
+  session.groqHistory.pop()
+  session.geminiHistory.pop()
+  return getGeminiResponse(session, utterance)
+}
+
+// ── Gemini (fallback or primary if no Groq key) ─────────────────────────
+
+async function getGeminiResponse(session: CallSession, utterance: string): Promise<string> {
+  session.geminiHistory.push({ role: 'user', parts: [{ text: utterance }] })
+  if (USE_GROQ) {
+    // Also sync to Groq history for consistency
+    session.groqHistory.push({ role: 'user', content: utterance })
+  }
+
+  const trimmedHistory = session.geminiHistory.slice(-MAX_HISTORY_TURNS)
+
+  // Try non-thinking models first, then thinking model as last resort
+  const modelAttempts = [
+    { model: 'gemini-2.0-flash-lite', config: { maxOutputTokens: 150, temperature: 0.6, topP: 0.85 } },
+    { model: 'gemini-2.5-flash-lite', config: { maxOutputTokens: 150, temperature: 0.6, topP: 0.85, thinkingConfig: { thinkingBudget: 0 } } },
+  ]
+
+  for (const { model, config } of modelAttempts) {
+    try {
+      const t0 = Date.now()
+      const response = await withTimeout(
+        genai.models.generateContent({
+          model,
+          contents: trimmedHistory,
+          config: {
+            systemInstruction: session.systemPrompt,
+            ...config,
+          },
+        }),
+        10000,
+        `Gemini ${model}`
+      )
+      const latency = Date.now() - t0
+      const rawText = response.text
+      const text = rawText || "I'm sorry, I didn't catch that. Could you say that again?"
+      console.log(`⚡ Gemini response in ${latency}ms | model=${model} | len=${text.length} | history=${trimmedHistory.length} msgs`)
+
+      session.geminiHistory.push({ role: 'model', parts: [{ text }] })
+      if (USE_GROQ) {
+        session.groqHistory.push({ role: 'assistant', content: text })
+      }
+      return text
+    } catch (error: any) {
+      console.error(`Gemini ${model} error:`, error?.message?.substring(0, 100) || error)
+      // If 404 (model not available), try next model
+      if (error?.message?.includes('404') || error?.status === 404) continue
+      // For other errors, also try next model
+      continue
+    }
+  }
+
+  // All models failed
+  session.geminiHistory.pop()
+  if (USE_GROQ) session.groqHistory.pop()
   return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
 }
 
@@ -616,7 +694,9 @@ server.listen(PORT, () => {
 ║  TwiML:      http://localhost:${PORT}/twiml        ║
 ║  Health:     http://localhost:${PORT}/health        ║
 ║                                                  ║
+║  LLM:        ${USE_GROQ ? '⚡ Groq (fast!)' : 'Gemini'}                       ║
 ║  Gemini:     ${GEMINI_API_KEY ? '✓ configured' : '✗ MISSING'}                         ║
+║  Groq:       ${GROQ_API_KEY ? '✓ configured' : '○ not set (add for speed)'}             ║
 ║  Supabase:   ${SUPABASE_URL ? '✓ configured' : '✗ MISSING'}                         ║
 ║  Twilio:     ${TWILIO_ACCOUNT_SID ? '✓ configured' : '✗ MISSING'}                         ║
 ╚══════════════════════════════════════════════════╝
