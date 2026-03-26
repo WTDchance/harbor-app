@@ -244,20 +244,53 @@ async function handleSetup(
     )
     if (match) {
       practiceId = match.id
+      const profile = match.onboarding_profile || {}
       practiceConfig = {
+        // Core
         therapist_name: match.provider_name || match.name || 'the therapist',
         practice_name: match.name || 'the practice',
         ai_name: match.ai_name || 'Harbor',
-        specialties: match.specialties || [],
+
+        // Identity
+        therapist_title: match.therapist_title || profile.therapist_title || undefined,
+        therapist_pronouns: match.therapist_pronouns || profile.therapist_pronouns || undefined,
+        practice_vibe: match.practice_vibe || profile.practice_vibe || undefined,
+        receptionist_personality: match.receptionist_personality || profile.receptionist_personality || undefined,
+
+        // Services & approach
+        specialties: match.specialties || profile.specialties || [],
+        populations_served: match.populations_served || profile.populations_served || undefined,
+        modalities: match.modalities || profile.modalities || undefined,
+        languages: match.languages || profile.languages || undefined,
+
+        // Scheduling
         hours: match.hours || match.office_hours || undefined,
+        session_length_minutes: match.session_length_minutes || profile.session_length_minutes || undefined,
+        booking_lead_days: match.booking_lead_days || profile.booking_lead_days || undefined,
+        new_patient_callback_time: match.new_patient_callback_time || profile.new_patient_callback_time || undefined,
+        evening_weekend_available: match.evening_weekend_available ?? profile.evening_weekend_available ?? false,
+        intake_process_notes: match.intake_process_notes || profile.intake_process_notes || undefined,
+
+        // Location & logistics
         location: match.location || match.address || undefined,
+        parking_notes: match.parking_notes || profile.parking_notes || undefined,
         telehealth: match.telehealth ?? match.telehealth_available ?? true,
+        website: match.website || profile.website || undefined,
+
+        // Insurance & payment
         insurance_accepted: match.insurance_accepted || [],
-        system_prompt_notes: match.system_prompt_notes || undefined,
-        emotional_support_enabled: match.emotional_support_enabled ?? true,
-        cancellation_policy: match.cancellation_policy || undefined,
+        sliding_scale: match.sliding_scale ?? profile.sliding_scale ?? false,
+
+        // Policies
+        cancellation_policy: match.cancellation_policy || profile.cancellation_policy || undefined,
         new_patients_accepted: match.accepting_new_patients ?? true,
         waitlist_enabled: match.waitlist_enabled ?? false,
+        after_hours_emergency: match.after_hours_emergency || profile.after_hours_emergency || undefined,
+
+        // Behavior
+        emotional_support_enabled: match.emotional_support_enabled ?? true,
+        system_prompt_notes: match.system_prompt_notes || profile.system_prompt_notes || undefined,
+        onboarding_profile: profile,
       }
       console.log(`✓ Practice: ${practiceConfig.practice_name}`)
     }
