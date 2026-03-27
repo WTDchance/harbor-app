@@ -18,7 +18,7 @@ import {
   CrisisAssessment,
 } from './crisis-tripwire'
 
-// ── Environment ────────────────────────────────────────────────────────────
+// ââ Environment ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const PORT = parseInt(process.env.PORT || '3001', 10)
 const SUPABASE_URL = process.env.SUPABASE_URL || ''
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
@@ -29,12 +29,12 @@ const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || ''
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER || ''
 const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || ''
 
-// ── Clients ────────────────────────────────────────────────────────────────
+// ââ Clients ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY }) // kept for crisis detection (Sonnet)
 const genai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null
 
-// ── Model selection ────────────────────────────────────────────────────────
+// ââ Model selection ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 // Gemini 2.0 Flash: ~200ms TTFB, excellent for voice (fast + cheap)
 // Falls back to Anthropic Haiku if no Gemini key
 const useGemini = !!genai
@@ -44,19 +44,19 @@ const PROVIDER = useGemini ? 'Gemini' : 'Anthropic'
 // Startup check
 ;(async () => {
   if (useGemini) {
-    console.log(`🔑 Gemini key present (${GEMINI_API_KEY.substring(0, 10)}...)`)
+    console.log(`ð Gemini key present (${GEMINI_API_KEY.substring(0, 10)}...)`)
     try {
       const test = await genai!.models.generateContent({
         model: VOICE_MODEL,
         contents: 'Say "ok"',
         config: { maxOutputTokens: 10 },
       })
-      console.log(`✅ Gemini Flash verified: "${test.text}"`)
+      console.log(`â Gemini Flash verified: "${test.text}"`)
     } catch (err: any) {
-      console.error(`❌ Gemini API FAILED: ${err?.message?.substring(0, 200)}`)
+      console.error(`â Gemini API FAILED: ${err?.message?.substring(0, 200)}`)
     }
   } else if (ANTHROPIC_API_KEY) {
-    console.log(`⚠️ No GEMINI_API_KEY — falling back to Haiku (slower)`)
+    console.log(`â ï¸  No GEMINI_API_KEY â falling back to Haiku (slower)`)
     try {
       const test = await anthropic.messages.create({
         model: VOICE_MODEL,
@@ -64,16 +64,16 @@ const PROVIDER = useGemini ? 'Gemini' : 'Anthropic'
         messages: [{ role: 'user', content: 'Say "ok"' }],
       })
       const txt = test.content[0].type === 'text' ? test.content[0].text : '?'
-      console.log(`✅ Haiku verified: "${txt}"`)
+      console.log(`â Haiku verified: "${txt}"`)
     } catch (err: any) {
-      console.error(`❌ Haiku FAILED: ${err?.status} ${err?.message?.substring(0, 200)}`)
+      console.error(`â Haiku FAILED: ${err?.status} ${err?.message?.substring(0, 200)}`)
     }
   } else {
-    console.error('❌ No LLM key! Set GESINI_API_KEY (preferred) or ANTHROPIC_API_KEY.')
+    console.error('â No LLM key! Set GEMINI_API_KEY (preferred) or ANTHROPIC_API_KEY.')
   }
 })()
 
-// ── Connection pre-warming ───────────────────────────────────────────────────────────────
+// ââ Connection pre-warming âââââââââââââââââââââââââââââââââââââââââââââââââ
 let lastApiCallTime = Date.now()
 const API_KEEPALIVE_MS = 4 * 60 * 1000
 
@@ -98,10 +98,10 @@ setInterval(async () => {
   }
 }, API_KEEPALIVE_MS)
 
-// ── Practice cache ───────────────────────────────────────────────────────────────────
+// ââ Practice cache âââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 let practiceCache: any[] = []
 let practiceCacheTime = 0
-const CACHE_TT = 5 * 60 * 1000
+const CACHE_TTL = 5 * 60 * 1000
 
 async function getCachedPractices(): Promise<any[]> {
   const now = Date.now()
@@ -113,18 +113,18 @@ async function getCachedPractices(): Promise<any[]> {
     if (data && data.length > 0) {
       practiceCache = data
       practiceCacheTime = now
-      console.log(`✓ Practice cache refreshed: ${data.length} practices`)
+      console.log(`â Practice cache refreshed: ${data.length} practices`)
     }
     return practiceCache
   } catch (err) {
-    console.warn('⚠️ Practice cache refresh failed:', err)
+    console.warn('â ï¸  Practice cache refresh failed:', err)
     return practiceCache
   }
 }
 
 getCachedPractices().catch(console.error)
 
-// ── Session tracking ───────────────────────────────────────────────────────
+// ââ Session tracking âââââââââââââââââââââââââââââââââââââââââââââââââââââ
 interface CallSession {
   callSid: string
   practiceId: string | null
@@ -140,7 +140,7 @@ interface CallSession {
 const sessions = new Map<string, CallSession>()
 const MAX_HISTORY = 8
 
-// ── Express app ────────────────────────────────────────────────────────────
+// ââ Express app ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const app = express()
 app.use(express.urlencoded({ extended: true }))
 app.use(express.json())
@@ -161,9 +161,10 @@ app.post('/twiml', async (req, res) => {
   const calledNumber = req.body.To || ''
   const callSid = req.body.CallSid || ''
 
-  console.log(`📞 Incoming call: ${callerNumber} → ${calledNumber} (${callSid})`)
+  console.log(`ð Incoming call: ${callerNumber} â ${calledNumber} (${callSid})`)
 
   let welcomeGreeting = 'Thank you for calling, how can I help you today?'
+
   try {
     if (calledNumber) {
       const digits = calledNumber.replace(/\D/g, '').slice(-10)
@@ -175,18 +176,18 @@ app.post('/twiml', async (req, res) => {
         const aiName = match.ai_name || 'Harbor'
         const practiceName = match.name || 'the practice'
         welcomeGreeting = `Thank you for calling ${practiceName}, this is ${aiName}, how can I help you today?`
-        console.log(`✓ Personalized greeting for: ${practiceName}`)
+        console.log(`â Personalized greeting for: ${practiceName}`)
       }
     }
   } catch (err) {
-    console.warn('⚠️ Greeting lookup failed:', err)
+    console.warn('â ï¸  Greeting lookup failed:', err)
   }
 
   const greetingEscaped = welcomeGreeting
     .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
     .replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
-  const wsHost = process.env.VOICE_SERVER_HORT || req.headers.host || 'localhost:3001'
+  const wsHost = process.env.VOICE_SERVER_HOST || req.headers.host || 'localhost:3001'
   const wsProtocol = process.env.NODE_ENV === 'production' ? 'wss' : 'ws'
   const wsUrl = `${wsProtocol}://${wsHost}/ws?callerPhone=${encodeURIComponent(callerNumber)}&calledNumber=${encodeURIComponent(calledNumber)}`
 
@@ -213,7 +214,7 @@ app.post('/twiml', async (req, res) => {
   res.type('text/xml').send(twiml)
 })
 
-// ── WebSocket ───────────────────────────────────────────────────────────────
+// ââ WebSocket ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const server = createServer(app)
 const wss = new WebSocketServer({ server, path: '/ws' })
 
@@ -222,9 +223,10 @@ wss.on('connection', async (ws: WebSocket, req) => {
   const callerPhone = url.searchParams.get('callerPhone') || null
   const calledNumber = url.searchParams.get('calledNumber') || null
 
-  console.log(`🔌 WebSocket connected | caller: ${callerPhone}`)
+  console.log(`ð WebSocket connected | caller: ${callerPhone}`)
 
   let sessionId = `temp-${Date.now()}`
+
   const pingInterval = setInterval(() => {
     if (ws.readyState === WebSocket.OPEN) ws.ping()
   }, 20000)
@@ -234,7 +236,7 @@ wss.on('connection', async (ws: WebSocket, req) => {
       const raw = data.toString()
       const message = JSON.parse(raw)
       const preview = raw.length > 200 ? raw.substring(0, 200) + '...' : raw
-      console.log(`📨 [${message.type}]: ${preview}`)
+      console.log(`ð¨ [${message.type}]: ${preview}`)
 
       switch (message.type) {
         case 'setup':
@@ -248,28 +250,34 @@ wss.on('connection', async (ws: WebSocket, req) => {
           handleInterrupt(sessionId, message)
           break
         case 'dtmf':
-          console.log(`🔢 DTMF: ${message.digit} (${sessionId})`)
+          console.log(`ð¢ DTMF: ${message.digit} (${sessionId})`)
           break
         default:
-          console.log(`❓ Unknown: ${message.type}`)
+          console.log(`â Unknown: ${message.type}`)
       }
     } catch (error) {
       console.error('WS message error:', error)
     }
   })
 
-  ws.on('close', () => { clearInterval(pingInterval); handleDisconnect(sessionId) })
-  ws.on('error', (err) => { clearInterval(pingInterval); console.error(`WS error (${sessionId}):`, err) })
+  ws.on('close', () => {
+    clearInterval(pingInterval); handleDisconnect(sessionId)
+  })
+  ws.on('error', (err) => {
+    clearInterval(pingInterval); console.error(`WS error (${sessionId}):`, err)
+  })
 })
 
-// ── Handlers ───────────────────────────────────────────────────────────────
+// ââ Handlers âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 
 async function handleSetup(
-  ws: WebSocket, message: any,
-  callerPhone: string | null, calledNumber: string | null
+  ws: WebSocket,
+  message: any,
+  callerPhone: string | null,
+  calledNumber: string | null
 ) {
   const callSid = message.callSid
-  console.log(`📋 Setup: ${callSid}`)
+  console.log(`ð Setup: ${callSid}`)
 
   let practiceId: string | null = null
   let practiceConfig: PracticeConfig | null = null
@@ -280,6 +288,7 @@ async function handleSetup(
     const match = practices.find(
       (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
     )
+
     if (match) {
       practiceId = match.id
       const profile = match.onboarding_profile || {}
@@ -315,7 +324,7 @@ async function handleSetup(
         system_prompt_notes: match.system_prompt_notes || profile.system_prompt_notes || undefined,
         onboarding_profile: profile,
       }
-      console.log(`✓ Practice: ${practiceConfig.practice_name}`)
+      console.log(`â Practice: ${practiceConfig.practice_name}`)
     }
   }
 
@@ -326,14 +335,18 @@ async function handleSetup(
   const systemPrompt = buildVoiceSystemPrompt(practiceConfig)
 
   sessions.set(callSid, {
-    callSid, practiceId, practiceConfig, systemPrompt,
+    callSid,
+    practiceId,
+    practiceConfig,
+    systemPrompt,
     messages: [],
     transcript: [],
     callerPhone,
     crisisState: null,
     startTime: new Date(),
   })
-  console.log(`🧠 Provider: ${PROVIDER} | Model: ${VOICE_MODEL} | prompt: ${systemPrompt.length} chars`)
+
+  console.log(`ð§  Provider: ${PROVIDER} | Model: ${VOICE_MODEL} | prompt: ${systemPrompt.length} chars`)
 }
 
 async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
@@ -345,23 +358,25 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
   }
 
   const utterance = message.voicePrompt || ''
-  console.log(`🗣️ Caller: "${utterance}" (${sessionId}) [${session.messages.length} msgs]`)
+  console.log(`ð£ï¸  Caller: "${utterance}" (${sessionId}) [${session.messages.length} msgs]`)
 
   if (ws.readyState !== WebSocket.OPEN) return
 
   session.transcript.push(`Caller: ${utterance}`)
 
-  // ── Crisis check ─────────────────────────────────────────────────────
+  // ââ Crisis check âââââââââââââââââââââââââââââââââââââââââââââââââââââ
   const scan = scanUtterance(utterance)
 
   if (scan.immediateCrisis) {
-    console.log(`🚨 CRISIS: ${scan.matchedPhrases.join(', ')}`)
+    console.log(`ð¨ CRISIS: ${scan.matchedPhrases.join(', ')}`)
     const resp = getCrisisResponse(session.practiceConfig?.therapist_name || 'your therapist')
     sendText(ws, resp)
     session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${resp}`)
     session.crisisState = {
-      level: 'crisis', immediate: true,
-      triggerPhrases: scan.matchedPhrases, recommendedAction: 'crisis_protocol',
+      level: 'crisis',
+      immediate: true,
+      triggerPhrases: scan.matchedPhrases,
+      recommendedAction: 'crisis_protocol',
     }
     alertTherapist(session, scan.matchedPhrases).catch(console.error)
     logCrisisAlert(session, scan.matchedPhrases).catch(console.error)
@@ -369,17 +384,20 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
   }
 
   if (scan.tripwireTriggered) {
-    console.log(`⚠️ Tripwire: ${scan.matchedPhrases.join(', ')}`)
+    console.log(`â ï¸  Tripwire: ${scan.matchedPhrases.join(', ')}`)
+
     const [llmResp, assessment] = await Promise.all([
       getLLMResponse(session, utterance),
       analyzeWithSonnet(
-        session.transcript.join('\n'), scan.matchedPhrases,
+        session.transcript.join('\n'),
+        scan.matchedPhrases,
         {
           therapistName: session.practiceConfig?.therapist_name || 'the therapist',
           practiceName: session.practiceConfig?.practice_name || 'the practice',
         }
       ),
     ])
+
     session.crisisState = assessment
 
     if (assessment.recommendedAction === 'crisis_protocol') {
@@ -405,11 +423,11 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
     return
   }
 
-  // ── Normal conversation (streamed for lowest latency) ─────────────
+  // ââ Normal conversation (streamed for lowest latency) âââââââââââââ
   try {
     const response = await streamLLMResponse(ws, session, utterance)
     session.transcript.push(`${session.practiceConfig?.ai_name || 'Harbor'}: ${response}`)
-    console.log(`💬 ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 100)}..."`)
+    console.log(`ð¬ ${session.practiceConfig?.ai_name || 'Harbor'}: "${response.substring(0, 100)}..."`)
   } catch (err) {
     console.error('LLM error:', err)
     sendText(ws, "I'm sorry, I'm having a brief technical issue. Could you repeat that?")
@@ -419,7 +437,7 @@ async function handlePrompt(ws: WebSocket, message: any, sessionId: string) {
 function handleInterrupt(sessionId: string, message: any) {
   const session = sessions.get(sessionId)
   if (!session) return
-  console.log(`🤚 Interrupted (${sessionId})`)
+  console.log(`ð¤ Interrupted (${sessionId})`)
   if (message.utteranceUntilInterrupt) {
     const last = session.transcript.length - 1
     if (last >= 0 && session.transcript[last].startsWith(session.practiceConfig?.ai_name || 'Harbor')) {
@@ -431,8 +449,9 @@ function handleInterrupt(sessionId: string, message: any) {
 async function handleDisconnect(sessionId: string) {
   const session = sessions.get(sessionId)
   if (!session) return
+
   const duration = Math.round((Date.now() - session.startTime.getTime()) / 1000)
-  console.log(`📴 Call ended: ${sessionId} (${duration}s)`)
+  console.log(`ð´ Call ended: ${sessionId} (${duration}s)`)
 
   try {
     if (session.practiceId) {
@@ -444,15 +463,16 @@ async function handleDisconnect(sessionId: string) {
         summary: '',
         crisis_detected: session.crisisState?.level === 'crisis',
       })
-      console.log(`✓ Call logged`)
+      console.log(`â Call logged`)
     }
   } catch (error) {
     console.error('Failed to log call:', error)
   }
+
   sessions.delete(sessionId)
 }
 
-// ── Gemini / Anthropic LLM helpers ───────────────────────────────────────
+// ââ Gemini / Anthropic LLM helpers âââââââââââââââââââââââââââââââââââââââââ
 
 // Convert our message format to Gemini's content format
 function toGeminiContents(messages: Array<{ role: string; content: string }>) {
@@ -462,21 +482,20 @@ function toGeminiContents(messages: Array<{ role: string; content: string }>) {
   }))
 }
 
-// ── LLM streaming (primary path for all normal conversation) ────────────────────────────────────────────────────────────────────
-// Gemini Flash: ~200ms TTFB — 2x faster than Haiku
+// ââ LLM streaming (primary path for all normal conversation) ââââââââââââââ
+// Gemini Flash: ~200ms TTFB â 2x faster than Haiku
 // Streams tokens to ConversationRelay so TTS starts immediately
 
 async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance: string): Promise<string> {
   session.messages.push({ role: 'user', content: utterance })
   const trimmed = session.messages.slice(-MAX_HISTORY)
-
   const t0 = Date.now()
   let firstTokenTime = 0
   let fullText = ''
 
   try {
     if (useGemini && genai) {
-      // ── Gemini Flash streaming path ───────────────────────────────
+      // ââ Gemini Flash streaming path âââââââââââââââââââââââââââââââââ
       const stream = await genai.models.generateContentStream({
         model: VOICE_MODEL,
         contents: toGeminiContents(trimmed),
@@ -498,7 +517,7 @@ async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance:
         }
       }
     } else {
-      // ── Anthropic Haiku fallback ──────────────────────────────────
+      // ââ Anthropic Haiku fallback ââââââââââââââââââââââââââââââââââââââ
       const stream = anthropic.messages.stream({
         model: VOICE_MODEL,
         max_tokens: 150,
@@ -531,13 +550,15 @@ async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance:
     const totalMs = Date.now() - t0
     const ttfb = firstTokenTime ? firstTokenTime - t0 : totalMs
     lastApiCallTime = Date.now()
-    console.log(`⚡ ${PROVIDER} stream: TTFB=${ttfb}ms total=${totalMs}ms | len=${fullText.length} | history=${trimmed.length}`)
+
+    console.log(`â¡ ${PROVIDER} stream: TTFB=${ttfb}ms total=${totalMs}ms | len=${fullText.length} | history=${trimmed.length}`)
 
     session.messages.push({ role: 'assistant', content: fullText })
     return fullText
+
   } catch (error: any) {
     const latency = Date.now() - t0
-    console.error(`❌ ${PROVIDER} stream error (${latency}ms):`, error?.message?.substring(0, 200) || error)
+    console.error(`â ${PROVIDER} stream error (${latency}ms):`, error?.message?.substring(0, 200) || error)
 
     if (fullText && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: 'text', token: '', last: true }))
@@ -546,7 +567,7 @@ async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance:
     }
 
     session.messages.pop()
-    return "I'm sorry, I'm having a brief techical issue. Could you repeat that?"
+    return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
   }
 }
 
@@ -554,8 +575,8 @@ async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance:
 async function getLLMResponse(session: CallSession, utterance: string): Promise<string> {
   session.messages.push({ role: 'user', content: utterance })
   const trimmed = session.messages.slice(-MAX_HISTORY)
-
   const t0 = Date.now()
+
   try {
     let text: string
 
@@ -575,7 +596,7 @@ async function getLLMResponse(session: CallSession, utterance: string): Promise<
         model: VOICE_MODEL,
         max_tokens: 150,
         system: [
-          { 
+          {
             type: 'text' as const,
             text: session.systemPrompt,
             cache_control: { type: 'ephemeral' as const },
@@ -589,28 +610,28 @@ async function getLLMResponse(session: CallSession, utterance: string): Promise<
     }
 
     const latency = Date.now() - t0
-    console.log(`⚡ ${PROVIDER} in ${latency}ms | len=${text.length} | history=${trimmed.length}`)
-
+    console.log(`â¡ ${PROVIDER} in ${latency}ms | len=${text.length} | history=${trimmed.length}`)
     session.messages.push({ role: 'assistant', content: text })
     return text
+
   } catch (error: any) {
     const latency = Date.now() - t0
-    console.error(`❌ ${PROVIDER} error (${latency}ms):`, error?.message?.substring(0, 200) || error)
-
+    console.error(`â ${PROVIDER} error (${latency}ms):`, error?.message?.substring(0, 200) || error)
     session.messages.pop()
-    return "I'm sorry, I'm having a brief techical issue. Could you repeat that?"
+    return "I'm sorry, I'm having a brief technical issue. Could you repeat that?"
   }
 }
 
-// ── Send to ConversationRelay ───────────────────────────────────────────────────────────────────
-
+// ââ Send to ConversationRelay ââââââââââââââââââââââââââââââââââââââââââââââ
 function sendText(ws: WebSocket, text: string) {
   if (ws.readyState !== WebSocket.OPEN) return
   ws.send(JSON.stringify({ type: 'text', token: text, last: true }))
 }
 
-// ── Crisis alerting ────────────────────────────────────────────────────(*async function alertTherapist(session: CallSession, phrases: string[]) {
+// ââ Crisis alerting ââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+async function alertTherapist(session: CallSession, phrases: string[]) {
   if (!session.practiceId) return
+
   try {
     const { data: practice } = await supabase
       .from('practices')
@@ -622,21 +643,24 @@ function sendText(ws: WebSocket, text: string) {
     if (!alertPhone || !TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) return
 
     const twilio = (await import('twilio')).default
-    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTPNWTOKEN)
+    const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
     await client.messages.create({
       body: [
-        '🚨 HARBOR CRISIS ALERT',
+        'ð¨ HARBOR CRISIS ALERT',
         `Caller: ${session.callerPhone || 'Unknown'}`,
         `Detected: ${phrases.join(', ')}`,
-        '', 'A caller may be in distress. Please review.',
-        '', 'If immediate danger: call 911',
+        '',
+        'A caller may be in distress. Please review.',
+        '',
+        'If immediate danger: call 911',
         '988 Suicide & Crisis Lifeline: 988',
       ].join('\n'),
       from: TWILIO_PHONE_NUMBER,
       to: alertPhone.startsWith('+') ? alertPhone : `+1${alertPhone.replace(/\D/g, '')}`,
     })
-    console.log(`🚨 Crisis alert sent to ${alertPhone}`)
+
+    console.log(`ð¨ Crisis alert sent to ${alertPhone}`)
   } catch (error) {
     console.error('Crisis alert failed:', error)
   }
@@ -644,6 +668,7 @@ function sendText(ws: WebSocket, text: string) {
 
 async function logCrisisAlert(session: CallSession, phrases: string[]) {
   if (!session.practiceId) return
+
   try {
     await supabase.from('crisis_alerts').insert({
       practice_id: session.practiceId,
@@ -658,24 +683,23 @@ async function logCrisisAlert(session: CallSession, phrases: string[]) {
   }
 }
 
-// ── Start ───────────────────────────────────────────────────────────────────
-
+// ââ Start ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 server.listen(PORT, () => {
   console.log(`
-╔══════════════════════════════════════════════════╗
-║          Harbor Voice Server 🏥                  ║
-║                                                  ║
-║  Provider: #{(PROVIDER + '                   ').slice(0, 20)}             ║
-║  Model:     ${(VOICE_MODEL + '                    ').slice(0, 20)}             ║
-║  WS:       ws://localhost:${PORT}/ws               ║
-║  TwiML:    http://localhost:${PORT}/twiml          ║
-║                                                  ║
-║  Gemini:     ${GEMINI_API_KEY ? '✓' : '✗'}                                  ║
-║  Anthropic:  ${ANTHROPIC_API_KEY ? '✓' : '✗'} (crisis detection)            ║
-║  Supabase:   ${SUPABASE_URL ? '✓' : '✗'}                                  ║
-║  Twilio:     ${TWILIO_ACCOUNT_SID ? '✓' : '✗'}                                  ║
-║  Voice:      ElevenLabs Flash 2.5                ║
-╚═════════════════════════════════════════════════╝
+ââââââââââââââââââââââââââââââââââââââââââââââââââââ
+â            Harbor Voice Server                   â
+â                                                  â
+â  Provider:  ${(PROVIDER + '                    ').slice(0, 20)}â
+â  Model:     ${(VOICE_MODEL + '                    ').slice(0, 20)}â
+â  WS:        ws://localhost:${PORT}/ws              â
+â  TwiML:     http://localhost:${PORT}/twiml         â
+â                                                  â
+â  Gemini:    ${GEMINI_API_KEY ? 'â' : 'â'}                                 â
+â  Anthropic: ${ANTHROPIC_API_KEY ? 'â' : 'â'} (crisis detection)          â
+â  Supabase:  ${SUPABASE_URL ? 'â' : 'â'}                                 â
+â  Twilio:    ${TWILIO_ACCOUNT_SID ? 'â' : 'â'}                                 â
+â  Voice:     ElevenLabs Flash 2.5                 â
+ââââââââââââââââââââââââââââââââââââââââââââââââââââ
   `)
 })
 
