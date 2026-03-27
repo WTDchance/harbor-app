@@ -1,7 +1,7 @@
 {
   "name": "harbor-voice-server",
   "version": "1.0.0",
-  "description": "Harbor AI Receptionist - Voice WebSocket Server (Twilio ConversationRelay + Gemini Flash)",
+  "description": "Harbor AI Receptionist - Voice WebSocket Server (Twilio ConversationRelay + Groq Llama)",
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
@@ -10,10 +10,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
-    "@google/genai": "^1.0.0",
     "@supabase/supabase-js": "^2.38.0",
     "dotenv": "^16.3.0",
     "express": "^4.18.0",
+    "groq-sdk": "^0.12.0",
     "twilio": "^4.10.0",
     "ws": "^8.16.0"
   },
