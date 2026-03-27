@@ -1,6 +1,5 @@
-// Harbor AI Receptionist Ã¢ÂÂ Vapi.ai Webhook Handler
-// Handles all Vapi server events: assistant-request, function-call, end-of-call-report, status-update
-// Dynamic per-practice assistant config via assistant-request for multi-tenant support
+// Harbor AI Receptionist - Vapi Webhook Handler
+// Handles: assistant-request, tool-calls, function-call, end-of-call-report, status-update, hang
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
@@ -11,632 +10,682 @@ import { buildSystemPrompt } from '@/lib/systemPrompt'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 
-const TWILIO_ACCOUNT_SID = process.env.TWILIO_ACCOUNT_SID
-const TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN
-const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER
+// ---- Crisis keyword lists ----
 
-// Ã¢ÂÂÃ¢ÂÂ Crisis keywords for fast detection (Tier 1) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
 const IMMEDIATE_CRISIS = [
   'kill myself', 'end my life', 'take my own life', 'suicide', 'suicidal',
   'want to die', 'rather be dead', 'better off dead', 'ending it all',
   'going to hurt myself', 'going to harm myself', 'overdose',
-  'not going to be around', 'no reason to live', 'nothing to live for',
 ]
 
-const CONCERN_PHRASES = [
-  "don't want to be here", "can't do this anymore", "can't go on",
-  'tired of everything', 'given up', 'hopeless', 'worthless',
-  'no one cares', 'just want it to stop', 'cancel all my appointments',
-  'panic attack', "can't stop crying", 'relapsed', 'using again',
+const CRISIS_CONCERNS = [
+  'not worth living', 'no reason to live', 'can\'t go on', 'hopeless',
+  'giving up', 'no way out', 'burden to everyone', 'nobody cares',
+  'want it to stop', 'can\'t take it anymore', 'self-harm', 'cutting',
+  'hurting myself',
 ]
 
-// Ã¢ÂÂÃ¢ÂÂ Helpers Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-
-async function resolvePractice(call: any, message: any) {
-  // Try metadata first (set when creating outbound calls)
-  let practiceId: string | null = call?.metadata?.practiceId || null
-
-  if (!practiceId) {
-    // Resolve by the Twilio phone number Vapi called
-    const calledNumber =
-      call?.phoneNumber?.number ||
-      message?.phoneNumber?.number ||
-      call?.phoneNumber?.twilioPhoneNumber ||
-      null
-
-    if (calledNumber) {
-      // Exact match
-      const { data: exact } = await supabaseAdmin
-        .from('practices')
-        .select('*')
-        .eq('phone_number', calledNumber)
-        .single()
-
-      if (exact) return exact
-
-      // Normalized match (strip country code)
-      const digits = calledNumber.replace(/\D/g, '').slice(-10)
-      const { data: allPractices } = await supabaseAdmin
-        .from('practices')
-        .select('*')
-      if (allPractices) {
-        const match = allPractices.find(
-          (p: any) => p.phone_number?.replace(/\D/g, '').slice(-10) === digits
-        )
-        if (match) return match
-      }
-    }
-  }
-
-  if (practiceId) {
-    const { data } = await supabaseAdmin
-      .from('practices')
-      .select('*')
-      .eq('id', practiceId)
-      .single()
-    return data
-  }
-
-  return null
-}
-
-function detectCrisis(transcript: string): { crisis: boolean; concern: boolean; phrases: string[] } {
-  const lower = transcript.toLowerCase()
-  const crisisMatches = IMMEDIATE_CRISIS.filter(p => lower.includes(p))
-  if (crisisMatches.length > 0) {
-    return { crisis: true, concern: true, phrases: crisisMatches }
-  }
-  const concernMatches = CONCERN_PHRASES.filter(p => lower.includes(p))
-  return { crisis: false, concern: concernMatches.length > 0, phrases: concernMatches }
-}
-
-// Ã¢ÂÂÃ¢ÂÂ Main webhook handler Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
+// ---- POST handler ----
 
 export async function POST(request: NextRequest) {
   try {
-    // Auth check
+    const body = await request.json()
+    const message = body.message || body
+
+    // Verify webhook secret if configured
     const secret = request.nextUrl.searchParams.get('secret')
     if (process.env.VAPI_WEBHOOK_SECRET && secret !== process.env.VAPI_WEBHOOK_SECRET) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const body = await request.json()
-    const message = body.message || body
-    const type = message.type
-    const call = message.call
+    const messageType = message.type
+    console.log(`[Vapi] Event: ${messageType}`)
 
-    console.log(`[Vapi] ${type} | call: ${call?.id || 'N/A'}`)
+    switch (messageType) {
+      case 'assistant-request':
+        return handleAssistantRequest(message)
 
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    // ASSISTANT REQUEST Ã¢ÂÂ Dynamic per-practice assistant configuration
-    // Vapi sends this when an inbound call arrives. We return a transient
-    // assistant with the right system prompt, voice, and tools for that
-    // practice. Must respond within 7.5 seconds.
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    if (type === 'assistant-request') {
-      const practice = await resolvePractice(call, message)
+      case 'tool-calls':
+        return handleToolCalls(message)
 
-      if (!practice) {
-        console.warn('[Vapi] assistant-request: could not resolve practice')
-        // Return a generic fallback assistant
-        return NextResponse.json({
-          assistant: {
-            firstMessage: "Thank you for calling. I'm sorry, but I'm having trouble connecting to the practice's system right now. Please try calling back in a few minutes, or leave your name and number and someone will get back to you.",
-            model: {
-              provider: 'openai',
-              model: 'gpt-4o-mini',
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You are a helpful receptionist. The practice lookup failed. Be apologetic, collect their name and phone number, and let them know someone will call back.',
-                },
-              ],
-            },
-            voice: {
-              provider: '11labs',
-              voiceId: '21m00Tcm4TlvDq8ikWAM',
-            },
-          },
-        })
-      }
+      case 'function-call':
+        return handleFunctionCall(message)
 
-      // Build human-readable hours from hours_json
-      const hoursText = formatHoursJson(practice.hours_json)
+      case 'end-of-call-report':
+        return handleEndOfCallReport(message)
 
-      // Build the dynamic system prompt from practice data
-      // Column names match onboarding_profile migration (provider_name, telehealth_available, etc.)
-      const systemPrompt = buildSystemPrompt({
-        therapist_name: practice.provider_name || practice.name,
-        practice_name: practice.name,
-        ai_name: practice.ai_name || 'Harbor',
-        specialties: practice.specialties || [],
-        hours: hoursText,
-        location: practice.location || '',
-        telehealth: practice.telehealth_available ?? true,
-        insurance_accepted: practice.insurance_accepted || [],
-        system_prompt_notes: practice.system_prompt_notes || '',
-        emotional_support_enabled: practice.emotional_support_enabled ?? true,
-      })
+      case 'status-update':
+      case 'hang':
+      case 'speech-update':
+      case 'transcript':
+        return NextResponse.json({ ok: true })
 
-      const aiName = practice.ai_name || 'Harbor'
-      const practiceName = practice.name || 'the practice'
-
-      return NextResponse.json({
-        assistant: {
-          // First spoken message
-          firstMessage: `Good ${getTimeOfDay()}, this is ${aiName} with ${practiceName}. How can I help you today?`,
-
-          // LLM â GPT-4o-mini via Vapi built-in (no API key needed)
-          model: {
-            provider: 'openai',
-            model: 'gpt-4o-mini',
-            messages: [
-              { role: 'system', content: systemPrompt },
-            ],
-            temperature: 0.4,
-          },
-
-          // Voice â ElevenLabs Rachel: warm, natural female
-          voice: {
-            provider: '11labs',
-            voiceId: '21m00Tcm4TlvDq8ikWAM',
-          },
-
-          // Transcription
-          transcriber: {
-            provider: 'deepgram',
-            model: 'nova-2',
-            language: 'en',
-          },
-
-          // Pass practice context as metadata for later webhook events
-          metadata: {
-            practiceId: practice.id,
-            practiceName: practice.name,
-            therapistName: practice.provider_name || practice.name,
-          },
-
-          // End-of-call settings
-          endCallMessage: `Thank you for calling ${practiceName}. Have a wonderful day!`,
-
-          // Server URL for function calls (points back to this webhook)
-          serverUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'}/api/vapi/webhook${process.env.VAPI_WEBHOOK_SECRET ? '?secret=' + process.env.VAPI_WEBHOOK_SECRET : ''}`,
-
-          // Tools the assistant can call
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: 'collectIntakeInfo',
-                description: 'Save new patient intake information after collecting their details during the call. Call this when you have gathered the patient name, phone, and reason for seeking therapy.',
-                parameters: {
-                  type: 'object',
-                        properties: {
-                    patientName: { type: 'string', description: 'Full name of the patient' },
-                    patientPhone: { type: 'string', description: 'Patient phone number' },
-                    patientEmail: { type: 'string', description: 'Patient email address (if provided)' },
-                    insurance: { type: 'string', description: 'Insurance provider or self-pay' },
-                    reasonForSeeking: { type: 'string', description: 'Why they are seeking therapy' },
-                    preferredTimes: { type: 'string', description: 'Preferred appointment days/times' },
-                    telehealthPreference: { type: 'string', description: 'telehealth, in-person, or no preference' },
-                    phq2Score: { type: 'number', description: 'PHQ-2 depression screening score (0-6)' },
-                    gad2Score: { type: 'number', description: 'GAD-2 anxiety screening score (0-6)' },
-                  },
-                  required: ['patientName'],
-                },
-              },
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'checkAvailability',
-                description: 'Check appointment availability when a patient asks about open times.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    preferredDay: { type: 'string', description: 'Day of week or date preference' },
-                    preferredTime: { type: 'string', description: 'Time of day preference (morning/afternoon/evening)' },
-                  },
-                },
-              },
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'takeMessage',
-                description: 'Take a message for the therapist when the caller wants to leave a note or callback request.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    callerName: { type: 'string', description: 'Name of the caller' },
-                    callerPhone: { type: 'string', description: 'Callback phone number' },
-                    message: { type: 'string', description: 'The message to pass along' },
-                    urgent: { type: 'boolean', description: 'Whether the message is urgent' },
-                  },
-                  required: ['message'],
-                },
-              },
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'submitIntakeScreening',
-                description: 'Submit PHQ-2 and GAD-2 screening scores after asking the 4 screening questions.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    patientName: { type: 'string', description: 'Patient name' },
-                    phq2Score: { type: 'number', description: 'PHQ-2 score (Q1+Q2, range 0-6)' },
-                    gad2Score: { type: 'number', description: 'GAD-2 score (Q3+Q4, range 0-6)' },
-                    q1: { type: 'number', description: 'Feeling down/depressed (0-3)' },
-                    q2: { type: 'number', description: 'Little interest/pleasure (0-3)' },
-                    q3: { type: 'number', description: 'Nervous/anxious/on edge (0-3)' },
-                    q4: { type: 'number', description: 'Unable to stop worrying (0-3)' },
-                  },
-                  required: ['phq2Score', 'gad2Score'],
-                },
-              },
-            },
-          ],
-        },
-      })
+      default:
+        console.log(`[Vapi] Unhandled event type: ${messageType}`)
+        return NextResponse.json({ ok: true })
     }
-
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    // FUNCTION CALL Ã¢ÂÂ Tool execution during a live call
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    if (type === 'function-call') {
-      const functionName = message.functionCall?.name
-      const params = message.functionCall?.parameters || {}
-      const practiceId = call?.metadata?.practiceId
-      const therapistName = call?.metadata?.therapistName || 'the therapist'
-
-      console.log(`[Vapi] function-call: ${functionName}`, JSON.stringify(params).slice(0, 200))
-
-      if (functionName === 'collectIntakeInfo') {
-        if (practiceId) {
-          // Save intake data
-          await supabaseAdmin
-            .from('intake_submissions')
-            .insert({
-              practice_id: practiceId,
-              vapi_call_id: call?.id,
-              caller_number: call?.customer?.number || params.patientPhone || null,
-              intake_data: params,
-            })
-            .catch((err: unknown) => console.error('[Vapi] Failed to save intake:', err))
-
-          // Also try to create/update patient record
-          if (params.patientName) {
-            const nameParts = params.patientName.trim().split(/\s+/)
-            const firstName = nameParts[0] || params.patientName
-            const lastName = nameParts.slice(1).join(' ') || ''
-            const phone = params.patientPhone || call?.customer?.number || ''
-
-            if (phone) {
-              // Check if patient exists
-              const { data: existing } = await supabaseAdmin
-                .from('patients')
-                .select('id')
-                .eq('practice_id', practiceId)
-                .eq('phone', phone)
-                .single()
-
-              if (!existing) {
-                await supabaseAdmin
-                  .from('patients')
-                  .insert({
-                    practice_id: practiceId,
-                    first_name: firstName,
-                    last_name: lastName,
-                    phone,
-                    email: params.patientEmail || null,
-                    insurance: params.insurance || null,
-                    reason_for_seeking: params.reasonForSeeking || null,
-                  })
-                  .catch((err: unknown) => console.error('[Vapi] Failed to create patient:', err))
-              }
-            }
-          }
-        }
-
-        return NextResponse.json({
-          result: `Thank you for sharing that. I've noted all your information. ${therapistName}'s office will reach out within one business day to confirm your appointment.`,
-        })
-      }
-
-      if (functionName === 'checkAvailability') {
-        const preferredDay = params.preferredDay || 'this week'
-        const preferredTime = params.preferredTime || ''
-        return NextResponse.json({
-          result: `I'd love to help with scheduling. ${therapistName} typically has availability within the next 1-2 weeks${preferredTime ? ` for ${preferredTime} appointments` : ''}. Let me take your information and the office will reach out to confirm the best time for you.`,
-        })
-      }
-
-      if (functionName === 'takeMessage') {
-        if (practiceId) {
-          // Store as a call log note or intake submission
-          await supabaseAdmin
-            .from('intake_submissions')
-            .insert({
-              practice_id: practiceId,
-              vapi_call_id: call?.id,
-              caller_number: call?.customer?.number || params.callerPhone || null,
-              intake_data: {
-                type: 'message',
-                callerName: params.callerName,
-                callerPhone: params.callerPhone,
-                message: params.message,
-                urgent: params.urgent || false,
-              },
-            })
-            .catch((err: unknown) => console.error('[Vapi] Failed to save message:', err))
-        }
-
-        return NextResponse.json({
-          result: `I've passed your message along to ${therapistName}. ${params.urgent ? "I've marked it as urgent so they'll see it right away." : "They'll get back to you as soon as possible."}`,
-        })
-      }
-
-      if (functionName === 'submitIntakeScreening') {
-        if (practiceId) {
-          await supabaseAdmin
-            .from('intake_submissions')
-            .insert({
-              practice_id: practiceId,
-              vapi_call_id: call?.id,
-              caller_number: call?.customer?.number || null,
-              intake_data: {
-                type: 'screening',
-                phq2Score: params.phq2Score,
-                gad2Score: params.gad2Score,
-                q1: params.q1,
-                q2: params.q2,
-                q3: params.q3,
-                q4: params.q4,
-                patientName: params.patientName,
-                flagged: (params.phq2Score >= 3 || params.gad2Score >= 3),
-              },
-            })
-            .catch((err: unknown) => console.error('[Vapi] Failed to save screening:', err))
-        }
-
-        const flagged = params.phq2Score >= 3 || params.gad2Score >= 3
-        return NextResponse.json({
-          result: flagged
-            ? `Thank you for sharing that with me. I want to make sure ${therapistName} has this information before your appointment so they can give you the best care.`
-            : `Thank you for answering those questions. I've noted everything for ${therapistName}.`,
-        })
-      }
-
-      // Unknown function
-      return NextResponse.json({ result: 'Noted. Is there anything else I can help you with?' })
-    }
-
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    // STATUS UPDATE Ã¢ÂÂ Call lifecycle events
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    if (type === 'status-update') {
-      const status = message.status
-      console.log(`[Vapi] status: ${status} | call: ${call?.id}`)
-      return NextResponse.json({ received: true })
-    }
-
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    // END OF CALL REPORT Ã¢ÂÂ Post-call processing
-    // Save transcript, generate summary, extract patient info, detect crisis
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    if (type === 'end-of-call-report') {
-      const callId = call?.id
-      const transcript = message.transcript || call?.transcript || ''
-      const duration = message.durationSeconds
-        ? Math.round(message.durationSeconds)
-        : call?.endedAt && call?.startedAt
-          ? Math.round((new Date(call.endedAt).getTime() - new Date(call.startedAt).getTime()) / 1000)
-          : 0
-
-      const patientPhone = call?.customer?.number || 'unknown'
-
-      // Resolve practice
-      const practice = await resolvePractice(call, message)
-      if (!practice) {
-        console.warn('[Vapi] end-of-call: could not resolve practice. Call ID:', callId)
-        return NextResponse.json({ received: true, callId })
-      }
-
-      const practiceId = practice.id
-      const therapistName = practice.provider_name || practice.name
-
-      // Ã¢ÂÂÃ¢ÂÂ Crisis detection Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      const { crisis: crisisDetected, concern: concernDetected, phrases } = detectCrisis(transcript)
-
-      // For concern-level (not immediate crisis), run deeper AI analysis
-      let deepCrisisFlag = crisisDetected
-      if (concernDetected && !crisisDetected && transcript.length > 50) {
-        try {
-          deepCrisisFlag = await detectCrisisIndicators(transcript)
-        } catch (err) {
-          console.error('[Vapi] Deep crisis check failed:', err)
-        }
-      }
-
-      // Ã¢ÂÂÃ¢ÂÂ Generate call summary Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      let aiSummary = message.summary || ''
-      if (!aiSummary && transcript) {
-        try {
-          const prompt = getCallSummaryPrompt()
-          aiSummary = await generateCallSummary(transcript, prompt)
-        } catch (err) {
-          console.error('[Vapi] Summary generation failed:', err)
-          aiSummary = 'Summary unavailable.'
-        }
-      }
-
-      // Ã¢ÂÂÃ¢ÂÂ Extract structured info from transcript Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      let extractedInfo: any = {}
-      if (transcript && transcript.length > 100) {
-        try {
-          extractedInfo = await extractCallInformation(transcript)
-        } catch (err) {
-          console.error('[Vapi] Info extraction failed:', err)
-        }
-      }
-
-      // Ã¢ÂÂÃ¢ÂÂ Save call log Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      const { error: dbError } = await supabaseAdmin.from('call_logs').insert({
-        vapi_call_id: callId,
-        practice_id: practiceId,
-        patient_phone: patientPhone,
-        transcript,
-        summary: aiSummary,
-        duration_seconds: duration,
-      })
-      if (dbError) console.error('[Vapi] Failed to save call log:', dbError)
-
-      // Ã¢ÂÂÃ¢ÂÂ Auto-create patient record if extracted Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      if (extractedInfo.patientName && patientPhone !== 'unknown') {
-        const nameParts = extractedInfo.patientName.trim().split(/\s+/)
-        const firstName = nameParts[0]
-        const lastName = nameParts.slice(1).join(' ') || ''
-
-        const { data: existing } = await supabaseAdmin
-          .from('patients')
-          .select('id')
-          .eq('practice_id', practiceId)
-          .eq('phone', patientPhone)
-          .single()
-
-        if (!existing) {
-          await supabaseAdmin
-            .from('patients')
-            .insert({
-              practice_id: practiceId,
-              first_name: firstName,
-              last_name: lastName,
-              phone: patientPhone,
-              email: extractedInfo.patientEmail || null,
-              insurance: extractedInfo.patientInsurance || null,
-              reason_for_seeking: extractedInfo.reasonForSeeking || null,
-            })
-            .catch((err: unknown) => console.error('[Vapi] Failed to auto-create patient:', err))
-        }
-      }
-
-      // Ã¢ÂÂÃ¢ÂÂ Send notification emails (PHI-free) Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      const { data: userRecord } = await supabaseAdmin
-        .from('users')
-        .select('email')
-        .eq('practice_id', practiceId)
-        .single()
-
-      const primaryEmail = userRecord?.email || null
-      const notificationEmails: string[] = (practice as any)?.notification_emails || []
-      const allEmails = [...new Set([...(primaryEmail ? [primaryEmail] : []), ...notificationEmails])]
-
-      if (allEmails.length > 0) {
-        try {
-          const { subject: emailSubject, html: emailHtml, from } = buildCallSummaryEmail({
-            practiceName: practice.name || 'Your Practice',
-            crisisDetected: deepCrisisFlag,
-          })
-          for (const email of allEmails) {
-            await sendEmail({
-              to: email,
-              subject: emailSubject,
-              html: emailHtml,
-              from,
-            }).catch((err) => console.error('[Vapi] Email failed:', email, err))
-          }
-        } catch (emailErr) {
-          console.error('[Vapi] Email notification failed:', emailErr)
-        }
-      }
-
-      // Ã¢ÂÂÃ¢ÂÂ Crisis SMS alert to therapist Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      if (deepCrisisFlag && TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN && TWILIO_PHONE_NUMBER && process.env.SMS_ENABLED === 'true') {
-        try {
-          const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-          const alertNumber = (practice as any)?.crisis_alert_phone
-          const formattedAlert = alertNumber ? formatPhoneNumber(alertNumber) : null
-          if (formattedAlert) {
-            await twilioClient.messages.create({
-              body: `CRISIS ALERT: A caller may be in distress. Please review the latest call immediately. Call ID: ${callId}`,
-              from: TWILIO_PHONE_NUMBER,
-              to: formattedAlert,
-            })
-            console.log('[Vapi] Crisis SMS sent to:', formattedAlert)
-          }
-        } catch (smsErr) {
-          console.error('[Vapi] Crisis SMS failed:', smsErr)
-        }
-      }
-
-      // Ã¢ÂÂÃ¢ÂÂ Log crisis to crisis_alerts table if it exists Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-      if (deepCrisisFlag) {
-        await supabaseAdmin
-          .from('crisis_alerts')
-          .insert({
-            practice_id: practiceId,
-            patient_phone: patientPhone,
-            keywords_found: phrases,
-            sms_sent: process.env.SMS_ENABLED === 'true',
-          })
-          .catch((err: unknown) => console.error('[Vapi] Failed to log crisis alert:', err))
-      }
-
-      console.log(`[Vapi] end-of-call complete | practice: ${practice.name} | duration: ${duration}s | crisis: ${deepCrisisFlag}`)
-
-      return NextResponse.json({
-        received: true,
-        callId,
-        practiceId,
-        crisisDetected: deepCrisisFlag,
-        summary: aiSummary.slice(0, 100) + '...',
-        extractedInfo,
-      })
-    }
-
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    // HANG Ã¢ÂÂ Call ended or timed out
-    // Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-    if (type === 'hang') {
-      console.log(`[Vapi] hang | call: ${call?.id}`)
-      return NextResponse.json({ received: true })
-    }
-
-    // Default: acknowledge unknown events
-    console.log(`[Vapi] unhandled event type: ${type}`)
-    return NextResponse.json({ received: true })
   } catch (error) {
     console.error('[Vapi] Webhook error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
   }
 }
 
-// Ã¢ÂÂÃ¢ÂÂ Utility Ã¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂÃ¢ÂÂ
-
-function getTimeOfDay(): string {
-  const hour = new Date().getHours()
-  if (hour < 12) return 'morning'
-  if (hour < 17) return 'afternoon'
-  return 'evening'
+// Also handle GET for health checks
+export async function GET() {
+  return NextResponse.json({ status: 'ok', service: 'harbor-vapi-webhook' })
 }
 
-function formatHoursJson(hoursJson: any): string {
-  if (!hoursJson || typeof hoursJson !== 'object') return 'Monday-Friday 9am-5pm'
+// ---- assistant-request ----
+// Vapi sends this when an inbound call arrives. We look up the practice
+// by phone number and return a transient assistant config.
 
-  const dayNames = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-  const shortNames: Record<string, string> = {
-    monday: 'Mon', tuesday: 'Tue', wednesday: 'Wed',
-    thursday: 'Thu', friday: 'Fri', saturday: 'Sat', sunday: 'Sun',
+async function handleAssistantRequest(message: any) {
+  const call = message.call || {}
+  const phoneNumber = call.phoneNumber?.number || call.phoneNumberId || ''
+
+  console.log(`[Vapi] Inbound call to: ${phoneNumber}`)
+
+  // Look up practice by phone number
+  let practice: any = null
+  if (phoneNumber) {
+    const normalized = phoneNumber.replace(/\D/g, '').slice(-10)
+    const { data } = await supabaseAdmin
+      .from('practices')
+      .select('*')
+      .or(`phone_number.ilike.%${normalized}`)
+      .limit(1)
+      .single()
+    practice = data
   }
 
-  const parts: string[] = []
-  for (const day of dayNames) {
-    const d = hoursJson[day]
-    if (d?.enabled && d.openTime && d.closeTime) {
-      parts.push(`${shortNames[day]} ${d.openTime}-${d.closeTime}`)
+  // Fallback if no practice found
+  if (!practice) {
+    console.warn('[Vapi] No practice found for number:', phoneNumber)
+    return NextResponse.json({
+      assistant: buildFallbackAssistant(),
+    })
+  }
+
+  console.log(`[Vapi] Matched practice: ${practice.name} (${practice.id})`)
+
+  // Build dynamic system prompt from practice config
+  const systemPrompt = buildSystemPrompt({
+    therapist_name: practice.provider_name || practice.name,
+    practice_name: practice.name,
+    ai_name: practice.ai_name || 'Ellie',
+    specialties: practice.specialties || [],
+    hours: formatHours(practice.hours_json),
+    location: practice.location || '',
+    telehealth: practice.telehealth_available || false,
+    insurance_accepted: practice.insurance_accepted || [],
+    system_prompt_notes: practice.system_prompt_notes || '',
+    emotional_support_enabled: true,
+  })
+
+  const aiName = practice.ai_name || 'Ellie'
+  const greeting = `Hi there, thank you for calling ${practice.name}. This is ${aiName}. How can I help you today?`
+
+  // Build the webhook URL for tool call callbacks
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+  const webhookSecret = process.env.VAPI_WEBHOOK_SECRET
+  const serverUrl = `${baseUrl}/api/vapi/webhook${webhookSecret ? '?secret=' + webhookSecret : ''}`
+
+  return NextResponse.json({
+    assistant: {
+      name: `${aiName} - ${practice.name}`,
+      firstMessage: greeting,
+      model: {
+        provider: 'openai',
+        model: 'gpt-4o-mini',
+        messages: [
+          { role: 'system', content: systemPrompt },
+        ],
+      },
+      voice: {
+        provider: '11labs',
+        voiceId: '21m00Tcm4TlvDq8ikWAM',
+      },
+      transcriber: {
+        provider: 'deepgram',
+        model: 'nova-2',
+      },
+      serverUrl: serverUrl,
+      endCallFunctionEnabled: true,
+      recordingEnabled: true,
+      silenceTimeoutSeconds: 30,
+      maxDurationSeconds: 1800,
+      tools: buildTools(),
+      metadata: {
+        practiceId: practice.id,
+        practiceName: practice.name,
+      },
+    },
+  })
+}
+
+// ---- tool-calls (new Vapi format) ----
+
+async function handleToolCalls(message: any) {
+  const toolCallList = message.toolWithToolCallList || []
+  const call = message.call || {}
+  const practiceId = call.assistant?.metadata?.practiceId || null
+
+  const results = []
+
+  for (const item of toolCallList) {
+    const toolName = item.function?.name || item.name || ''
+    const toolCallId = item.toolCall?.id || item.id || ''
+    const params = item.toolCall?.function?.arguments
+      ? (typeof item.toolCall.function.arguments === 'string'
+        ? JSON.parse(item.toolCall.function.arguments)
+        : item.toolCall.function.arguments)
+      : item.function?.arguments || {}
+
+    console.log(`[Vapi] Tool call: ${toolName}`, params)
+
+    let result = ''
+    try {
+      switch (toolName) {
+        case 'collectIntakeInfo':
+          result = await handleCollectIntake(params, practiceId)
+          break
+        case 'checkAvailability':
+          result = await handleCheckAvailability(params, practiceId)
+          break
+        case 'takeMessage':
+          result = await handleTakeMessage(params, practiceId)
+          break
+        case 'submitIntakeScreening':
+          result = await handleSubmitScreening(params, practiceId)
+          break
+        default:
+          result = `Unknown tool: ${toolName}`
+      }
+    } catch (err) {
+      console.error(`[Vapi] Tool error (${toolName}):`, err)
+      result = 'Sorry, I had trouble processing that. Let me take a note for the team.'
+    }
+
+    results.push({
+      name: toolName,
+      toolCallId: toolCallId,
+      result: result,
+    })
+  }
+
+  return NextResponse.json({ results })
+}
+
+// ---- function-call (legacy Vapi format) ----
+
+async function handleFunctionCall(message: any) {
+  const fn = message.functionCall || {}
+  const toolName = fn.name || ''
+  const params = fn.parameters || {}
+  const call = message.call || {}
+  const practiceId = call.assistant?.metadata?.practiceId || null
+
+  console.log(`[Vapi] Function call: ${toolName}`, params)
+
+  let result = ''
+  try {
+    switch (toolName) {
+      case 'collectIntakeInfo':
+        result = await handleCollectIntake(params, practiceId)
+        break
+      case 'checkAvailability':
+        result = await handleCheckAvailability(params, practiceId)
+        break
+      case 'takeMessage':
+        result = await handleTakeMessage(params, practiceId)
+        break
+      case 'submitIntakeScreening':
+        result = await handleSubmitScreening(params, practiceId)
+        break
+      default:
+        result = `Unknown function: ${toolName}`
+    }
+  } catch (err) {
+    console.error(`[Vapi] Function error (${toolName}):`, err)
+    result = 'Sorry, I had trouble processing that.'
+  }
+
+  return NextResponse.json({ result })
+}
+
+// ---- end-of-call-report ----
+
+async function handleEndOfCallReport(message: any) {
+  const call = message.call || {}
+  const artifact = message.artifact || {}
+  const practiceId = call.assistant?.metadata?.practiceId || null
+  const practiceName = call.assistant?.metadata?.practiceName || 'Unknown Practice'
+
+  const transcript = artifact.transcript || ''
+  const messages = artifact.messages || []
+  const vapiCallId = call.id || ''
+  const endedReason = message.endedReason || 'unknown'
+  const duration = call.duration || 0
+  const customerPhone = call.customer?.number || ''
+
+  console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s`)
+
+  if (!practiceId) {
+    console.warn('[Vapi] No practice ID in call metadata, skipping post-processing')
+    return NextResponse.json({ ok: true })
+  }
+
+  // Build transcript text from messages if not provided directly
+  const transcriptText = transcript || messages
+    .map((m: any) => `${m.role === 'assistant' ? 'AI' : 'Caller'}: ${m.message || m.content || ''}`)
+    .join('\n')
+
+  if (!transcriptText || transcriptText.length < 20) {
+    console.log('[Vapi] Transcript too short, skipping post-processing')
+    return NextResponse.json({ ok: true })
+  }
+
+  // Run post-call processing in background (don't block the webhook response)
+  processEndOfCall({
+    practiceId,
+    practiceName,
+    vapiCallId,
+    transcriptText,
+    duration,
+    customerPhone,
+    endedReason,
+    summary: artifact.summary || '',
+  }).catch((err) => console.error('[Vapi] Post-call processing error:', err))
+
+  return NextResponse.json({ ok: true })
+}
+
+// ---- Post-call background processing ----
+
+async function processEndOfCall(opts: {
+  practiceId: string
+  practiceName: string
+  vapiCallId: string
+  transcriptText: string
+  duration: number
+  customerPhone: string
+  endedReason: string
+  summary: string
+}) {
+  const {
+    practiceId, practiceName, vapiCallId, transcriptText,
+    duration, customerPhone, endedReason, summary,
+  } = opts
+
+  // 1. Generate summary (use Vapi's if available, otherwise Claude)
+  let callSummary = summary
+  if (!callSummary || callSummary.length < 10) {
+    try {
+      callSummary = await generateCallSummary(transcriptText, getCallSummaryPrompt())
+    } catch {
+      callSummary = 'Summary generation failed'
     }
   }
-  return parts.length > 0 ? parts.join(', ') : 'Monday-Friday 9am-5pm'
+
+  // 2. Crisis detection
+  // Tier 1: fast keyword scan
+  const transcriptLower = transcriptText.toLowerCase()
+  let crisisDetected = false
+  let crisisLevel = ''
+
+  for (const phrase of IMMEDIATE_CRISIS) {
+    if (transcriptLower.includes(phrase)) {
+      crisisDetected = true
+      crisisLevel = 'immediate'
+      break
+    }
+  }
+
+  if (!crisisDetected) {
+    for (const phrase of CRISIS_CONCERNS) {
+      if (transcriptLower.includes(phrase)) {
+        crisisLevel = 'concern'
+        break
+      }
+    }
+  }
+
+  // Tier 2: Claude deep analysis (only if keywords flagged something)
+  if (crisisLevel && !crisisDetected) {
+    try {
+      crisisDetected = await detectCrisisIndicators(transcriptText)
+    } catch {
+      crisisDetected = crisisLevel === 'immediate'
+    }
+  }
+
+  // 3. Save call log to Supabase
+  try {
+    await supabaseAdmin.from('call_logs').upsert({
+      practice_id: practiceId,
+      vapi_call_id: vapiCallId,
+      patient_phone: customerPhone || null,
+      duration_seconds: duration,
+      transcript: transcriptText,
+      summary: callSummary,
+      ended_reason: endedReason,
+      crisis_detected: crisisDetected,
+      created_at: new Date().toISOString(),
+    }, { onConflict: 'vapi_call_id' })
+
+    console.log(`[Vapi] Call log saved: ${vapiCallId}`)
+  } catch (err) {
+    console.error('[Vapi] Failed to save call log:', err)
+  }
+
+  // 4. Extract patient info and auto-create patient record
+  try {
+    const info = await extractCallInformation(transcriptText)
+    if (info.patientName && info.patientName.trim()) {
+      const nameParts = info.patientName.trim().split(/\s+/)
+      const firstName = nameParts[0] || ''
+      const lastName = nameParts.slice(1).join(' ') || ''
+
+      if (firstName) {
+        const phone = info.patientPhone || customerPhone || ''
+        let existingPatient = null
+
+        if (phone) {
+          const normalized = phone.replace(/\D/g, '').slice(-10)
+          const { data } = await supabaseAdmin
+            .from('patients')
+            .select('id')
+            .eq('practice_id', practiceId)
+            .ilike('phone', `%${normalized}`)
+            .limit(1)
+            .single()
+          existingPatient = data
+        }
+
+        if (!existingPatient) {
+          await supabaseAdmin.from('patients').insert({
+            practice_id: practiceId,
+            first_name: firstName,
+            last_name: lastName,
+            phone: phone || null,
+            email: info.patientEmail || null,
+            insurance: info.patientInsurance || null,
+            reason_for_seeking: info.reasonForSeeking || null,
+          })
+          console.log(`[Vapi] Patient created: ${firstName} ${lastName}`)
+        }
+      }
+    }
+  } catch (err) {
+    console.error('[Vapi] Failed to extract/create patient:', err)
+  }
+
+  // 5. Crisis alert - save and SMS the therapist
+  if (crisisDetected) {
+    try {
+      await supabaseAdmin.from('crisis_alerts').insert({
+        practice_id: practiceId,
+        call_id: vapiCallId,
+        patient_phone: customerPhone || null,
+        severity: crisisLevel === 'immediate' ? 'high' : 'medium',
+        transcript_excerpt: transcriptText.slice(0, 500),
+        created_at: new Date().toISOString(),
+      })
+
+      const { data: practiceData } = await supabaseAdmin
+        .from('practices')
+        .select('phone_number')
+        .eq('id', practiceId)
+        .single()
+
+      if (practiceData?.phone_number && process.env.TWILIO_ACCOUNT_SID) {
+        const twilioClient = twilio(
+          process.env.TWILIO_ACCOUNT_SID,
+          process.env.TWILIO_AUTH_TOKEN
+        )
+        await twilioClient.messages.create({
+          body: `HARBOR CRISIS ALERT: A caller ${customerPhone ? `(${customerPhone})` : ''} showed signs of crisis during their call with ${practiceName}. 988 referral was provided. Please review the call log in your dashboard.`,
+          from: process.env.TWILIO_PHONE_NUMBER,
+          to: practiceData.phone_number,
+        })
+        console.log('[Vapi] Crisis SMS sent to therapist')
+      }
+    } catch (err) {
+      console.error('[Vapi] Crisis alert error:', err)
+    }
+  }
+
+  // 6. Email notification to practice staff
+  try {
+    const { data: users } = await supabaseAdmin
+      .from('users')
+      .select('email')
+      .eq('practice_id', practiceId)
+      .limit(5)
+
+    if (users && users.length > 0) {
+      const emailData = buildCallSummaryEmail({
+        practiceName,
+        crisisDetected,
+      })
+
+      for (const user of users) {
+        if (user.email) {
+          await sendEmail({
+            to: user.email,
+            subject: emailData.subject,
+            html: emailData.html,
+            from: emailData.from,
+          })
+        }
+      }
+      console.log(`[Vapi] Email notifications sent to ${users.length} staff`)
+    }
+  } catch (err) {
+    console.error('[Vapi] Email notification error:', err)
+  }
+}
+
+// ---- Tool handlers ----
+
+async function handleCollectIntake(params: any, practiceId: string | null): Promise<string> {
+  const { name, phone, insurance, telehealthPreference, reason, preferredTimes } = params
+
+  if (practiceId) {
+    try {
+      await supabaseAdmin.from('intake_submissions').insert({
+        practice_id: practiceId,
+        patient_name: name || '',
+        patient_phone: phone || '',
+        insurance: insurance || '',
+        telehealth_preference: telehealthPreference || '',
+        reason_for_seeking: reason || '',
+        preferred_times: preferredTimes || '',
+        created_at: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('[Vapi] Intake save error:', err)
+    }
+  }
+
+  return 'Intake information has been recorded. The practice team will follow up within one business day to confirm the appointment.'
+}
+
+async function handleCheckAvailability(params: any, practiceId: string | null): Promise<string> {
+  const { preferredDay, preferredTime } = params
+  return `I have noted your preference for ${preferredDay || 'a convenient day'} ${preferredTime ? `around ${preferredTime}` : ''}. The scheduling team will check availability and get back to you within one business day to confirm a time.`
+}
+
+async function handleTakeMessage(params: any, practiceId: string | null): Promise<string> {
+  const { callerName, phone, message: msg } = params
+
+  if (practiceId) {
+    try {
+      await supabaseAdmin.from('intake_submissions').insert({
+        practice_id: practiceId,
+        patient_name: callerName || '',
+        patient_phone: phone || '',
+        reason_for_seeking: `Message: ${msg || 'No message provided'}`,
+        created_at: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('[Vapi] Message save error:', err)
+    }
+  }
+
+  return 'Your message has been recorded. The therapist will get back to you as soon as possible.'
+}
+
+async function handleSubmitScreening(params: any, practiceId: string | null): Promise<string> {
+  const { phq2Score, gad2Score, patientName } = params
+
+  if (practiceId) {
+    try {
+      await supabaseAdmin.from('intake_submissions').upsert({
+        practice_id: practiceId,
+        patient_name: patientName || '',
+        phq2_score: phq2Score || 0,
+        gad2_score: gad2Score || 0,
+        screening_completed: true,
+        created_at: new Date().toISOString(),
+      })
+    } catch (err) {
+      console.error('[Vapi] Screening save error:', err)
+    }
+  }
+
+  const phq = parseInt(phq2Score) || 0
+  const gad = parseInt(gad2Score) || 0
+
+  if (phq >= 3 || gad >= 3) {
+    return 'Thank you for sharing that. I want to make sure the therapist has this information before your appointment so they can provide you with the best care.'
+  }
+  return 'Thank you for answering those questions. That information will help the therapist prepare for your first session.'
+}
+
+// ---- Helpers ----
+
+function buildTools() {
+  return [
+    {
+      type: 'function',
+      function: {
+        name: 'collectIntakeInfo',
+        description: 'Save patient intake information when they want to schedule an appointment',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Patient full name' },
+            phone: { type: 'string', description: 'Patient phone number' },
+            insurance: { type: 'string', description: 'Insurance provider or self-pay' },
+            telehealthPreference: { type: 'string', description: 'telehealth or in-person' },
+            reason: { type: 'string', description: 'Brief reason for seeking therapy' },
+            preferredTimes: { type: 'string', description: 'Preferred days and times' },
+          },
+          required: ['name', 'phone'],
+        },
+      },
+      server: { url: '' },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'checkAvailability',
+        description: 'Check appointment availability for a given day and time preference',
+        parameters: {
+          type: 'object',
+          properties: {
+            preferredDay: { type: 'string', description: 'Preferred day of the week' },
+            preferredTime: { type: 'string', description: 'Preferred time (morning, afternoon, evening)' },
+          },
+        },
+      },
+      server: { url: '' },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'takeMessage',
+        description: 'Record a message for the therapist when the caller wants to leave a message',
+        parameters: {
+          type: 'object',
+          properties: {
+            callerName: { type: 'string', description: 'Name of the caller' },
+            phone: { type: 'string', description: 'Callback phone number' },
+            message: { type: 'string', description: 'The message for the therapist' },
+          },
+          required: ['callerName'],
+        },
+      },
+      server: { url: '' },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'submitIntakeScreening',
+        description: 'Submit PHQ-2 and GAD-2 screening scores after asking the 4 screening questions',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Patient name' },
+            phq2Score: { type: 'number', description: 'PHQ-2 depression score (0-6)' },
+            gad2Score: { type: 'number', description: 'GAD-2 anxiety score (0-6)' },
+          },
+          required: ['phq2Score', 'gad2Score'],
+        },
+      },
+      server: { url: '' },
+    },
+  ]
+}
+
+function buildFallbackAssistant() {
+  return {
+    name: 'Harbor Receptionist',
+    firstMessage: 'Thank you for calling. How can I help you today?',
+    model: {
+      provider: 'openai',
+      model: 'gpt-4o-mini',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a friendly receptionist for a therapy practice. Help callers with basic questions and offer to take a message. If someone is in crisis, direct them to call 988 or 911.',
+        },
+      ],
+    },
+    voice: {
+      provider: '11labs',
+      voiceId: '21m00Tcm4TlvDq8ikWAM',
+    },
+    transcriber: {
+      provider: 'deepgram',
+      model: 'nova-2',
+    },
+    silenceTimeoutSeconds: 30,
+    maxDurationSeconds: 600,
+  }
+}
+
+function formatHours(hoursJson: any): string {
+  if (!hoursJson) return 'Monday through Friday, 9am to 5pm'
+  if (typeof hoursJson === 'string') return hoursJson
+
+  try {
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    const parts: string[] = []
+
+    for (const day of days) {
+      const hours = hoursJson[day]
+      if (hours && hours !== 'closed') {
+        parts.push(`${day.charAt(0).toUpperCase() + day.slice(1)}: ${hours}`)
+      }
+    }
+
+    return parts.length > 0 ? parts.join(', ') : 'Monday through Friday, 9am to 5pm'
+  } catch {
+    return 'Monday through Friday, 9am to 5pm'
+  }
 }
