@@ -157,7 +157,7 @@ async function handleAssistantRequest(message: any) {
       recordingEnabled: true,
       silenceTimeoutSeconds: 30,
       maxDurationSeconds: 1800,
-      tools: buildTools(),
+      tools: buildTools(serverUrl),
       metadata: {
         practiceId: practice.id,
         practiceName: practice.name,
@@ -568,7 +568,7 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
 
 // ---- Helpers ----
 
-function buildTools() {
+function buildTools(serverUrl: string) {
   return [
     {
       type: 'function',
@@ -588,7 +588,8 @@ function buildTools() {
           required: ['name', 'phone'],
         },
       },
-      server: { url: '' },
+      async: false,
+      server: { url: serverUrl },
     },
     {
       type: 'function',
@@ -603,7 +604,8 @@ function buildTools() {
           },
         },
       },
-      server: { url: '' },
+      async: false,
+      server: { url: serverUrl },
     },
     {
       type: 'function',
@@ -620,7 +622,8 @@ function buildTools() {
           required: ['callerName'],
         },
       },
-      server: { url: '' },
+      async: false,
+      server: { url: serverUrl },
     },
     {
       type: 'function',
@@ -637,7 +640,8 @@ function buildTools() {
           required: ['phq2Score', 'gad2Score'],
         },
       },
-      server: { url: '' },
+      async: false,
+      server: { url: serverUrl },
     },
   ]
 }
