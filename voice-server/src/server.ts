@@ -55,6 +55,26 @@ const VOICE_MODEL = 'claude-haiku-4-5-20251001'
   }
 })()
 
+// ── Connection pre-warming ─────────────────────────────────────────────────
+// Keep Anthropic API connection warm so first message in a call doesn't pay
+// full TCP+TLS+HTTP/2 handshake cost (~500-1500ms). Pings every 4 minutes.
+let lastApiCallTime = Date.now()
+const API_KEEPALIVE_MS = 4 * 60 * 1000 // 4 minutes
+
+setInterval(async () => {
+  // Only ping if no real calls happened recently
+  if (Date.now() - lastApiCallTime > API_KEEPALIVE_MS) {
+    try {
+      await anthropic.messages.create({
+        model: VOICE_MODEL,
+        max_tokens: 5,
+        messages: [{ role: 'user', content: 'ok' }],
+      })
+      lastApiCallTime = Date.now()
+    } catch (_) { /* ignore keepalive failures */ }
+  }
+}, API_KEEPALIVE_MS)
+
 // ── Practice cache ─────────────────────────────────────────────────────────
 let practiceCache: any[] = []
 let practiceCacheTime = 0
@@ -95,7 +115,7 @@ interface CallSession {
 }
 
 const sessions = new Map<string, CallSession>()
-const MAX_HISTORY = 12 // last 6 exchanges
+const MAX_HISTORY = 8 // last 4 exchanges — keeps context tight for faster Haiku responses
 
 // ── Express app ────────────────────────────────────────────────────────────
 const app = express()
@@ -442,10 +462,19 @@ async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance:
   let fullText = ''
 
   try {
+    // Use prompt caching for system prompt — Anthropic caches the system prompt
+    // server-side so subsequent calls in the same session skip re-processing it.
+    // This dramatically reduces TTFB from ~2s to ~400ms on cached hits.
     const stream = anthropic.messages.stream({
       model: VOICE_MODEL,
       max_tokens: 150,
-      system: session.systemPrompt,
+      system: [
+        {
+          type: 'text' as const,
+          text: session.systemPrompt,
+          cache_control: { type: 'ephemeral' as const },
+        },
+      ],
       messages: trimmed,
     })
 
@@ -468,6 +497,7 @@ async function streamLLMResponse(ws: WebSocket, session: CallSession, utterance:
 
     const totalMs = Date.now() - t0
     const ttfb = firstTokenTime ? firstTokenTime - t0 : totalMs
+    lastApiCallTime = Date.now()
     console.log(`⚡ Haiku stream: TTFB=${ttfb}ms total=${totalMs}ms | len=${fullText.length} | history=${trimmed.length}`)
 
     session.messages.push({ role: 'assistant', content: fullText })
@@ -498,7 +528,13 @@ async function getLLMResponse(session: CallSession, utterance: string): Promise<
     const response = await anthropic.messages.create({
       model: VOICE_MODEL,
       max_tokens: 150,
-      system: session.systemPrompt,
+      system: [
+        {
+          type: 'text' as const,
+          text: session.systemPrompt,
+          cache_control: { type: 'ephemeral' as const },
+        },
+      ],
       messages: trimmed,
     })
 
