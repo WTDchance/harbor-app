@@ -122,18 +122,17 @@ export default function CallsPage() {
 
   useEffect(() => {
     const fetchCalls = async () => {
-      // Get the logged-in user's practice
+      // Get the logged-in user's practice via users table (matches auth)
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Find their practice
-      const { data: practice } = await supabase
-        .from('practices')
-        .select('id')
-        .eq('notification_email', user.email)
+      const { data: userRecord } = await supabase
+        .from('users')
+        .select('practice_id')
+        .eq('id', user.id)
         .single()
 
-      const practiceId = practice?.id
+      const practiceId = userRecord?.practice_id
 
       let query = supabase
         .from('call_logs')
@@ -160,45 +159,75 @@ export default function CallsPage() {
       c.summary?.toLowerCase().includes(search.toLowerCase())
     )
 
+  const totalDuration = calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0)
+  const avgDuration = calls.length ? Math.round(totalDuration / calls.length) : 0
+  const crisisCount = calls.filter(c => c.crisis_detected).length
+
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Call Logs</h1>
-        <p className="text-gray-500 mt-1">Every call Ellie has handled — click any to expand the summary and transcript</p>
+    <div className="bg-gray-50 min-h-full">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-100 px-6 py-5">
+        <div className="max-w-6xl mx-auto">
+          <h1 className="text-xl font-bold text-gray-900">Call Logs</h1>
+          <p className="text-sm text-gray-400 mt-0.5">Every call Ellie has handled â click any to expand the summary and transcript</p>
+        </div>
       </div>
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => setFilter('all')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            filter === 'all'
-              ? 'bg-teal-600 text-white'
-              : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          All Calls
-        </button>
-        <button
-          onClick={() => setFilter('crisis')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-            filter === 'crisis'
-              ? 'bg-red-600 text-white'
-              : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
-          }`}
-        >
-          Crisis Only
-        </button>
+      <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
+      {/* Quick stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <p className="text-3xl font-bold text-purple-600">{calls.length}</p>
+          <p className="text-sm font-medium text-gray-700 mt-1">Total Calls</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <p className="text-3xl font-bold text-teal-600">{formatDuration(avgDuration)}</p>
+          <p className="text-sm font-medium text-gray-700 mt-1">Avg Duration</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <p className="text-3xl font-bold text-blue-600">{formatDuration(totalDuration)}</p>
+          <p className="text-sm font-medium text-gray-700 mt-1">Total Talk Time</p>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
+          <p className={`text-3xl font-bold ${crisisCount ? 'text-red-600' : 'text-green-600'}`}>{crisisCount}</p>
+          <p className="text-sm font-medium text-gray-700 mt-1">Crisis Flags</p>
+        </div>
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-        <input
-          type="text"
-          placeholder="Search by phone or summary..."
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-        />
+      {/* Filters */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="flex gap-2">
+          <button
+            onClick={() => setFilter('all')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              filter === 'all'
+                ? 'bg-teal-600 text-white'
+                : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            All Calls ({calls.length})
+          </button>
+          <button
+            onClick={() => setFilter('crisis')}
+            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+              filter === 'crisis'
+                ? 'bg-red-600 text-white'
+                : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            Crisis Only ({crisisCount})
+          </button>
+        </div>
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
+          <input
+            type="text"
+            placeholder="Search by phone or summary..."
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
+          />
+        </div>
       </div>
 
       {loading ? (
@@ -221,6 +250,7 @@ export default function CallsPage() {
           </p>
         </div>
       )}
+      </div>
     </div>
   )
 }
