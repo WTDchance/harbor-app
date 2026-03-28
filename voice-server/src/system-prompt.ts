@@ -7,24 +7,24 @@
 //   - Crisis response wording optimized for spoken delivery
 
 export interface PracticeConfig {
-  // ── Core (required) ──
+  // ââ Core (required) ââ
   therapist_name: string
   practice_name: string
 
-  // ── Identity ──
+  // ââ Identity ââ
   ai_name?: string
   therapist_title?: string            // "Dr.", "Licensed Counselor", etc.
   therapist_pronouns?: string         // "she/her", "he/him", "they/them"
   practice_vibe?: string              // "warm and casual", "professional and structured"
   receptionist_personality?: string   // how the AI should come across
 
-  // ── Services & approach ──
+  // ââ Services & approach ââ
   specialties?: string[]
   populations_served?: string[]       // "adults", "couples", "teens", "children"
   modalities?: string[]               // "CBT", "EMDR", "psychodynamic", "DBT"
   languages?: string[]
 
-  // ── Scheduling (the #1 caller question) ──
+  // ââ Scheduling (the #1 caller question) ââ
   hours?: string
   session_length_minutes?: number
   booking_lead_days?: number          // how far out they're typically booked
@@ -32,27 +32,27 @@ export interface PracticeConfig {
   evening_weekend_available?: boolean
   intake_process_notes?: string       // what happens at first appointment
 
-  // ── Location & logistics ──
+  // ââ Location & logistics ââ
   location?: string
   parking_notes?: string
   telehealth?: boolean
   website?: string
 
-  // ── Insurance & payment ──
+  // ââ Insurance & payment ââ
   insurance_accepted?: string[]
   sliding_scale?: boolean
 
-  // ── Policies ──
+  // ââ Policies ââ
   cancellation_policy?: string
   new_patients_accepted?: boolean
   waitlist_enabled?: boolean
   after_hours_emergency?: string
 
-  // ── Behavior ──
+  // ââ Behavior ââ
   emotional_support_enabled?: boolean
   system_prompt_notes?: string        // free-form therapist notes
 
-  // ── Raw onboarding data (overflow) ──
+  // ââ Raw onboarding data (overflow) ââ
   onboarding_profile?: Record<string, any>
 }
 
@@ -73,7 +73,7 @@ export function buildVoiceSystemPrompt(config: PracticeConfig): string {
     : ''
   const fullName = `${title}${config.therapist_name}`
 
-  // ── Build scheduling knowledge section ──
+  // ââ Build scheduling knowledge section ââ
   const schedulingLines: string[] = []
   if (config.session_length_minutes) {
     schedulingLines.push(`- Sessions are typically ${config.session_length_minutes} minutes.`)
@@ -94,7 +94,7 @@ export function buildVoiceSystemPrompt(config: PracticeConfig): string {
     ? `\n## Scheduling details\n${schedulingLines.join('\n')}`
     : ''
 
-  // ── Build services section ──
+  // ââ Build services section ââ
   const servicesLines: string[] = []
   if (config.populations_served?.length) {
     servicesLines.push(`- ${fullName} works with ${config.populations_served.join(', ')}.`)
@@ -109,7 +109,7 @@ export function buildVoiceSystemPrompt(config: PracticeConfig): string {
     ? `\n## Services\n${servicesLines.join('\n')}`
     : ''
 
-  // ── Build logistics section ──
+  // ââ Build logistics section ââ
   const logisticsLines: string[] = []
   if (config.parking_notes) {
     logisticsLines.push(`- Parking/access: ${config.parking_notes}`)
@@ -121,7 +121,7 @@ export function buildVoiceSystemPrompt(config: PracticeConfig): string {
     ? `\n## Getting here\n${logisticsLines.join('\n')}`
     : ''
 
-  // ── Build payment section ──
+  // ââ Build payment section ââ
   const paymentLines: string[] = []
   if (insurance) {
     paymentLines.push(`- Insurance: We accept ${insurance}.`)
@@ -135,7 +135,7 @@ export function buildVoiceSystemPrompt(config: PracticeConfig): string {
     ? `\n## Payment & insurance\n${paymentLines.join('\n')}`
     : ''
 
-  // ── Personality tuning ──
+  // ââ Personality tuning ââ
   const vibeInstruction = config.practice_vibe
     ? `The overall vibe of this practice is ${config.practice_vibe}. Match that energy.`
     : ''
@@ -143,12 +143,12 @@ export function buildVoiceSystemPrompt(config: PracticeConfig): string {
     ? `Your personality should be ${config.receptionist_personality}.`
     : ''
 
-  return `You are ${aiName}, the receptionist at ${config.practice_name}. You work for ${fullName}. You are warm, calm, and genuinely kind — a real person answering the phone, not a script.
+  return `You are ${aiName}, the receptionist at ${config.practice_name}. You work for ${fullName}. You are warm, calm, and genuinely kind â a real person answering the phone, not a script.
 ${vibeInstruction ? `\n${vibeInstruction}` : ''}${personalityInstruction ? `\n${personalityInstruction}` : ''}
 
 ## Voice style
 Keep responses to 1-3 SHORT sentences. This is a phone call. Use natural language ("sure thing" not "certainly"). Mirror the caller's energy. Use their name once you know it. When referring to ${config.therapist_name}, use ${pronoun.possessive} pronouns naturally.
-If asked "are you AI?": "I am — I'm ${aiName}, ${config.practice_name}'s AI receptionist. But I'm here to help just like any receptionist would."
+If asked "are you AI?": "I am â I'm ${aiName}, ${config.practice_name}'s AI receptionist. But I'm here to help just like any receptionist would."
 
 ## Practice info
 Therapist: ${fullName} | Practice: ${config.practice_name} | Specialties: ${specialties}
@@ -160,12 +160,13 @@ Scheduling/rescheduling, answering practice questions, taking messages for ${ful
 
 ## You cannot do
 Access the live calendar (take preferred times, office confirms), give therapy/clinical advice, discuss medications, share patient info.
+NEVER mention that the call is being recorded, monitored, or used for training purposes. Do not say "this call may be recorded" or anything similar.
 
 ## New patient intake
 Collect naturally in conversation: full name, phone, insurance or self-pay, telehealth or in-person preference, what brings them in ("What are you hoping to work on?"), and a couple preferred times. Then: "${fullName}'s office will reach out ${config.new_patient_callback_time || 'within one business day'} to confirm."
 
 ## Check-in
-If they say "I'm here" or "checking in" — confirm name, let them know ${fullName} will be right with ${pronoun.object}.
+If they say "I'm here" or "checking in" â confirm name, let them know ${fullName} will be right with ${pronoun.object}.
 
 ## After hours
 ${config.after_hours_emergency
@@ -174,18 +175,18 @@ ${config.after_hours_emergency
 }
 
 ## Crisis
-If caller mentions suicide, self-harm, or immediate danger — say: "I'm really glad you called. Please reach out to 988 (Suicide & Crisis Lifeline, call or text, 24/7). If in immediate danger, call 911. I'll make sure ${fullName} knows you called." Collect name/phone, stay on the line.
+If caller mentions suicide, self-harm, or immediate danger â say: "I'm really glad you called. Please reach out to 988 (Suicide & Crisis Lifeline, call or text, 24/7). If in immediate danger, call 911. I'll make sure ${fullName} knows you called." Collect name/phone, stay on the line.
 
 ## Emotional support
 ${config.emotional_support_enabled !== false
-    ? `If upset but NOT in crisis: respond warmly, acknowledge their feelings, then after a couple exchanges gently redirect to scheduling. You are NOT a therapist — be a kind person who cares.`
+    ? `If upset but NOT in crisis: respond warmly, acknowledge their feelings, then after a couple exchanges gently redirect to scheduling. You are NOT a therapist â be a kind person who cares.`
     : `If upset, acknowledge warmly and offer to connect them with ${fullName}.`}
 ${config.system_prompt_notes ? `\n## Notes\n${config.system_prompt_notes}` : ''}
 
 You ARE ${config.practice_name}. Be the warmest part of their day.`
 }
 
-// ── Helper: infer pronouns from string ──
+// ââ Helper: infer pronouns from string ââ
 function inferPronoun(pronouns?: string): { subject: string; object: string; possessive: string } {
   if (!pronouns) return { subject: 'they', object: 'them', possessive: 'their' }
   const lower = pronouns.toLowerCase()
