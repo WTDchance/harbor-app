@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/page.tsx
-// Harbor — Dashboard Overview
+// Harbor â Dashboard Overview
 // Summary stats + quick links for today's state of the practice.
 
 import { useState, useEffect } from "react";
@@ -45,6 +45,16 @@ type Stats = {
     appointment_type: string;
     status: string;
   }[];
+  totalCalls: number;
+  recentCalls: {
+    id: string;
+    patient_phone: string;
+    duration_seconds: number;
+    summary: string | null;
+    created_at: string;
+    crisis_detected: boolean;
+  }[];
+  crisisAlerts: number;
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -115,6 +125,18 @@ export default function DashboardHome() {
       const startOfDay = new Date(today.setHours(0, 0, 0, 0)).toISOString();
       const endOfDay = new Date(today.setHours(23, 59, 59, 999)).toISOString();
 
+      // Fetch user's practice_id for direct Supabase queries
+      const { data: { user } } = await supabase.auth.getUser();
+      let practiceId: string | null = null;
+      if (user) {
+        const { data: userRecord } = await supabase
+          .from("users")
+          .select("practice_id")
+          .eq("id", user.id)
+          .single();
+        practiceId = userRecord?.practice_id ?? null;
+      }
+
       const [patientsRes, intakeRes, appointmentsRes, pendingRes] = await Promise.all([
         apiFetch("/api/patients"),
         apiFetch("/api/intake/submissions?limit=5&status=completed"),
@@ -130,6 +152,38 @@ export default function DashboardHome() {
       ]);
 
       if (patientsRes.status === 401) { router.push("/login"); return; }
+
+      // Fetch call stats directly from Supabase
+      let totalCalls = 0;
+      let recentCalls: Stats["recentCalls"] = [];
+      let crisisAlerts = 0;
+
+      if (practiceId) {
+        const [callCountRes, recentCallsRes, crisisRes] = await Promise.all([
+          supabase
+            .from("call_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("practice_id", practiceId),
+          supabase
+            .from("call_logs")
+            .select("id, patient_phone, duration_seconds, summary, created_at, crisis_detected")
+            .eq("practice_id", practiceId)
+            .order("created_at", { ascending: false })
+            .limit(5),
+          supabase
+            .from("call_logs")
+            .select("id", { count: "exact", head: true })
+            .eq("practice_id", practiceId)
+            .eq("crisis_detected", true),
+        ]);
+
+        totalCalls = callCountRes.count ?? 0;
+        recentCalls = (recentCallsRes.data ?? []).map(c => ({
+          ...c,
+          crisis_detected: c.crisis_detected ?? false,
+        }));
+        crisisAlerts = crisisRes.count ?? 0;
+      }
 
       const patients = patientsData.patients ?? [];
       const elevated = patients.filter(
@@ -152,6 +206,9 @@ export default function DashboardHome() {
         scheduledAppointments: appointmentsData.pagination?.total ?? appts.length,
         recentIntakes: (intakeData.submissions ?? []).slice(0, 4),
         upcomingAppointments: appts.slice(0, 5),
+        totalCalls,
+        recentCalls,
+        crisisAlerts,
       });
     } catch (err) {
       console.error("Dashboard load error:", err);
@@ -184,11 +241,11 @@ export default function DashboardHome() {
 
       <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
         {/* Stats grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {[
             {
               label: "Today's Appointments",
-              value: loading ? "—" : stats?.todayAppointments ?? 0,
+              value: loading ? "â" : stats?.todayAppointments ?? 0,
               sub: "scheduled today",
               color: "text-teal-600",
               href: "/dashboard/appointments",
@@ -202,7 +259,7 @@ export default function DashboardHome() {
             },
             {
               label: "Total Patients",
-              value: loading ? "—" : stats?.totalPatients ?? 0,
+              value: loading ? "â" : stats?.totalPatients ?? 0,
               sub: "in your practice",
               color: "text-blue-600",
               href: "/dashboard/patients",
@@ -216,8 +273,8 @@ export default function DashboardHome() {
             },
             {
               label: "Elevated Scores",
-              value: loading ? "—" : stats?.elevatedScores ?? 0,
-              sub: "PHQ-9 ≥10 or GAD-7 ≥10",
+              value: loading ? "â" : stats?.elevatedScores ?? 0,
+              sub: "PHQ-9 â¥10 or GAD-7 â¥10",
               color: stats?.elevatedScores ? "text-red-600" : "text-green-600",
               href: "/dashboard/patients",
               bg: stats?.elevatedScores ? "bg-red-50" : "bg-green-50",
@@ -229,7 +286,7 @@ export default function DashboardHome() {
             },
             {
               label: "Pending Intakes",
-              value: loading ? "—" : stats?.pendingIntakes ?? 0,
+              value: loading ? "â" : stats?.pendingIntakes ?? 0,
               sub: "awaiting completion",
               color: stats?.pendingIntakes ? "text-amber-600" : "text-gray-600",
               href: "/dashboard/intake",
@@ -238,6 +295,33 @@ export default function DashboardHome() {
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className={stats?.pendingIntakes ? "text-amber-500" : "text-gray-400"}>
                   <rect x="4" y="2" width="12" height="16" rx="2" stroke="currentColor" strokeWidth="1.5" />
                   <path d="M7 7h6M7 10h6M7 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                </svg>
+              ),
+            },
+            {
+              label: "Calls Handled",
+              value: loading ? "â" : stats?.totalCalls ?? 0,
+              sub: "by Ellie",
+              color: "text-purple-600",
+              href: "/dashboard/calls",
+              bg: "bg-purple-50",
+              icon: (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className="text-purple-500">
+                  <path d="M17 13.5c-1.2 0-2.4-.2-3.5-.6a.94.94 0 00-1 .2l-2.2 2.2A14.1 14.1 0 014.7 9.7l2.2-2.2c.3-.3.4-.7.2-1C6.7 5.4 6.5 4.2 6.5 3c0-.6-.4-1-1-1H2.5c-.6 0-1 .4-1 1 0 8.3 6.7 15 15 15 .6 0 1-.4 1-1v-2.5c0-.6-.4-1-1-1z" fill="currentColor" />
+                </svg>
+              ),
+            },
+            {
+              label: "Crisis Alerts",
+              value: loading ? "â" : stats?.crisisAlerts ?? 0,
+              sub: "flagged by Ellie",
+              color: stats?.crisisAlerts ? "text-red-600" : "text-green-600",
+              href: "/dashboard/crisis",
+              bg: stats?.crisisAlerts ? "bg-red-50" : "bg-green-50",
+              icon: (
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className={stats?.crisisAlerts ? "text-red-500" : "text-green-500"}>
+                  <path d="M10 2L2 17h16L10 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                  <path d="M10 8v4M10 14v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                 </svg>
               ),
             },
@@ -262,9 +346,9 @@ export default function DashboardHome() {
           {/* Upcoming appointments */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-              <h2 className="text-sm font-semibold text-gray-900">Today’s Schedule</h2>
+              <h2 className="text-sm font-semibold text-gray-900">Todayâs Schedule</h2>
               <Link href="/dashboard/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                View all →
+                View all â
               </Link>
             </div>
             <div className="divide-y divide-gray-50">
@@ -276,7 +360,7 @@ export default function DashboardHome() {
                 <div className="py-10 text-center">
                   <p className="text-gray-400 text-sm">No appointments today</p>
                   <Link href="/dashboard/appointments" className="text-xs text-teal-600 mt-2 inline-block hover:text-teal-700">
-                    Schedule one →
+                    Schedule one â
                   </Link>
                 </div>
               ) : (
@@ -311,7 +395,7 @@ export default function DashboardHome() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
               <h2 className="text-sm font-semibold text-gray-900">Recent Intakes</h2>
               <Link href="/dashboard/intake" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                View all →
+                View all â
               </Link>
             </div>
             <div className="divide-y divide-gray-50">
@@ -340,7 +424,7 @@ export default function DashboardHome() {
                         {intake.patient_name ?? "Unknown"}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {intake.completed_at ? timeAgo(intake.completed_at) : "—"}
+                        {intake.completed_at ? timeAgo(intake.completed_at) : "â"}
                       </p>
                     </div>
                     <div className="flex gap-1.5 shrink-0">
@@ -362,13 +446,63 @@ export default function DashboardHome() {
           </div>
         </div>
 
+        {/* Recent Calls */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
+            <h2 className="text-sm font-semibold text-gray-900">Recent Calls</h2>
+            <Link href="/dashboard/calls" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
+              View all â
+            </Link>
+          </div>
+          <div className="divide-y divide-gray-50">
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="w-6 h-6 border-2 border-teal-200 border-t-teal-600 rounded-full animate-spin" />
+              </div>
+            ) : !stats?.recentCalls?.length ? (
+              <div className="py-10 text-center">
+                <p className="text-gray-400 text-sm">No calls yet</p>
+                <p className="text-xs text-gray-300 mt-1">Calls Ellie handles will appear here</p>
+              </div>
+            ) : (
+              stats.recentCalls.map((call) => (
+                <Link
+                  key={call.id}
+                  href="/dashboard/calls"
+                  className="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 transition-colors"
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                    call.crisis_detected ? "bg-red-100" : "bg-purple-100"
+                  }`}>
+                    <svg width="14" height="14" viewBox="0 0 20 20" fill="none" className={call.crisis_detected ? "text-red-600" : "text-purple-600"}>
+                      <path d="M17 13.5c-1.2 0-2.4-.2-3.5-.6a.94.94 0 00-1 .2l-2.2 2.2A14.1 14.1 0 014.7 9.7l2.2-2.2c.3-.3.4-.7.2-1C6.7 5.4 6.5 4.2 6.5 3c0-.6-.4-1-1-1H2.5c-.6 0-1 .4-1 1 0 8.3 6.7 15 15 15 .6 0 1-.4 1-1v-2.5c0-.6-.4-1-1-1z" fill="currentColor" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-gray-900 truncate">{call.patient_phone}</p>
+                      {call.crisis_detected && (
+                        <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">Crisis</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 truncate">
+                      {call.summary || `${Math.floor(call.duration_seconds / 60)}m ${call.duration_seconds % 60}s call`}
+                    </p>
+                  </div>
+                  <span className="text-xs text-gray-400 shrink-0">{timeAgo(call.created_at)}</span>
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+
         {/* Quick action row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: "New Appointment", href: "/dashboard/appointments", icon: "📅" },
-            { label: "View Patients", href: "/dashboard/patients", icon: "👤" },
-            { label: "Intake Submissions", href: "/dashboard/intake", icon: "📋" },
-            { label: "Practice Settings", href: "/dashboard/settings", icon: "⚙️" },
+            { label: "New Appointment", href: "/dashboard/appointments", icon: "ð" },
+            { label: "View Patients", href: "/dashboard/patients", icon: "ð¤" },
+            { label: "Call Logs", href: "/dashboard/calls", icon: "ð" },
+            { label: "Practice Settings", href: "/dashboard/settings", icon: "âï¸" },
           ].map((action) => (
             <Link
               key={action.label}
