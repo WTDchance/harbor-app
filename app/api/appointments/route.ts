@@ -78,11 +78,46 @@ export async function PATCH(req: NextRequest) {
     const practice = await getPractice()
     if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     const { id, ...updates } = await req.json()
+
+    // Get the appointment before updating so we know if it's becoming a cancellation
+    const { data: existing } = await supabaseAdmin
+      .from('appointments')
+      .select('status, appointment_date, appointment_time, duration_minutes, patient_id')
+      .eq('id', id)
+      .eq('practice_id', practice.id)
+      .single()
+
     const { data, error } = await supabaseAdmin.from('appointments').update({
       ...updates,
       updated_at: new Date().toISOString()
     }).eq('id', id).eq('practice_id', practice.id).select().single()
     if (error) throw error
+
+    // Auto-trigger cancellation fill when appointment is cancelled
+    if (
+      updates.status === 'cancelled' &&
+      existing?.status !== 'cancelled' &&
+      existing?.appointment_date &&
+      existing?.appointment_time
+    ) {
+      try {
+        const slotTime = new Date(`${existing.appointment_date}T${existing.appointment_time}`)
+        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || 'http://localhost:3000'
+        await fetch(`${baseUrl}/api/cancellation/fill`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            practice_id: practice.id,
+            slot_time: slotTime.toISOString(),
+            was_telehealth: false, // Could be enhanced to track this on appointments
+          }),
+        })
+        console.log(`✓ Auto-triggered cancellation fill for ${existing.appointment_date} ${existing.appointment_time}`)
+      } catch (fillErr) {
+        console.error('Auto-fill trigger failed (non-blocking):', fillErr)
+      }
+    }
+
     return NextResponse.json({ appointment: data })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
@@ -100,3 +135,4 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
+
