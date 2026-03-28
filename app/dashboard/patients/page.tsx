@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/patients/page.tsx
-// Harbor — Patient Hub List View
+// Harbor â Patient Hub List View
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -36,7 +36,11 @@ async function apiFetch(url: string, options?: RequestInit) {
   const token = await getAuthToken();
   return fetch(url, {
     ...options,
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}`, ...(options?.headers ?? {}) },
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options?.headers ?? {}),
+    },
   });
 }
 
@@ -49,7 +53,7 @@ const SEVERITY_COLORS: Record<string, string> = {
 };
 
 function SeverityBadge({ score, severity, label }: { score: number | null; severity: string | null; label: string }) {
-  if (score === null || severity === null) return <span className="text-gray-400 text-xs">—</span>;
+  if (score === null || severity === null) return <span className="text-gray-400 text-xs">â</span>;
   return (
     <div>
       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${SEVERITY_COLORS[severity] ?? "bg-gray-100 text-gray-700"}`}>{severity}</span>
@@ -147,11 +151,14 @@ export default function PatientsPage() {
     : null;
 
   function formatDate(iso: string | null) {
-    if (!iso) return "—";
+    if (!iso) return "â";
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   }
 
-  function patientId(key: string) { return Buffer.from(key).toString("base64url"); }
+  // FIX: Use browser-compatible base64url encoding instead of Node.js Buffer
+  function patientId(key: string) {
+    return btoa(key).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
 
   function ageFromDob(dob: string | null) {
     if (!dob) return null;
@@ -179,8 +186,8 @@ export default function PatientsPage() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {[
             { label: "Total Patients", value: patients.length, sub: "unique patients", color: "text-gray-900" },
-            { label: "Elevated Scores", value: elevated, sub: "PHQ-9 ≥10 or GAD-7 ≥10", color: elevated > 0 ? "text-red-600" : "text-green-600" },
-            { label: "Avg Intakes", value: avgIntakes !== null ? avgIntakes : "—", sub: "per patient", color: "text-teal-600" },
+            { label: "Elevated Scores", value: elevated, sub: "PHQ-9 â¥10 or GAD-7 â¥10", color: elevated > 0 ? "text-red-600" : "text-green-600" },
+            { label: "Avg Intakes", value: avgIntakes !== null ? avgIntakes : "â", sub: "per patient", color: "text-teal-600" },
             { label: "Search Results", value: patients.length, sub: debouncedSearch ? `for "${debouncedSearch}"` : "showing all", color: "text-gray-600" },
           ].map((s) => (
             <div key={s.label} className="bg-white rounded-xl p-4 border border-gray-100 shadow-sm">
@@ -192,27 +199,13 @@ export default function PatientsPage() {
         </div>
 
         <div className="flex gap-3 flex-wrap">
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by name, email, or phone…"
-            className="flex-1 min-w-48 px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-          />
+          <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by name, email, or phoneâ¦" className="flex-1 min-w-48 px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500" />
           <div className="flex items-center gap-2">
-            <select
-              value={exportFormat}
-              onChange={(e) => setExportFormat(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 text-gray-700"
-            >
+            <select value={exportFormat} onChange={(e) => setExportFormat(e.target.value)} className="px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 text-gray-700">
               {EHR_FORMATS.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
             </select>
-            <button
-              onClick={handleExport}
-              disabled={exporting || patients.length === 0}
-              className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              {exporting ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <span>↓</span>}
+            <button onClick={handleExport} disabled={exporting || patients.length === 0} className="flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+              {exporting ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <span>â</span>}
               Export CSV
             </button>
           </div>
@@ -230,7 +223,7 @@ export default function PatientsPage() {
             </div>
           ) : patients.length === 0 ? (
             <div className="p-12 text-center text-gray-400">
-              <p className="text-4xl mb-3">👤</p>
+              <p className="text-4xl mb-3">ð¤</p>
               <p className="font-medium text-gray-600">No patients found</p>
               <p className="text-sm mt-1">{debouncedSearch ? "Try a different search term" : "Patients will appear here once they complete an intake form"}</p>
             </div>
@@ -254,8 +247,8 @@ export default function PatientsPage() {
                     return (
                       <tr key={p.key} onClick={() => router.push(`/dashboard/patients/${patientId(p.key)}`)} className="hover:bg-teal-50/40 transition-colors cursor-pointer">
                         <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900">{p.patient_name ?? "—"}</p>
-                          <p className="text-xs text-gray-400 mt-0.5">{age !== null ? `Age ${age} · ` : ""}{p.patient_email ?? p.patient_phone ?? ""}</p>
+                          <p className="font-medium text-gray-900">{p.patient_name ?? "â"}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{age !== null ? `Age ${age} Â· ` : ""}{p.patient_email ?? p.patient_phone ?? ""}</p>
                         </td>
                         <td className="px-4 py-3"><SeverityBadge score={p.latest_phq9_score} severity={p.latest_phq9_severity} label="PHQ" /></td>
                         <td className="px-4 py-3"><SeverityBadge score={p.latest_gad7_score} severity={p.latest_gad7_severity} label="GAD" /></td>
@@ -269,7 +262,7 @@ export default function PatientsPage() {
                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700">{p.intake_count}</span>
                         </td>
                         <td className="px-4 py-3 text-gray-600 text-sm">{formatDate(p.last_seen)}</td>
-                        <td className="px-4 py-3 text-right"><span className="text-teal-600 text-xs font-medium">View →</span></td>
+                        <td className="px-4 py-3 text-right"><span className="text-teal-600 text-xs font-medium">View â</span></td>
                       </tr>
                     );
                   })}
@@ -281,4 +274,4 @@ export default function PatientsPage() {
       </div>
     </div>
   );
-          }
+}
