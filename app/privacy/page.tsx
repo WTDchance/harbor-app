@@ -88,7 +88,7 @@ export default function PrivacyPage() {
               We do <strong>not sell or trade</strong> your practice data or patient information. We may share data only in these circumstances:
             </p>
             <ul className="list-disc list-inside space-y-2 ml-2">
-              <li><strong>Service Providers:</strong> With third parties (Vapi, Twilio, ElevenLabs, Stripe) who help us operate Harbor. These are bound by confidentiality agreements.</li>
+              <li><strong>Service Providers:</strong> With third parties (Twilio, Google, Anthropic, Stripe) who help us operate Harbor. These are bound by confidentiality agreements.</li>
               <li><strong>Legal Requirements:</strong> If required by law, court order, or government request</li>
               <li><strong>Account Protection:</strong> If necessary to protect the safety, rights, and property of Harbor, our users, or the public</li>
             </ul>
@@ -144,3 +144,4 @@ export default function PrivacyPage() {
     </div>
   )
 }
+
