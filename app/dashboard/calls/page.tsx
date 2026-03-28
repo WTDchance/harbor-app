@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Search, Phone, Clock, ChevronDown, ChevronUp, AlertCircle } from 'lucide-react'
+import { Search, Phone, Clock, ChevronDown, ChevronUp, AlertCircle, FileText, MessageSquare } from 'lucide-react'
 import { createClient } from '@/lib/supabase-browser'
 
 interface CallLog {
@@ -25,231 +25,299 @@ function formatDuration(seconds: number) {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-function timeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 60) return `${mins}m ago`
-  const hrs = Math.floor(mins / 60)
-  if (hrs < 24) return `${hrs}h ago`
-  return `${Math.floor(hrs / 24)}d ago`
+function getScreeningBadgeColor(score: number): string {
+  if (score >= 3) return 'bg-red-100 text-red-700'
+  if (score >= 2) return 'bg-yellow-100 text-yellow-700'
+  return 'bg-green-100 text-green-700'
 }
 
-function getScreeningBadgeColor(score?: number): string {
-  if (score === undefined) return 'bg-gray-100 text-gray-700'
-  if (score < 3) return 'bg-green-100 text-green-700'
-  if (score < 5) return 'bg-yellow-100 text-yellow-700'
-  return 'bg-red-100 text-red-700'
-}
-
-function CallCard({ call }: { call: CallLog }) {
-  const [expanded, setExpanded] = useState(false)
-  const phq2Score = call.intake_screenings?.[0]?.phq2_score
-  const gad2Score = call.intake_screenings?.[0]?.gad2_score
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-      <div
-        className="flex items-start gap-4 p-5 cursor-pointer hover:bg-gray-50 transition-colors"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
-          <Phone className="w-4 h-4 text-teal-600" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <p className="font-semibold text-gray-900">{call.patient_phone}</p>
-              {call.crisis_detected && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-                  <AlertCircle className="w-3 h-3" />
-                  Crisis
-                </span>
-              )}
-              {phq2Score !== undefined && (
-                <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${getScreeningBadgeColor(phq2Score)}`}>
-                  PHQ-2: {phq2Score}
-                </span>
-              )}
-              {gad2Score !== undefined && (
-                <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${getScreeningBadgeColor(gad2Score)}`}>
-                  GAD-2: {gad2Score}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-3 text-sm text-gray-400">
-              <span className="flex items-center gap-1">
-                <Clock className="w-3.5 h-3.5" />
-                {formatDuration(call.duration_seconds)}
-              </span>
-              <span>{timeAgo(call.created_at)}</span>
-              {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-            </div>
-          </div>
-          {call.summary && (
-            <p className="text-sm text-gray-600 mt-1 line-clamp-2">{call.summary}</p>
-          )}
-        </div>
-      </div>
-
-      {expanded && (
-        <div className="border-t border-gray-100 px-5 pb-5 pt-4 space-y-4">
-          {call.summary && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">AI Summary</p>
-              <p className="text-sm text-gray-700 bg-teal-50 rounded-lg p-3">{call.summary}</p>
-            </div>
-          )}
-          {call.transcript && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Transcript</p>
-              <pre className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 whitespace-pre-wrap font-sans max-h-64 overflow-y-auto">
-                {call.transcript}
-              </pre>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  )
+function formatTranscript(transcript: string): Array<{ speaker: string; text: string }> {
+  const lines = transcript.split('\n').filter(l => l.trim())
+  return lines.map(line => {
+    const colonIdx = line.indexOf(':')
+    if (colonIdx > 0 && colonIdx < 30) {
+      return {
+        speaker: line.substring(0, colonIdx).trim(),
+        text: line.substring(colonIdx + 1).trim()
+      }
+    }
+    return { speaker: '', text: line.trim() }
+  })
 }
 
 export default function CallsPage() {
   const [calls, setCalls] = useState<CallLog[]>([])
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<'all' | 'crisis'>('all')
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
+  const [filter, setFilter] = useState<'all' | 'crisis'>('all')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [expandedCallId, setExpandedCallId] = useState<string | null>(null)
 
   useEffect(() => {
-    const fetchCalls = async () => {
-      // Get the logged-in user's practice via users table (matches auth)
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+    loadCalls()
+  }, [])
 
-      const { data: userRecord } = await supabase
-        .from('users')
-        .select('practice_id')
-        .eq('id', user.id)
-        .single()
+  async function loadCalls() {
+    const supabase = createClient()
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
 
-      const practiceId = userRecord?.practice_id
+    const { data: userRecord } = await supabase
+      .from('users')
+      .select('practice_id')
+      .eq('id', user.id)
+      .single()
 
-      let query = supabase
-        .from('call_logs')
-        .select('id, patient_phone, duration_seconds, summary, transcript, created_at, crisis_detected, intake_screenings(phq2_score, gad2_score)')
-        .order('created_at', { ascending: false })
-        .limit(100)
+    const practiceId = userRecord?.practice_id
+    if (!practiceId) return
 
-      if (practiceId) {
-        query = query.eq('practice_id', practiceId)
-      }
+    const { data } = await supabase
+      .from('call_logs')
+      .select('*')
+      .eq('practice_id', practiceId)
+      .order('created_at', { ascending: false })
+      .limit(100)
 
-      const { data } = await query
-      setCalls(data || [])
-      setLoading(false)
+    if (data) setCalls(data)
+    setLoading(false)
+  }
+
+  const filtered = calls.filter(c => {
+    if (filter === 'crisis' && !c.crisis_detected) return false
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase()
+      return (
+        c.patient_phone?.toLowerCase().includes(q) ||
+        c.summary?.toLowerCase().includes(q) ||
+        c.transcript?.toLowerCase().includes(q)
+      )
     }
+    return true
+  })
 
-    fetchCalls()
-  }, [supabase])
-
-  const filtered = calls
-    .filter(c => filter === 'all' || (filter === 'crisis' && c.crisis_detected))
-    .filter(c =>
-      c.patient_phone?.includes(search) ||
-      c.summary?.toLowerCase().includes(search.toLowerCase())
-    )
-
-  const totalDuration = calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0)
-  const avgDuration = calls.length ? Math.round(totalDuration / calls.length) : 0
+  const totalCalls = calls.length
   const crisisCount = calls.filter(c => c.crisis_detected).length
+  const avgDuration = totalCalls > 0
+    ? Math.round(calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0) / totalCalls)
+    : 0
+  const totalTalkTime = calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0)
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600" />
+      </div>
+    )
+  }
 
   return (
-    <div className="bg-gray-50 min-h-full">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-100 px-6 py-5">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-xl font-bold text-gray-900">Call Logs</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Every call Ellie has handled â click any to expand the summary and transcript</p>
+    <div className="min-h-screen bg-gray-50">
+      <div className="max-w-6xl mx-auto px-4 py-6">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">Call Logs</h1>
+            <p className="text-sm text-gray-500 mt-1">Review transcripts and summaries from your AI receptionist</p>
+          </div>
         </div>
-      </div>
 
-      <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
-      {/* Quick stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-          <p className="text-3xl font-bold text-purple-600">{calls.length}</p>
-          <p className="text-sm font-medium text-gray-700 mt-1">Total Calls</p>
+        {/* Stats Bar */}
+        <div className="grid grid-cols-4 gap-4 mb-6">
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-sm text-gray-500">Total Calls</p>
+            <p className="text-2xl font-bold text-gray-900">{totalCalls}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-sm text-gray-500">Avg Duration</p>
+            <p className="text-2xl font-bold text-gray-900">{formatDuration(avgDuration)}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-sm text-gray-500">Total Talk Time</p>
+            <p className="text-2xl font-bold text-gray-900">{formatDuration(totalTalkTime)}</p>
+          </div>
+          <div className="bg-white rounded-xl border border-gray-200 p-4">
+            <p className="text-sm text-gray-500">Crisis Flags</p>
+            <p className={`text-2xl font-bold ${crisisCount > 0 ? 'text-red-600' : 'text-gray-900'}`}>{crisisCount}</p>
+          </div>
         </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-          <p className="text-3xl font-bold text-teal-600">{formatDuration(avgDuration)}</p>
-          <p className="text-sm font-medium text-gray-700 mt-1">Avg Duration</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-          <p className="text-3xl font-bold text-blue-600">{formatDuration(totalDuration)}</p>
-          <p className="text-sm font-medium text-gray-700 mt-1">Total Talk Time</p>
-        </div>
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4">
-          <p className={`text-3xl font-bold ${crisisCount ? 'text-red-600' : 'text-green-600'}`}>{crisisCount}</p>
-          <p className="text-sm font-medium text-gray-700 mt-1">Crisis Flags</p>
-        </div>
-      </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex gap-2">
+        {/* Filters */}
+        <div className="flex items-center gap-3 mb-4">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search calls..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+          </div>
           <button
             onClick={() => setFilter('all')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               filter === 'all'
                 ? 'bg-teal-600 text-white'
-                : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
             }`}
           >
-            All Calls ({calls.length})
+            All Calls ({totalCalls})
           </button>
           <button
             onClick={() => setFilter('crisis')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
               filter === 'crisis'
                 ? 'bg-red-600 text-white'
-                : 'bg-white border border-gray-200 text-gray-700 hover:bg-gray-50'
+                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
             }`}
           >
             Crisis Only ({crisisCount})
           </button>
         </div>
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-4 h-4" />
-          <input
-            type="text"
-            placeholder="Search by phone or summary..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-          />
-        </div>
-      </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center h-40">
-          <div className="w-6 h-6 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" />
+        {/* Call List */}
+        <div className="space-y-2">
+          {filtered.length === 0 ? (
+            <div className="bg-white rounded-xl border border-gray-200 p-12 text-center">
+              <Phone className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">No calls found</p>
+            </div>
+          ) : (
+            filtered.map((call) => {
+              const isExpanded = expandedCallId === call.id
+              const phq2Score = call.intake_screenings?.[0]?.phq2_score
+              const gad2Score = call.intake_screenings?.[0]?.gad2_score
+              const hasTranscript = call.transcript && call.transcript.length > 0
+              const transcriptLines = hasTranscript ? formatTranscript(call.transcript!) : []
+
+              return (
+                <div key={call.id} className="bg-white rounded-xl border border-gray-200 overflow-hidden transition-shadow hover:shadow-sm">
+                  {/* Call Row Header */}
+                  <div
+                    className="flex items-center gap-4 p-4 cursor-pointer hover:bg-gray-50 transition-colors"
+                    onClick={() => setExpandedCallId(isExpanded ? null : call.id)}
+                  >
+                    <div className="w-10 h-10 bg-teal-100 rounded-full flex items-center justify-center flex-shrink-0">
+                      <Phone className="w-4 h-4 text-teal-600" />
+                    </div>
+
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-gray-900">{call.patient_phone}</p>
+                          {call.crisis_detected && (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-700">
+                              <AlertCircle className="w-3 h-3" />
+                              Crisis
+                            </span>
+                          )}
+                          {phq2Score !== undefined && (
+                            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${getScreeningBadgeColor(phq2Score)}`}>
+                              PHQ-2: {phq2Score}
+                            </span>
+                          )}
+                          {gad2Score !== undefined && (
+                            <span className={`inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold ${getScreeningBadgeColor(gad2Score)}`}>
+                              GAD-2: {gad2Score}
+                            </span>
+                          )}
+                          {hasTranscript && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs text-teal-600 bg-teal-50">
+                              <FileText className="w-3 h-3" />
+                              Transcript
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 text-sm text-gray-500 flex-shrink-0">
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5" />
+                            {formatDuration(call.duration_seconds)}
+                          </span>
+                          <span>
+                            {new Date(call.created_at).toLocaleDateString('en-US', {
+                              month: 'short',
+                              day: 'numeric',
+                              hour: 'numeric',
+                              minute: '2-digit',
+                            })}
+                          </span>
+                          {isExpanded ? (
+                            <ChevronUp className="w-4 h-4 text-gray-400" />
+                          ) : (
+                            <ChevronDown className="w-4 h-4 text-gray-400" />
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Summary preview (always visible if available) */}
+                      {call.summary && !isExpanded && (
+                        <p className="text-sm text-gray-500 mt-1 truncate">{call.summary}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Expanded Content */}
+                  {isExpanded && (
+                    <div className="border-t border-gray-100 bg-gray-50">
+                      {/* Summary Section */}
+                      {call.summary && (
+                        <div className="px-4 pt-4 pb-2">
+                          <div className="flex items-center gap-2 mb-2">
+                            <MessageSquare className="w-4 h-4 text-teal-600" />
+                            <h4 className="text-sm font-semibold text-gray-700">AI Summary</h4>
+                          </div>
+                          <p className="text-sm text-gray-600 bg-white rounded-lg p-3 border border-gray-200">
+                            {call.summary}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Transcript Section */}
+                      {hasTranscript ? (
+                        <div className="px-4 pt-2 pb-4">
+                          <div className="flex items-center gap-2 mb-2">
+                            <FileText className="w-4 h-4 text-teal-600" />
+                            <h4 className="text-sm font-semibold text-gray-700">Transcript</h4>
+                          </div>
+                          <div className="bg-white rounded-lg border border-gray-200 p-4 max-h-96 overflow-y-auto space-y-3">
+                            {transcriptLines.map((line, i) => (
+                              <div key={i} className={`text-sm ${
+                                line.speaker.toLowerCase().includes('caller')
+                                  ? 'pl-0'
+                                  : 'pl-4'
+                              }`}>
+                                {line.speaker ? (
+                                  <>
+                                    <span className={`font-semibold ${
+                                      line.speaker.toLowerCase().includes('caller')
+                                        ? 'text-blue-700'
+                                        : 'text-teal-700'
+                                    }`}>
+                                      {line.speaker}:
+                                    </span>{' '}
+                                    <span className="text-gray-700">{line.text}</span>
+                                  </>
+                                ) : (
+                                  <span className="text-gray-600">{line.text}</span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="px-4 pt-2 pb-4">
+                          <div className="bg-white rounded-lg border border-gray-200 p-6 text-center">
+                            <FileText className="w-8 h-8 text-gray-300 mx-auto mb-2" />
+                            <p className="text-sm text-gray-400">No transcript available for this call</p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })
+          )}
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-dashed border-gray-300 p-16 text-center">
-          <Phone className="w-10 h-10 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500 font-medium">No calls yet</p>
-          <p className="text-gray-400 text-sm mt-1">Calls Ellie handles will appear here automatically</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {filtered.map(call => (
-            <CallCard key={call.id} call={call} />
-          ))}
-          <p className="text-xs text-gray-400 text-center pt-2">
-            Showing {filtered.length} of {calls.length} calls
-          </p>
-        </div>
-      )}
       </div>
     </div>
   )
