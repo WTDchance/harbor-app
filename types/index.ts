@@ -39,6 +39,8 @@ export interface Patient {
   email: string | null
   insurance: string | null
   reason_for_seeking: string | null
+  preferred_session_type: 'telehealth' | 'in-person' | null
+  notes: string | null
   created_at: string
 }
 
@@ -60,7 +62,15 @@ export interface CallLog {
   duration_seconds: number
   transcript: string | null
   summary: string | null
-  vapi_call_id: string
+  vapi_call_id: string | null
+  crisis_detected: boolean
+  patient_id: string | null
+  call_type: 'new_patient' | 'existing_patient' | 'scheduling' | 'cancellation' | 'question' | 'crisis' | 'other' | 'unknown'
+  caller_name: string | null
+  insurance_mentioned: string | null
+  session_type: 'telehealth' | 'in-person' | null
+  preferred_times: string | null
+  reason_for_calling: string | null
   created_at: string
 }
 
@@ -145,3 +155,4 @@ export interface UpcomingAppointment {
   duration_minutes: number
   notes: string | null
 }
+
