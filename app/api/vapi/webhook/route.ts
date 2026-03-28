@@ -171,7 +171,22 @@ async function handleAssistantRequest(message: any) {
 async function handleToolCalls(message: any) {
   const toolCallList = message.toolWithToolCallList || []
   const call = message.call || {}
-  const practiceId = call.assistant?.metadata?.practiceId || null
+  let practiceId = call.assistant?.metadata?.practiceId || null
+
+  // Fallback: look up practice by phone number if metadata missing
+  if (!practiceId) {
+    const calledNumber = call.phoneNumber?.number || call.phoneNumberId || ''
+    if (calledNumber) {
+      const normalized = calledNumber.replace(/\D/g, '').slice(-10)
+      const { data } = await supabaseAdmin
+        .from('practices')
+        .select('id')
+        .or(`phone_number.ilike.%${normalized}`)
+        .limit(1)
+        .single()
+      if (data) practiceId = data.id
+    }
+  }
 
   const results = []
 
@@ -226,7 +241,22 @@ async function handleFunctionCall(message: any) {
   const toolName = fn.name || ''
   const params = fn.parameters || {}
   const call = message.call || {}
-  const practiceId = call.assistant?.metadata?.practiceId || null
+  let practiceId = call.assistant?.metadata?.practiceId || null
+
+  // Fallback: look up practice by phone number if metadata missing
+  if (!practiceId) {
+    const calledNumber = call.phoneNumber?.number || call.phoneNumberId || ''
+    if (calledNumber) {
+      const normalized = calledNumber.replace(/\D/g, '').slice(-10)
+      const { data } = await supabaseAdmin
+        .from('practices')
+        .select('id')
+        .or(`phone_number.ilike.%${normalized}`)
+        .limit(1)
+        .single()
+      if (data) practiceId = data.id
+    }
+  }
 
   console.log(`[Vapi] Function call: ${toolName}`, params)
 
@@ -261,8 +291,8 @@ async function handleFunctionCall(message: any) {
 async function handleEndOfCallReport(message: any) {
   const call = message.call || {}
   const artifact = message.artifact || {}
-  const practiceId = call.assistant?.metadata?.practiceId || null
-  const practiceName = call.assistant?.metadata?.practiceName || 'Unknown Practice'
+  let practiceId = call.assistant?.metadata?.practiceId || null
+  let practiceName = call.assistant?.metadata?.practiceName || 'Unknown Practice'
 
   const transcript = artifact.transcript || ''
   const messages = artifact.messages || []
@@ -273,8 +303,28 @@ async function handleEndOfCallReport(message: any) {
 
   console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s`)
 
+  // Fallback: look up practice by the called phone number if metadata is missing
   if (!practiceId) {
-    console.warn('[Vapi] No practice ID in call metadata, skipping post-processing')
+    const calledNumber = call.phoneNumber?.number || call.phoneNumberId || ''
+    console.log(`[Vapi] No practice ID in metadata, looking up by phone: ${calledNumber}`)
+    if (calledNumber) {
+      const normalized = calledNumber.replace(/\D/g, '').slice(-10)
+      const { data } = await supabaseAdmin
+        .from('practices')
+        .select('id, name')
+        .or(`phone_number.ilike.%${normalized}`)
+        .limit(1)
+        .single()
+      if (data) {
+        practiceId = data.id
+        practiceName = data.name
+        console.log(`[Vapi] Resolved practice from phone: ${practiceName} (${practiceId})`)
+      }
+    }
+  }
+
+  if (!practiceId) {
+    console.warn('[Vapi] No practice ID found in metadata or by phone lookup, skipping post-processing')
     return NextResponse.json({ ok: true })
   }
 
