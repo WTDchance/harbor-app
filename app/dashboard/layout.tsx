@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/layout.tsx
-// Harbor — Shared dashboard shell with sidebar navigation.
+// Harbor â Shared dashboard shell with sidebar navigation.
 // Wraps all /dashboard/* pages. Handles auth gate and logout.
 
 import { useState, useEffect } from "react";
@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
-// ─── Nav items ────────────────────────────────────────────────────────────────
+// âââ Nav items ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 const NAV = [
   {
     href: "/dashboard",
@@ -62,6 +62,27 @@ const NAV = [
     ),
   },
   {
+    href: "/dashboard/calls",
+    label: "Calls",
+    exact: false,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M16 12.5c-1.2 0-2.4-.2-3.5-.6a.94.94 0 00-1 .2l-2.2 2.2A14.1 14.1 0 013.7 8.7l2.2-2.2c.3-.3.4-.7.2-1C5.7 4.4 5.5 3.2 5.5 2c0-.6-.4-1-1-1H1.5C.9 1 .5 1.4.5 2c0 8.3 6.7 15 15 15 .6 0 1-.4 1-1v-2.5c0-.6-.4-1-1-1z" fill="currentColor" fillOpacity="0.85" />
+      </svg>
+    ),
+  },
+  {
+    href: "/dashboard/crisis",
+    label: "Crisis Alerts",
+    exact: false,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M9 1L1 16h16L9 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M9 7v4M9 13v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
     href: "/dashboard/settings",
     label: "Settings",
     exact: false,
@@ -74,7 +95,7 @@ const NAV = [
   },
 ];
 
-// ─── Layout ───────────────────────────────────────────────────────────────────
+// âââ Layout âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -138,7 +159,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return pathname.startsWith(item.href);
   }
 
-  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : "—";
+  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : "â";
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
