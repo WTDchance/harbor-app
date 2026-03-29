@@ -26,13 +26,15 @@ export async function GET(req: NextRequest) {
   const { user, error } = await getAuthenticatedUser(req);
   if (!user) return NextResponse.json({ error }, { status: 401 });
 
-  const { data: practice } = await supabase
-    .from("practices")
-    .select("id")
-    .eq("user_id", user.id)
+  // Look up practice via users table (practices has no user_id column)
+  const { data: userRecord } = await supabase
+    .from("users")
+    .select("practice_id")
+    .eq("id", user.id)
     .single();
 
-  if (!practice) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  const practiceId = userRecord.practice_id;
 
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search")?.toLowerCase().trim() ?? "";
@@ -44,7 +46,7 @@ export async function GET(req: NextRequest) {
       `id, patient_name, patient_email, patient_phone, patient_dob,
        phq9_score, phq9_severity, gad7_score, gad7_severity, completed_at`
     )
-    .eq("practice_id", practice.id)
+    .eq("practice_id", practiceId)
     .eq("status", "completed")
     .not("completed_at", "is", null)
     .order("completed_at", { ascending: false });
