@@ -29,13 +29,14 @@ export async function GET(
   const { user, error } = await getAuthenticatedUser(req);
   if (!user) return NextResponse.json({ error }, { status: 401 });
 
-  const { data: practice } = await supabase
-    .from("practices")
-    .select("id")
-    .eq("user_id", user.id)
+  const { data: userRecord } = await supabase
+    .from("users")
+    .select("practice_id")
+    .eq("id", user.id)
     .single();
 
-  if (!practice) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  const practiceId = userRecord.practice_id;
 
   // Decode the patient key from base64url
   let patientKey: string;
@@ -58,7 +59,7 @@ export async function GET(
          intake_documents(id, name, requires_signature)
        )`
     )
-    .eq("practice_id", practice.id)
+    .eq("practice_id", practiceId)
     .eq("status", "completed")
     .order("completed_at", { ascending: false });
 
