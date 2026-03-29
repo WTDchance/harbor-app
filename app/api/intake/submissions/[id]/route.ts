@@ -36,14 +36,14 @@ export async function GET(
     return NextResponse.json({ error }, { status: 401 });
   }
 
-  const { data: practice } = await supabase
-    .from("practices")
-    .select("id")
-    .eq("user_id", user.id)
+  const { data: userRecord } = await supabase
+    .from("users")
+    .select("practice_id")
+    .eq("id", user.id)
     .single();
 
-  if (!practice) {
-    return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  const practiceId = userRecord.practice_id;
   }
 
   const { data: submission, error: queryError } = await supabase
@@ -60,7 +60,7 @@ export async function GET(
        )`
     )
     .eq("id", params.id)
-    .eq("practice_id", practice.id)
+    .eq("practice_id", practiceId)
     .single();
 
   if (queryError || !submission) {
