@@ -41,6 +41,17 @@ const useGemini = !!genai
 const VOICE_MODEL = useGemini ? 'gemini-2.5-flash' : 'claude-haiku-4-5-20251001'
 const PROVIDER = useGemini ? 'Gemini' : 'Anthropic'
 
+// Helper to safely extract text from Gemini generateContent responses
+// The .text property can be undefined depending on SDK version/response format
+function getGeminiText(result: any): string {
+  if (typeof result?.text === 'string') return result.text
+  if (typeof result?.text === 'function') return result.text()
+  const candidateText = result?.candidates?.[0]?.content?.parts?.[0]?.text
+  if (candidateText) return candidateText
+  console.warn('⚠️ Unexpected Gemini response:', JSON.stringify(result)?.substring(0, 300))
+  return ''
+}
+
 // Startup check
 ;(async () => {
   if (useGemini) {
@@ -51,7 +62,9 @@ const PROVIDER = useGemini ? 'Gemini' : 'Anthropic'
         contents: 'Say "ok"',
         config: { maxOutputTokens: 10 },
       })
-      console.log(`✓ Gemini Flash verified: "${test.text}"`)
+      const verifiedText = getGeminiText(test)
+      console.log(`✓ Gemini Flash verified: "${verifiedText}"`)
+      console.log(`  Response .text type: ${typeof test?.text}, keys: ${Object.keys(test || {}).join(', ')}`)
     } catch (err: any) {
       console.error(`✗ Gemini API FAILED: ${err?.message?.substring(0, 200)}`)
     }
@@ -556,7 +569,7 @@ ${fullTranscript}`
         model: 'gemini-2.5-flash',
         contents: prompt,
       })
-      responseText = result.text?.trim() || ''
+      responseText = getGeminiText(result).trim()
     } else {
       const result = await anthropic.messages.create({
         model: 'claude-3-5-haiku-20241022',
@@ -570,9 +583,11 @@ ${fullTranscript}`
     // Strip markdown code fences if present
     responseText = responseText.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '')
     const parsed = JSON.parse(responseText) as ExtractedCallData
+    console.log(`✓ Extracted call data: type=${parsed.call_type}, name=${parsed.caller_name}, summary=${parsed.summary?.substring(0, 80)}`)
     return parsed
   } catch (err) {
     console.error('Call data extraction failed:', err)
+    console.error('  Response text was:', responseText?.substring(0, 200))
     return null
   }
 }
@@ -853,7 +868,7 @@ async function getLLMResponse(session: CallSession, utterance: string): Promise<
           temperature: 0.7,
         },
       })
-      text = response.text || "I'm sorry, I didn't catch that. Could you say that again?"
+      text = getGeminiText(response) || "I'm sorry, I didn't catch that. Could you say that again?"
     } else {
       const response = await anthropic.messages.create({
         model: VOICE_MODEL,
