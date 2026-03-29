@@ -7,7 +7,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createClient } from '@supabase/supabase-js'
-import Anthropic from '@anthropic-ai/sdk'
+import Anthropic from '@anthropic-ai/sdk'h
 import { GoogleGenAI } from '@google/genai'
 import { buildVoiceSystemPrompt, PracticeConfig } from './system-prompt'
 import {
@@ -85,7 +85,7 @@ function getGeminiText(result: any): string {
       const test = await genai!.models.generateContent({
         model: VOICE_MODEL,
         contents: 'Say "ok"',
-        config: { maxOutputTokens: 10 },
+        config: { maxOutputTokens: 100, thinkingConfig: { thinkingBudget: 0 } },
       })
       const verifiedText = getGeminiText(test)
       console.log(`✓ Gemini Flash verified: "${verifiedText}"`)
@@ -801,8 +801,9 @@ async function streamLLMResponse(
         contents: toGeminiContents(trimmed),
         config: {
           systemInstruction: session.systemPrompt,
-          maxOutputTokens: 150,
+          maxOutputTokens: 300,
           temperature: 0.7,
+          thinkingConfig: { thinkingBudget: 0 },
         },
       })
 
