@@ -44,7 +44,6 @@ export async function GET(
 
   if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   const practiceId = userRecord.practice_id;
-  }
 
   const { data: submission, error: queryError } = await supabase
     .from("intake_forms")
