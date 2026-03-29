@@ -305,27 +305,38 @@ async function handleEndOfCallReport(message: any) {
 
   // Fallback: look up practice by the called phone number if metadata is missing
   if (!practiceId) {
-    const calledNumber = call.phoneNumber?.number || call.phoneNumberId || ''
-    console.log(`[Vapi] No practice ID in metadata, looking up by phone: ${calledNumber}`)
+    // Extract the actual phone number - do NOT use phoneNumberId (it's a Vapi UUID, not a number)
+    const calledNumber = call.phoneNumber?.number || call.phoneNumber?.twilioPhoneNumber ||
+      (typeof call.phoneNumber === 'string' && call.phoneNumber.startsWith('+') ? call.phoneNumber : '') || ''
+    console.log(`[Vapi] No practice ID in metadata, looking up by phone: ${calledNumber || '(none)'}`)
     if (calledNumber) {
       const normalized = calledNumber.replace(/\D/g, '').slice(-10)
       const { data } = await supabaseAdmin
         .from('practices')
         .select('id, name')
-        .or(`phone_number.ilike.%${normalized}`)
+        .or(`phone_number.ilike.%${normalized},phone_number.ilike.%${calledNumber}`)
         .limit(1)
-        .single()
+        .maybeSingle()
       if (data) {
         practiceId = data.id
-        practiceName = data.name
-        console.log(`[Vapi] Resolved practice from phone: ${practiceName} (${practiceId})`)
+        console.log(`[Vapi] Resolved practice by phone: ${data.name} (${data.id})`)
       }
     }
   }
 
+  // Final fallback: if still no practice ID, try single-practice lookup
   if (!practiceId) {
-    console.warn('[Vapi] No practice ID found in metadata or by phone lookup, skipping post-processing')
-    return NextResponse.json({ ok: true })
+    const { data: practices } = await supabaseAdmin
+      .from('practices')
+      .select('id, name')
+      .limit(2)
+    if (practices && practices.length === 1) {
+      practiceId = practices[0].id
+      console.log(`[Vapi] Resolved practice by single-practice fallback: ${practices[0].name} (${practices[0].id})`)
+    } else {
+      console.warn('[Vapi] No practice ID found by any method, skipping post-processing')
+      return NextResponse.json({ ok: true })
+    }
   }
 
   // Build transcript text from messages if not provided directly
