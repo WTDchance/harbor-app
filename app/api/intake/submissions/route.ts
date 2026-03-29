@@ -42,7 +42,6 @@ export async function GET(req: NextRequest) {
 
   if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   const practiceId = userRecord.practice_id;
-  }
 
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
