@@ -123,7 +123,7 @@ setInterval(async () => {
         await genai!.models.generateContent({
           model: VOICE_MODEL,
           contents: 'ok',
-          config: { maxOutputTokens: 5 },
+          config: { maxOutputTokens: 5, thinkingConfig: { thinkingBudget: 0 } },
         })
       } else {
         await anthropic.messages.create({
@@ -594,6 +594,7 @@ ${fullTranscript}`
       const result = await genai.models.generateContent({
         model: 'gemini-2.5-flash',
         contents: prompt,
+                config: { thinkingConfig: { thinkingBudget: 0 } },
       })
       responseText = getGeminiText(result).trim()
     } else {
