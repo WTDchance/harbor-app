@@ -73,7 +73,7 @@ export async function GET(req: NextRequest) {
   const { user, error } = await getAuthenticatedUser(req);
   if (!user) return NextResponse.json({ error }, { status: 401 });
 
-  const { data: practice } = await supabase
+  const { data: userRecord } = await supabase
     .from("practices")
     .select("id, name")
     .eq("user_id", user.id)
@@ -90,7 +90,7 @@ export async function GET(req: NextRequest) {
       `id, patient_name, patient_email, patient_phone, patient_dob, patient_address,
        phq9_score, phq9_severity, gad7_score, gad7_severity, completed_at`
     )
-    .eq("practice_id", practice.id)
+    .eq("practice_id", practiceId)
     .eq("status", "completed")
     .not("completed_at", "is", null)
     .order("completed_at", { ascending: false });
