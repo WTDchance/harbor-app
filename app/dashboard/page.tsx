@@ -163,7 +163,9 @@ export default function DashboardHome() {
           supabase
             .from("call_logs")
             .select("id", { count: "exact", head: true })
-            .eq("practice_id", practiceId),
+            .eq("practice_id", practiceId)
+            .gte("created_at", startOfDay)
+            .lte("created_at", endOfDay),
           supabase
             .from("call_logs")
             .select("id, patient_phone, duration_seconds, summary, created_at, crisis_detected")
@@ -299,9 +301,9 @@ export default function DashboardHome() {
               ),
             },
             {
-              label: "Calls Handled",
+              label: "Today's Calls",
               value: loading ? "â" : stats?.totalCalls ?? 0,
-              sub: "by Ellie",
+              sub: "handled by Ellie",
               color: "text-purple-600",
               href: "/dashboard/calls",
               bg: "bg-purple-50",
