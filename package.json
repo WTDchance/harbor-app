@@ -10,7 +10,7 @@
         "db:generate": "npx supabase gen types typescript --project-id YOUR_PROJECT_ID > types/database.ts"
     },
     "dependencies": {
-        "@anthropic-ai/sdk": "^0.9.0",
+        "@anthropic-ai/sdk": "^0.39.0",
         "@supabase/ssr": "^0.9.0",
         "@supabase/supabase-js": "^2.38.0",
         "clsx": "^2.0.0",
