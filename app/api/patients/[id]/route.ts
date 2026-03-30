@@ -53,11 +53,7 @@ export async function GET(
       `id, patient_name, patient_email, patient_phone, patient_dob, patient_address,
        phq9_answers, phq9_score, phq9_severity,
        gad7_answers, gad7_score, gad7_severity,
-       additional_notes, completed_at, created_at, status, appointment_id,
-       intake_document_signatures(
-         id, signed_name, signed_at,
-         intake_documents(id, name, requires_signature)
-       )`
+       additional_notes, completed_at, created_at, status, appointment_id`
     )
     .eq("practice_id", practiceId)
     .eq("status", "completed")
