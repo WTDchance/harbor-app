@@ -152,7 +152,13 @@ ${transcript}`,
     const textBlock = response.content.find((block) => block.type === 'text')
     if (textBlock && textBlock.type === 'text') {
       try {
-        return JSON.parse(textBlock.text)
+// Strip markdown code blocks if present
+          let jsonText = textBlock.text.trim()
+          const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/)
+          if (codeBlockMatch) {
+            jsonText = codeBlockMatch[1].trim()
+          }
+          return JSON.parse(jsonText)
       } catch {
         console.warn('Could not parse extracted information as JSON')
         return {}
