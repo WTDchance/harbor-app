@@ -1,11 +1,11 @@
-h"use client";
+"use client";
 // app/dashboard/patients/[id]/page.tsx
 // Harbor — Patient Hub Detail View
 // Unified patient profile with outcome trend chart, intake history, and appointments
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { createClient } from hh"@/lib/supabase-browser";
+import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
