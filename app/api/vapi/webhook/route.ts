@@ -319,6 +319,7 @@ async function handleEndOfCallReport(message: any) {
         .maybeSingle()
       if (data) {
         practiceId = data.id
+        practiceName = data.name
         console.log(`[Vapi] Resolved practice by phone: ${data.name} (${data.id})`)
       }
     }
@@ -332,6 +333,7 @@ async function handleEndOfCallReport(message: any) {
       .limit(2)
     if (practices && practices.length === 1) {
       practiceId = practices[0].id
+          practiceName = practices[0].name
       console.log(`[Vapi] Resolved practice by single-practice fallback: ${practices[0].name} (${practices[0].id})`)
     } else {
       console.warn('[Vapi] No practice ID found by any method, skipping post-processing')
@@ -444,7 +446,22 @@ async function processEndOfCall(opts: {
 
   // 4. Extract patient info and auto-create patient record
   try {
-    const info = await extractCallInformation(transcriptText)
+    let info
+    try {
+      info = await extractCallInformation(transcriptText)
+    } catch (extractErr) {
+      console.error('[Vapi] Claude extraction failed, using regex fallback:', extractErr)
+      const nameMatch = transcriptText.match(/(?:my name is|this is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i)
+      const phoneMatch = transcriptText.match(/(?:phone|number|reach me|call me).*?(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/i)
+      const emailMatch = transcriptText.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i)
+      const insuranceMatch = transcriptText.match(/(?:insurance|provider|plan).*?((?:Blue ?Cross|Aetna|Cigna|United|UHC|Kaiser|Humana|Anthem|BCBS|Tricare|Medicare|Medicaid)[^,.\n]*)/i)
+      info = {
+        patientName: nameMatch ? nameMatch[1] : undefined,
+        patientPhone: phoneMatch ? phoneMatch[1] : undefined,
+        patientEmail: emailMatch ? emailMatch[1] : undefined,
+        patientInsurance: insuranceMatch ? insuranceMatch[1] : undefined,
+      }
+    }
     if (info.patientName && info.patientName.trim()) {
       const nameParts = info.patientName.trim().split(/\s+/)
       const firstName = nameParts[0] || ''
