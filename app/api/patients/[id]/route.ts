@@ -50,7 +50,7 @@ export async function GET(
   const { data: allForms, error: formsError } = await supabase
     .from("intake_forms")
     .select(
-      `id, patient_name, patient_email, patient_phone, patient_dob, patient_address,
+      `id, patient_name, patient_email, patient_phone, patient_dob,
        phq9_answers, phq9_score, phq9_severity,
        gad7_answers, gad7_score, gad7_severity,
        additional_notes, completed_at, created_at, status, appointment_id`
@@ -120,7 +120,6 @@ export async function GET(
       patient_email: latest.patient_email,
       patient_phone: latest.patient_phone,
       patient_dob: latest.patient_dob,
-      patient_address: latest.patient_address,
       intake_count: patientForms.length,
       last_seen: latest.completed_at,
     },
