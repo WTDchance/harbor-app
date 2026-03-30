@@ -261,7 +261,11 @@ export default function CallsPage() {
     }
 
     fetchCalls()
-  }, [supabase])
+
+    // Auto-refresh call logs every 2 minutes
+    const refreshInterval = setInterval(fetchCalls, 120000)
+    return () => clearInterval(refreshInterval)
+    }, [supabase])
 
   const newPatientCount = calls.filter(c => c.call_type === 'new_patient').length
 
