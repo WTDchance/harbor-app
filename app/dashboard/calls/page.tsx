@@ -191,69 +191,28 @@ export default function CallsPage() {
   useEffect(() => {
     const fetchCalls = async () => {
       try {
-        // Get the logged-in user's practice via users table (matches auth)
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
-        if (authError) {
-          console.error('[Calls] Auth error:', authError)
-          setError('Authentication error')
-          setLoading(false)
-          return
-        }
-        if (!user) {
-          console.error('[Calls] No authenticated user')
+        // Use server-side API route that bypasses RLS
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session?.access_token) {
+          console.error('[Calls] No session')
           setLoading(false)
           return
         }
 
-        const { data: userRecord, error: userError } = await supabase
-          .from('users')
-          .select('practice_id')
-          .eq('id', user.id)
-          .single()
+        const res = await fetch('/api/dashboard/calls', {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        })
 
-        if (userError) {
-          console.error('[Calls] Error fetching user record:', userError)
+        if (!res.ok) {
+          throw new Error('Failed to fetch calls: ' + res.status)
         }
 
-        const practiceId = userRecord?.practice_id
-        if (!practiceId) {
-          console.error('[Calls] No practice_id found for user:', user.id)
-          setError('No practice linked to your account')
-          setLoading(false)
-          return
-        }
-
-        // Try with intake_screenings join first
-        let { data, error: queryError } = await supabase
-          .from('call_logs')
-          .select('id, patient_phone, duration_seconds, summary, transcript, created_at, crisis_detected, caller_name, call_type, insurance_mentioned, session_type, preferred_times, reason_for_calling, patient_id, intake_screenings(phq2_score, gad2_score)')
-          .eq('practice_id', practiceId)
-          .order('created_at', { ascending: false })
-          .limit(100)
-
-        // Fallback: if the join fails, query without intake_screenings
-        if (queryError) {
-          console.error('[Calls] Query with join failed, trying fallback:', queryError)
-          const fallback = await supabase
-            .from('call_logs')
-            .select('id, patient_phone, duration_seconds, summary, transcript, created_at, crisis_detected, caller_name, call_type, insurance_mentioned, session_type, preferred_times, reason_for_calling, patient_id')
-            .eq('practice_id', practiceId)
-            .order('created_at', { ascending: false })
-            .limit(100)
-
-          if (fallback.error) {
-            console.error('[Calls] Fallback query also failed:', fallback.error)
-            setError('Unable to load calls')
-            setLoading(false)
-            return
-          }
-          data = fallback.data
-        }
-
-        console.log(`[Calls] Loaded ${data?.length || 0} calls for practice ${practiceId}`)
-        setCalls(data || [])
+        const result = await res.json()
+        setCalls(result.calls || [])
       } catch (err) {
-        console.error('[Calls] Unexpected error:', err)
+        console.error('[Calls] Error fetching calls:', err)
         setError('Something went wrong loading calls')
       } finally {
         setLoading(false)
