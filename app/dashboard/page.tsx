@@ -166,7 +166,7 @@ export default function DashboardHome() {
     let recentCalls: Stats["recentCalls"] = [];
     let crisisAlerts = 0;
     try {
-      const callStatsRes = await fetch('/api/dashboard/calls?mode=stats');
+      const callStatsRes = await fetch(`/api/dashboard/calls?mode=stats&from=${startOfDay}&to=${endOfDay}`);
       if (callStatsRes.ok) {
         const callStats = await callStatsRes.json();
         totalCalls = callStats.todayCount || 0;
