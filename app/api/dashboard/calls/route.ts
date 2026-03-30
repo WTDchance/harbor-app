@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
         endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
       }
 
-      const [todayResult, recentResult, crisisResult] = await Promise.all([
+      const [todayResult, recentResult, crisisResult, totalResult] = await Promise.all([
         supabaseAdmin
           .from('call_logs')
           .select('id', { count: 'exact', head: true })
@@ -87,10 +87,15 @@ export async function GET(req: NextRequest) {
           .select('id', { count: 'exact', head: true })
           .eq('practice_id', practiceId)
           .eq('crisis_detected', true),
+        supabaseAdmin
+          .from('call_logs')
+          .select('id', { count: 'exact', head: true })
+          .eq('practice_id', practiceId),
       ])
 
       return NextResponse.json({
         todayCount: todayResult.count || 0,
+        totalCount: totalResult.count || 0,
         recentCalls: recentResult.data || [],
         crisisCount: crisisResult.count || 0,
       })
