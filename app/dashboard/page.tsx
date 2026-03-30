@@ -167,46 +167,21 @@ export default function DashboardHome() {
       let crisisAlerts = 0;
 
       if (practiceId) {
-        const [callCountRes, recentCallsRes, crisisRes] = await Promise.all([
-          supabase
-            .from("call_logs")
-            .select("id", { count: "exact", head: true })
-            .eq("practice_id", practiceId)
-            .gte("created_at", startOfDay)
-            .lte("created_at", endOfDay),
-          supabase
-            .from("call_logs")
-            .select("id, patient_phone, duration_seconds, summary, created_at, crisis_detected")
-            .eq("practice_id", practiceId)
-            .order("created_at", { ascending: false })
-            .limit(5),
-          supabase
-            .from("call_logs")
-            .select("id", { count: "exact", head: true })
-            .eq("practice_id", practiceId)
-            .eq("crisis_detected", true),
-        ]);
-
-        totalCalls = callCountRes.count ?? 0;
-        recentCalls = (recentCallsRes.data ?? []).map(c => ({
-          ...c,
-          crisis_detected: c.crisis_detected ?? false,
-        }));
-        crisisAlerts = crisisRes.count ?? 0;
+      // Fetch call stats from server-side API (bypasses RLS)
+      let todayCalls = 0
+      let recentCalls: any[] = []
+      let crisisAlerts = 0
+      try {
+        const callStatsRes = await fetch('/api/dashboard/calls?mode=stats')
+        if (callStatsRes.ok) {
+          const callStats = await callStatsRes.json()
+          todayCalls = callStats.todayCount || 0
+          recentCalls = callStats.recentCalls || []
+          crisisAlerts = callStats.crisisCount || 0
+        }
+      } catch (callErr) {
+        console.error('[Dashboard] Failed to fetch call stats:', callErr)
       }
-
-      const patients = patientsData.patients ?? [];
-      const elevated = patients.filter(
-        (p: { latest_phq9_score: number | null; latest_gad7_score: number | null }) =>
-          (p.latest_phq9_score !== null && p.latest_phq9_score >= 10) ||
-          (p.latest_gad7_score !== null && p.latest_gad7_score >= 10)
-      ).length;
-
-      const appts = appointmentsData.appointments ?? [];
-      const todayAppts = appts.filter(
-        (a: { scheduled_at: string }) =>
-          new Date(a.scheduled_at).toDateString() === new Date().toDateString()
-      );
 
       setStats({
         totalPatients: patientsData.total ?? patients.length,
