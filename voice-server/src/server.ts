@@ -553,6 +553,9 @@ interface ExtractedCallData {
   reason_for_calling: string | null
   call_type: 'new_patient' | 'existing_patient' | 'scheduling' | 'cancellation' | 'question' | 'crisis' | 'other'
   summary: string
+  // ── NEW: Intake delivery ──
+  intake_delivery_preference: 'text' | 'email' | 'both' | null
+  intake_email: string | null
 }
 
 async function extractCallData(
@@ -575,7 +578,9 @@ async function extractCallData(
   "preferred_times": "Any scheduling preferences mentioned, or null",
   "reason_for_calling": "Brief reason (e.g. 'new patient seeking anxiety therapy'), or null",
   "call_type": "new_patient" or "existing_patient" or "scheduling" or "cancellation" or "question" or "crisis" or "other",
-  "summary": "2-3 sentence summary of the call including why they called, key details, and outcome"
+  "summary": "2-3 sentence summary of the call including why they called, key details, and outcome",
+  "intake_delivery_preference": "text" or "email" or "both" or null (how the caller wants intake forms sent),
+  "intake_email": "email address if provided for intake delivery, or null"
 }
 
 Rules:
@@ -583,6 +588,8 @@ Rules:
 - If the caller only gave a first name, set last_name to null.
 - For call_type: use "new_patient" if they're calling for the first time or asking about becoming a patient. Use "existing_patient" if they reference previous appointments or their therapist.
 - If the call was very short (caller hung up quickly), set call_type to "other" and note it in the summary.
+- For intake_delivery_preference: extract if the caller said they want forms by text, email, or both. If they didn't discuss intake forms, set to null.
+- For intake_email: extract the email address ONLY if the caller provided one for receiving intake forms. Do not guess.
 
 Transcript:
 ${fullTranscript}`
@@ -650,9 +657,26 @@ async function handleDisconnect(sessionId: string) {
 
         // Extract structured data + summary asynchronously (don't block disconnect cleanup)
         if (session.transcript.length >= 2) {
-          extractAndLinkPatient(inserted.id, session).catch((err) =>
-            console.error('Post-call extraction failed:', err)
-          )
+          extractAndLinkPatient(inserted.id, session)
+            .then(async (extracted) => {
+              if (extracted && extracted.call_type === 'new_patient' && extracted.intake_delivery_preference) {
+                try {
+                  await sendIntakeForms({
+                    practiceId: session.practiceId!,
+                    patientPhone: session.callerPhone,
+                    patientEmail: extracted.intake_email,
+                    patientName: extracted.caller_name,
+                    callLogId: inserted.id,
+                    deliveryMethod: extracted.intake_delivery_preference === 'text' ? 'sms'
+                      : extracted.intake_delivery_preference === 'both' ? 'both'
+                      : 'email',
+                  })
+                } catch (err) {
+                  console.error('Failed to auto-send intake forms:', err)
+                }
+              }
+            })
+            .catch((err) => console.error('Post-call extraction failed:', err))
         }
       }
     } else {
@@ -675,7 +699,7 @@ async function handleDisconnect(sessionId: string) {
 }
 
 // ━━━━━ Post-call: extract structured data, upsert patient, link to call log ━━━━━
-async function extractAndLinkPatient(callLogId: string, session: CallSession) {
+async function extractAndLinkPatient(callLogId: string, session: CallSession): Promise<ExtractedCallData | null> {
   const extracted = await extractCallData(session.transcript, session.practiceConfig)
   if (!extracted) return
 
@@ -688,6 +712,8 @@ async function extractAndLinkPatient(callLogId: string, session: CallSession) {
     session_type: extracted.session_type,
     preferred_times: extracted.preferred_times,
     reason_for_calling: extracted.reason_for_calling,
+    intake_delivery_preference: extracted.intake_delivery_preference,
+    intake_email: extracted.intake_email,
   }
 
   // Try to find or create a patient record if we have a phone number
@@ -769,6 +795,8 @@ async function extractAndLinkPatient(callLogId: string, session: CallSession) {
       `✓ Call ${callLogId}: extracted data saved (type: ${extracted.call_type}, name: ${extracted.caller_name || 'unknown'})`
     )
   }
+
+  return extracted
 }
 
 // ━━━━━ Gemini / Anthropic LLM helpers ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -996,6 +1024,45 @@ async function logCrisisAlert(session: CallSession, phrases: string[]) {
     })
   } catch (error) {
     console.warn('Crisis log failed:', error)
+  }
+}
+
+
+// ── Intake form auto-send ──
+async function sendIntakeForms(opts: {
+  practiceId: string
+  patientPhone: string | null
+  patientEmail: string | null
+  patientName: string | null
+  callLogId: string
+  deliveryMethod: 'sms' | 'email' | 'both'
+}) {
+  const appUrl = process.env.APP_URL || 'https://harborreceptionist.com'
+
+  try {
+    const response = await fetch(`${appUrl}/api/intake/send`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        practice_id: opts.practiceId,
+        call_log_id: opts.callLogId,
+        patient_phone: opts.patientPhone,
+        patient_email: opts.patientEmail,
+        patient_name: opts.patientName,
+        delivery_method: opts.deliveryMethod,
+      }),
+    })
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      console.error('Intake send API error:', response.status, err)
+      return
+    }
+
+    const result = await response.json()
+    console.log(`✓ Intake forms sent: SMS=${result.sms_sent} Email=${result.email_sent} URL=${result.intake_url}`)
+  } catch (err) {
+    console.error('Failed to call intake send API:', err)
   }
 }
 
