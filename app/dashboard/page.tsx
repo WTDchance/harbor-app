@@ -161,30 +161,36 @@ export default function DashboardHome() {
 
       if (patientsRes.status === 401) { router.push("/login"); return; }
 
-      // Fetch call stats directly from Supabase
-      let totalCalls = 0;
-      let recentCalls: Stats["recentCalls"] = [];
-      let crisisAlerts = 0;
-
-      if (practiceId) {
       // Fetch call stats from server-side API (bypasses RLS)
-      let todayCalls = 0
-      let recentCalls: any[] = []
-      let crisisAlerts = 0
-      try {
-        const callStatsRes = await fetch('/api/dashboard/calls?mode=stats')
-        if (callStatsRes.ok) {
-          const callStats = await callStatsRes.json()
-          todayCalls = callStats.todayCount || 0
-          recentCalls = callStats.recentCalls || []
-          crisisAlerts = callStats.crisisCount || 0
-        }
-      } catch (callErr) {
-        console.error('[Dashboard] Failed to fetch call stats:', callErr)
+    let totalCalls = 0;
+    let recentCalls: Stats["recentCalls"] = [];
+    let crisisAlerts = 0;
+    try {
+      const callStatsRes = await fetch('/api/dashboard/calls?mode=stats');
+      if (callStatsRes.ok) {
+        const callStats = await callStatsRes.json();
+        totalCalls = callStats.todayCount || 0;
+        recentCalls = callStats.recentCalls || [];
+        crisisAlerts = callStats.crisisCount || 0;
       }
+    } catch (callErr) {
+      console.error('[Dashboard] Failed to fetch call stats:', callErr);
+    }
 
-      setStats({
-        totalPatients: patientsData.total ?? patients.length,
+    const patients = patientsData.patients ?? [];
+    const elevated = patients.filter(
+      (p: { latest_phq9_score: number | null; latest_gad7_score: number | null }) =>
+        (p.latest_phq9_score !== null && p.latest_phq9_score >= 10) ||
+        (p.latest_gad7_score !== null && p.latest_gad7_score >= 10)
+    ).length;
+    const appts = appointmentsData.appointments ?? [];
+    const todayAppts = appts.filter(
+      (a: { scheduled_at: string }) =>
+        new Date(a.scheduled_at).toDateString() === new Date().toDateString()
+    );
+
+    setStats({
+      totalPatients: patientsData.total ?? patients.length,
         elevatedScores: elevated,
         pendingIntakes: pendingData.pagination?.total ?? 0,
         todayAppointments: todayAppts.length,
