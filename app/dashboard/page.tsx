@@ -169,7 +169,7 @@ export default function DashboardHome() {
       const callStatsRes = await fetch(`/api/dashboard/calls?mode=stats&from=${startOfDay}&to=${endOfDay}`);
       if (callStatsRes.ok) {
         const callStats = await callStatsRes.json();
-        totalCalls = callStats.todayCount || 0;
+        totalCalls = callStats.totalCount || 0;
         recentCalls = callStats.recentCalls || [];
         crisisAlerts = callStats.crisisCount || 0;
       }
@@ -290,7 +290,7 @@ export default function DashboardHome() {
               ),
             },
             {
-              label: "Today's Calls",
+              label: "Total Calls",
               value: loading ? "--" : stats?.totalCalls ?? 0,
               sub: "handled by Ellie",
               color: "text-purple-600",
@@ -491,7 +491,7 @@ export default function DashboardHome() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
             { label: "New Appointment", href: "/dashboard/appointments", icon: "\u{1F4C5}" },
-            { label: "View Patients", href: "/dashboard/patients", icon: "ð¤" },
+            { label: "View Patients", href: "/dashboard/patients", icon: "\u{1F464}" },
             { label: "Call Logs", href: "/dashboard/calls", icon: "\u{1F4DE}" },
             { label: "Practice Settings", href: "/dashboard/settings", icon: "\u{2699}\u{FE0F}" },
           ].map((action) => (
