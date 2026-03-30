@@ -7,7 +7,7 @@ import express from 'express'
 import { createServer } from 'http'
 import { WebSocketServer, WebSocket } from 'ws'
 import { createClient } from '@supabase/supabase-js'
-import Anthropic from '@anthropic-ai/sdk'
+import Anthropic from '@anthropic-ai/sdk'h
 import { GoogleGenAI } from '@google/genai'
 import { buildVoiceSystemPrompt, PracticeConfig } from './system-prompt'
 import {
@@ -701,7 +701,7 @@ async function handleDisconnect(sessionId: string) {
 // ━━━━━ Post-call: extract structured data, upsert patient, link to call log ━━━━━
 async function extractAndLinkPatient(callLogId: string, session: CallSession): Promise<ExtractedCallData | null> {
   const extracted = await extractCallData(session.transcript, session.practiceConfig)
-  if (!extracted) return
+  if (!extracted) return null
 
   // Always update the call log with summary + extracted fields
   const callUpdate: Record<string, any> = {
@@ -1059,7 +1059,7 @@ async function sendIntakeForms(opts: {
       return
     }
 
-    const result = await response.json()
+    const result: any = await response.json()
     console.log(`✓ Intake forms sent: SMS=${result.sms_sent} Email=${result.email_sent} URL=${result.intake_url}`)
   } catch (err) {
     console.error('Failed to call intake send API:', err)
