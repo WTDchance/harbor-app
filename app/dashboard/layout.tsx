@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/layout.tsx
-// Harbor â Shared dashboard shell with sidebar navigation.
+// Harbor -- Shared dashboard shell with sidebar navigation.
 // Wraps all /dashboard/* pages. Handles auth gate and logout.
 
 import { useState, useEffect } from "react";
@@ -10,7 +10,7 @@ import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
-// âââ Nav items ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Nav items ----------------------------------------------------------------
 const NAV = [
   {
     href: "/dashboard",
@@ -95,7 +95,7 @@ const NAV = [
   },
 ];
 
-// âââ Layout âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Layout -------------------------------------------------------------------
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -159,7 +159,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return pathname.startsWith(item.href);
   }
 
-  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : "â";
+  const initials = userEmail ? userEmail.slice(0, 2).toUpperCase() : "--";
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden">
