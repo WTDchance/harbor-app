@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/page.tsx
-// Harbor â Dashboard Overview
+// Harbor -- Dashboard Overview
 // Summary stats + quick links for today's state of the practice.
 
 import { useState, useEffect } from "react";
@@ -236,7 +236,7 @@ export default function DashboardHome() {
           {[
             {
               label: "Today's Appointments",
-              value: loading ? "â" : stats?.todayAppointments ?? 0,
+              value: loading ? "--" : stats?.todayAppointments ?? 0,
               sub: "scheduled today",
               color: "text-teal-600",
               href: "/dashboard/appointments",
@@ -250,7 +250,7 @@ export default function DashboardHome() {
             },
             {
               label: "Total Patients",
-              value: loading ? "â" : stats?.totalPatients ?? 0,
+              value: loading ? "--" : stats?.totalPatients ?? 0,
               sub: "in your practice",
               color: "text-blue-600",
               href: "/dashboard/patients",
@@ -264,8 +264,8 @@ export default function DashboardHome() {
             },
             {
               label: "Elevated Scores",
-              value: loading ? "â" : stats?.elevatedScores ?? 0,
-              sub: "PHQ-9 â¥10 or GAD-7 â¥10",
+              value: loading ? "--" : stats?.elevatedScores ?? 0,
+              sub: "PHQ-9 >=10 or GAD-7 >=10",
               color: stats?.elevatedScores ? "text-red-600" : "text-green-600",
               href: "/dashboard/patients",
               bg: stats?.elevatedScores ? "bg-red-50" : "bg-green-50",
@@ -277,7 +277,7 @@ export default function DashboardHome() {
             },
             {
               label: "Pending Intakes",
-              value: loading ? "â" : stats?.pendingIntakes ?? 0,
+              value: loading ? "--" : stats?.pendingIntakes ?? 0,
               sub: "awaiting completion",
               color: stats?.pendingIntakes ? "text-amber-600" : "text-gray-600",
               href: "/dashboard/intake",
@@ -291,7 +291,7 @@ export default function DashboardHome() {
             },
             {
               label: "Today's Calls",
-              value: loading ? "â" : stats?.totalCalls ?? 0,
+              value: loading ? "--" : stats?.totalCalls ?? 0,
               sub: "handled by Ellie",
               color: "text-purple-600",
               href: "/dashboard/calls",
@@ -304,7 +304,7 @@ export default function DashboardHome() {
             },
             {
               label: "Crisis Alerts",
-              value: loading ? "â" : stats?.crisisAlerts ?? 0,
+              value: loading ? "--" : stats?.crisisAlerts ?? 0,
               sub: "flagged by Ellie",
               color: stats?.crisisAlerts ? "text-red-600" : "text-green-600",
               href: "/dashboard/crisis",
@@ -337,9 +337,9 @@ export default function DashboardHome() {
           {/* Upcoming appointments */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-              <h2 className="text-sm font-semibold text-gray-900">Todayâs Schedule</h2>
+              <h2 className="text-sm font-semibold text-gray-900">Today's Schedule</h2>
               <Link href="/dashboard/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                View all â
+                View all ->
               </Link>
             </div>
             <div className="divide-y divide-gray-50">
@@ -351,7 +351,7 @@ export default function DashboardHome() {
                 <div className="py-10 text-center">
                   <p className="text-gray-400 text-sm">No appointments today</p>
                   <Link href="/dashboard/appointments" className="text-xs text-teal-600 mt-2 inline-block hover:text-teal-700">
-                    Schedule one â
+                    Schedule one ->
                   </Link>
                 </div>
               ) : (
@@ -386,7 +386,7 @@ export default function DashboardHome() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
               <h2 className="text-sm font-semibold text-gray-900">Recent Intakes</h2>
               <Link href="/dashboard/intake" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                View all â
+                View all ->
               </Link>
             </div>
             <div className="divide-y divide-gray-50">
@@ -415,7 +415,7 @@ export default function DashboardHome() {
                         {intake.patient_name ?? "Unknown"}
                       </p>
                       <p className="text-xs text-gray-400">
-                        {intake.completed_at ? timeAgo(intake.completed_at) : "â"}
+                        {intake.completed_at ? timeAgo(intake.completed_at) : "--"}
                       </p>
                     </div>
                     <div className="flex gap-1.5 shrink-0">
@@ -442,7 +442,7 @@ export default function DashboardHome() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
             <h2 className="text-sm font-semibold text-gray-900">Recent Calls</h2>
             <Link href="/dashboard/calls" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-              View all â
+              View all ->
             </Link>
           </div>
           <div className="divide-y divide-gray-50">
@@ -490,10 +490,10 @@ export default function DashboardHome() {
         {/* Quick action row */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { label: "New Appointment", href: "/dashboard/appointments", icon: "ð" },
+            { label: "New Appointment", href: "/dashboard/appointments", icon: "\u{1F4C5}" },
             { label: "View Patients", href: "/dashboard/patients", icon: "ð¤" },
-            { label: "Call Logs", href: "/dashboard/calls", icon: "ð" },
-            { label: "Practice Settings", href: "/dashboard/settings", icon: "âï¸" },
+            { label: "Call Logs", href: "/dashboard/calls", icon: "\u{1F4DE}" },
+            { label: "Practice Settings", href: "/dashboard/settings", icon: "\u{2699}\u{FE0F}" },
           ].map((action) => (
             <Link
               key={action.label}
