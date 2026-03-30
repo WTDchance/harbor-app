@@ -55,9 +55,19 @@ export async function GET(req: NextRequest) {
 
     if (mode === 'stats') {
       // Dashboard home stats mode
-      const now = new Date()
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
-      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
+      // Use client-provided date range (browser local time) or fall back to server UTC
+      const from = searchParams.get('from')
+      const to = searchParams.get('to')
+      let startOfDay: string
+      let endOfDay: string
+      if (from && to) {
+        startOfDay = from
+        endOfDay = to
+      } else {
+        const now = new Date()
+        startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+        endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString()
+      }
 
       const [todayResult, recentResult, crisisResult] = await Promise.all([
         supabaseAdmin
