@@ -250,7 +250,7 @@ export default function CallsPage() {
       <div className="bg-white border-b border-gray-100 px-6 py-5">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-xl font-bold text-gray-900">Call Logs</h1>
-          <p className="text-sm text-gray-400 mt-0.5">Every call Ellie has handled â click any to expand the summary and transcript</p>
+          <p className="text-sm text-gray-400 mt-0.5">Every call Ellie has handled -- click any to expand the summary and transcript</p>
         </div>
       </div>
 
