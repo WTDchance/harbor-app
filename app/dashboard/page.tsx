@@ -118,6 +118,14 @@ export default function DashboardHome() {
     loadStats();
   }, []);
 
+  // Auto-refresh call logs every 2 minutes
+  useEffect(() => {
+    const interval = setInterval(() => {
+      loadStats()
+    }, 120000)
+    return () => clearInterval(interval)
+  }, [])
+
   async function loadStats() {
     setLoading(true);
     try {
