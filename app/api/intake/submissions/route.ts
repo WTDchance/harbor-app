@@ -33,15 +33,38 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error }, { status: 401 });
   }
 
-  // Resolve practice for this user
+  // Resolve practice for this user (try multiple methods)
+  let practiceId: string | null = null;
+
   const { data: userRecord } = await supabase
     .from("users")
     .select("practice_id")
     .eq("id", user.id)
     .single();
 
-  if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
-  const practiceId = userRecord.practice_id;
+  if (userRecord?.practice_id) {
+    practiceId = userRecord.practice_id;
+  }
+
+  if (!practiceId) {
+    const { data: memberRecord } = await supabase
+      .from("practice_members")
+      .select("practice_id")
+      .eq("user_id", user.id)
+      .single();
+    if (memberRecord?.practice_id) practiceId = memberRecord.practice_id;
+  }
+
+  if (!practiceId && user.email) {
+    const { data: practiceRecord } = await supabase
+      .from("practices")
+      .select("id")
+      .eq("notification_email", user.email)
+      .single();
+    if (practiceRecord?.id) practiceId = practiceRecord.id;
+  }
+
+  if (!practiceId) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
 
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
