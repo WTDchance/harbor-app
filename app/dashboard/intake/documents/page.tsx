@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/intake/documents/page.tsx
-// Harbor â Practice Document Manager
+// Harbor  - Practice Document Manager
 // Lets practices upload, create, and manage consent forms & documents for patient intake
 
 import { useState, useEffect, useRef } from "react";
@@ -180,7 +180,7 @@ export default function DocumentManagerPage() {
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={() => router.push("/dashboard/intake")} className="text-sm text-gray-500 hover:text-teal-600 transition-colors">
-              â Intake
+               Intake
             </button>
             <div>
               <h1 className="text-xl font-bold text-gray-900">Intake Documents</h1>
@@ -223,7 +223,7 @@ export default function DocumentManagerPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Document File (PDF)</label>
                 {formContentUrl ? (
                   <div className="flex items-center gap-3 p-3 bg-green-50 rounded-lg border border-green-200">
-                    <span className="text-green-600 text-lg">ð</span>
+                    <span className="text-green-600 text-lg"></span>
                     <span className="text-sm text-green-800 flex-1 truncate">{formContentUrl.split("/").pop()}</span>
                     <a href={formContentUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-teal-600 hover:text-teal-700">View</a>
                     <button onClick={() => setFormContentUrl("")} className="text-xs text-red-500 hover:text-red-600">Remove</button>
@@ -244,7 +244,7 @@ export default function DocumentManagerPage() {
                           Uploading...
                         </>
                       ) : (
-                        <>ð Upload PDF (optional)</>
+                        <> Upload PDF (optional)</>
                       )}
                     </button>
                     <p className="text-xs text-gray-400 mt-1">Max 10MB. Patients will be able to view this document before signing.</p>
@@ -277,7 +277,7 @@ export default function DocumentManagerPage() {
         {/* Document List */}
         {documents.length === 0 && !showForm ? (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-12 text-center">
-            <div className="text-4xl mb-3">ð</div>
+            <div className="text-4xl mb-3"></div>
             <h3 className="text-lg font-semibold text-gray-900 mb-2">No intake documents yet</h3>
             <p className="text-gray-500 text-sm mb-4">
               Add consent forms, privacy notices, and other documents that patients will sign during their intake.
@@ -303,7 +303,7 @@ export default function DocumentManagerPage() {
                   {doc.content_url && (
                     <a href={doc.content_url} target="_blank" rel="noopener noreferrer"
                       className="text-xs text-teal-600 hover:text-teal-700 mt-1 inline-block">
-                      ð View document
+                       View document
                     </a>
                   )}
                 </div>
