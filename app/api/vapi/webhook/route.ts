@@ -11,7 +11,6 @@ import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 
 // ---- Crisis keyword lists ----
-
 const IMMEDIATE_CRISIS = [
   'kill myself', 'end my life', 'take my own life', 'suicide', 'suicidal',
   'want to die', 'rather be dead', 'better off dead', 'ending it all',
@@ -26,7 +25,6 @@ const CRISIS_CONCERNS = [
 ]
 
 // ---- POST handler ----
-
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -44,22 +42,17 @@ export async function POST(request: NextRequest) {
     switch (messageType) {
       case 'assistant-request':
         return handleAssistantRequest(message)
-
       case 'tool-calls':
         return handleToolCalls(message)
-
       case 'function-call':
         return handleFunctionCall(message)
-
       case 'end-of-call-report':
         return handleEndOfCallReport(message)
-
       case 'status-update':
       case 'hang':
       case 'speech-update':
       case 'transcript':
         return NextResponse.json({ ok: true })
-
       default:
         console.log(`[Vapi] Unhandled event type: ${messageType}`)
         return NextResponse.json({ ok: true })
@@ -81,11 +74,9 @@ export async function GET() {
 // ---- assistant-request ----
 // Vapi sends this when an inbound call arrives. We look up the practice
 // by phone number and return a transient assistant config.
-
 async function handleAssistantRequest(message: any) {
   const call = message.call || {}
   const phoneNumber = call.phoneNumber?.number || call.phoneNumberId || ''
-
   console.log(`[Vapi] Inbound call to: ${phoneNumber}`)
 
   // Look up practice by phone number
@@ -167,7 +158,6 @@ async function handleAssistantRequest(message: any) {
 }
 
 // ---- tool-calls (new Vapi format) ----
-
 async function handleToolCalls(message: any) {
   const toolCallList = message.toolWithToolCallList || []
   const call = message.call || {}
@@ -189,14 +179,13 @@ async function handleToolCalls(message: any) {
   }
 
   const results = []
-
   for (const item of toolCallList) {
     const toolName = item.function?.name || item.name || ''
     const toolCallId = item.toolCall?.id || item.id || ''
     const params = item.toolCall?.function?.arguments
       ? (typeof item.toolCall.function.arguments === 'string'
-        ? JSON.parse(item.toolCall.function.arguments)
-        : item.toolCall.function.arguments)
+          ? JSON.parse(item.toolCall.function.arguments)
+          : item.toolCall.function.arguments)
       : item.function?.arguments || {}
 
     console.log(`[Vapi] Tool call: ${toolName}`, params)
@@ -235,7 +224,6 @@ async function handleToolCalls(message: any) {
 }
 
 // ---- function-call (legacy Vapi format) ----
-
 async function handleFunctionCall(message: any) {
   const fn = message.functionCall || {}
   const toolName = fn.name || ''
@@ -287,13 +275,11 @@ async function handleFunctionCall(message: any) {
 }
 
 // ---- end-of-call-report ----
-
 async function handleEndOfCallReport(message: any) {
   const call = message.call || {}
   const artifact = message.artifact || {}
   let practiceId = call.assistant?.metadata?.practiceId || null
   let practiceName = call.assistant?.metadata?.practiceName || 'Unknown Practice'
-
   const transcript = artifact.transcript || ''
   const messages = artifact.messages || []
   const vapiCallId = call.id || ''
@@ -301,14 +287,16 @@ async function handleEndOfCallReport(message: any) {
   const duration = call.duration || 0
   const customerPhone = call.customer?.number || ''
 
-  console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s`)
+  console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s | caller: ${customerPhone || '(unknown)'}`)
 
   // Fallback: look up practice by the called phone number if metadata is missing
   if (!practiceId) {
-    // Extract the actual phone number - do NOT use phoneNumberId (it's a Vapi UUID, not a number)
-    const calledNumber = call.phoneNumber?.number || call.phoneNumber?.twilioPhoneNumber ||
-      (typeof call.phoneNumber === 'string' && call.phoneNumber.startsWith('+') ? call.phoneNumber : '') || ''
+    const calledNumber = call.phoneNumber?.number
+      || call.phoneNumber?.twilioPhoneNumber
+      || (typeof call.phoneNumber === 'string' && call.phoneNumber.startsWith('+') ? call.phoneNumber : '')
+      || ''
     console.log(`[Vapi] No practice ID in metadata, looking up by phone: ${calledNumber || '(none)'}`)
+
     if (calledNumber) {
       const normalized = calledNumber.replace(/\D/g, '').slice(-10)
       const { data } = await supabaseAdmin
@@ -333,7 +321,7 @@ async function handleEndOfCallReport(message: any) {
       .limit(2)
     if (practices && practices.length === 1) {
       practiceId = practices[0].id
-          practiceName = practices[0].name
+      practiceName = practices[0].name
       console.log(`[Vapi] Resolved practice by single-practice fallback: ${practices[0].name} (${practices[0].id})`)
     } else {
       console.warn('[Vapi] No practice ID found by any method, skipping post-processing')
@@ -366,8 +354,28 @@ async function handleEndOfCallReport(message: any) {
   return NextResponse.json({ ok: true })
 }
 
-// ---- Post-call background processing ----
+// ---- Helper: retry extractCallInformation on transient API errors ----
+async function extractWithRetry(transcriptText: string, maxRetries = 2): Promise<any> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const info = await extractCallInformation(transcriptText)
+      return info
+    } catch (err: any) {
+      const isOverloaded = err?.message?.includes('overloaded') ||
+                           err?.status === 529 ||
+                           err?.error?.type === 'overloaded_error'
+      if (isOverloaded && attempt < maxRetries) {
+        const delay = 1000 * (attempt + 1) // 1s, 2s backoff
+        console.log(`[Vapi] Claude API overloaded, retrying in ${delay}ms (attempt ${attempt + 1}/${maxRetries})`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+        continue
+      }
+      throw err
+    }
+  }
+}
 
+// ---- Post-call background processing ----
 async function processEndOfCall(opts: {
   practiceId: string
   practiceName: string
@@ -379,8 +387,14 @@ async function processEndOfCall(opts: {
   summary: string
 }) {
   const {
-    practiceId, practiceName, vapiCallId, transcriptText,
-    duration, customerPhone, endedReason, summary,
+    practiceId,
+    practiceName,
+    vapiCallId,
+    transcriptText,
+    duration,
+    customerPhone,
+    endedReason,
+    summary,
   } = opts
 
   // 1. Generate summary (use Vapi's if available, otherwise Claude)
@@ -406,7 +420,6 @@ async function processEndOfCall(opts: {
       break
     }
   }
-
   if (!crisisDetected) {
     for (const phrase of CRISIS_CONCERNS) {
       if (transcriptLower.includes(phrase)) {
@@ -426,10 +439,26 @@ async function processEndOfCall(opts: {
   }
 
   // 3. Save call log to Supabase
-  try {
-    await supabaseAdmin.from('call_logs').upsert({
+  // FIX: Check Supabase {error} return instead of relying on try/catch
+  // (Supabase JS v2 does NOT throw on errors â it returns {data, error})
+  const { error: callLogError } = await supabaseAdmin.from('call_logs').upsert({
+    practice_id: practiceId,
+    vapi_call_id: vapiCallId || null,
+    patient_phone: customerPhone || null,
+    duration_seconds: duration,
+    transcript: transcriptText,
+    summary: callSummary,
+    ended_reason: endedReason,
+    crisis_detected: crisisDetected,
+    created_at: new Date().toISOString(),
+  }, { onConflict: 'vapi_call_id' })
+
+  if (callLogError) {
+    console.error('[Vapi] Failed to upsert call log:', callLogError.message, callLogError.details)
+    // Fallback: try plain insert (in case upsert conflict on empty/null vapi_call_id)
+    const { error: insertError } = await supabaseAdmin.from('call_logs').insert({
       practice_id: practiceId,
-      vapi_call_id: vapiCallId,
+      vapi_call_id: vapiCallId || null,
       patient_phone: customerPhone || null,
       duration_seconds: duration,
       transcript: transcriptText,
@@ -437,74 +466,124 @@ async function processEndOfCall(opts: {
       ended_reason: endedReason,
       crisis_detected: crisisDetected,
       created_at: new Date().toISOString(),
-    }, { onConflict: 'vapi_call_id' })
-
+    })
+    if (insertError) {
+      console.error('[Vapi] Fallback insert also failed:', insertError.message)
+    } else {
+      console.log(`[Vapi] Call log saved via fallback insert: ${vapiCallId}`)
+    }
+  } else {
     console.log(`[Vapi] Call log saved: ${vapiCallId}`)
-  } catch (err) {
-    console.error('[Vapi] Failed to save call log:', err)
   }
 
   // 4. Extract patient info and auto-create patient record
+  // FIX: Retry Claude API on overloaded errors + create patient with minimal info
+  let info: any = {}
   try {
-    let info
-    try {
-      info = await extractCallInformation(transcriptText)
-    } catch (extractErr) {
-      console.error('[Vapi] Claude extraction failed, using regex fallback:', extractErr)
-      const nameMatch = transcriptText.match(/(?:my name is|this is|i'm|i am)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i)
-      const phoneMatch = transcriptText.match(/(?:phone|number|reach me|call me).*?(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/i)
-      const emailMatch = transcriptText.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i)
-      const insuranceMatch = transcriptText.match(/(?:insurance|provider|plan).*?((?:Blue ?Cross|Aetna|Cigna|United|UHC|Kaiser|Humana|Anthem|BCBS|Tricare|Medicare|Medicaid)[^,.\n]*)/i)
-      info = {
-        patientName: nameMatch ? nameMatch[1] : undefined,
-        patientPhone: phoneMatch ? phoneMatch[1] : undefined,
-        patientEmail: emailMatch ? emailMatch[1] : undefined,
-        patientInsurance: insuranceMatch ? insuranceMatch[1] : undefined,
-      }
+    info = await extractWithRetry(transcriptText, 2)
+    console.log('[Vapi] Patient info extracted:', JSON.stringify({
+      name: info.patientName,
+      phone: info.patientPhone,
+      email: info.patientEmail,
+    }))
+  } catch (extractErr: any) {
+    console.error('[Vapi] Claude extraction failed after retries, using regex fallback:', extractErr?.message || extractErr)
+    // Enhanced regex fallback
+    const nameMatch = transcriptText.match(
+      /(?:my name is|this is|i'm|i am|name's)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/i
+    )
+    const phoneMatch = transcriptText.match(
+      /(?:phone|number|reach me|call me|text me|contact).*?(\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4})/i
+    )
+    const emailMatch = transcriptText.match(
+      /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i
+    )
+    const insuranceMatch = transcriptText.match(
+      /(?:insurance|provider|plan).*?((?:Blue ?Cross|Aetna|Cigna|United|UHC|Kaiser|Humana|Anthem|BCBS|Tricare|Medicare|Medicaid)[^,.\n]*)/i
+    )
+    const reasonMatch = transcriptText.match(
+      /(?:looking for|need|want|seeking|struggling with|dealing with|help with)\s+(.{10,80}?)(?:\.|,|$)/i
+    )
+    info = {
+      patientName: nameMatch ? nameMatch[1].trim() : undefined,
+      patientPhone: phoneMatch ? phoneMatch[1] : undefined,
+      patientEmail: emailMatch ? emailMatch[1] : undefined,
+      patientInsurance: insuranceMatch ? insuranceMatch[1] : undefined,
+      reasonForSeeking: reasonMatch ? reasonMatch[1].trim() : undefined,
     }
-    if (info.patientName && info.patientName.trim()) {
-      const nameParts = info.patientName.trim().split(/\s+/)
-      const firstName = nameParts[0] || ''
-      const lastName = nameParts.slice(1).join(' ') || ''
-
-      if (firstName) {
-        const phone = info.patientPhone || customerPhone || ''
-        let existingPatient = null
-
-        if (phone) {
-          const normalized = phone.replace(/\D/g, '').slice(-10)
-          const { data } = await supabaseAdmin
-            .from('patients')
-            .select('id')
-            .eq('practice_id', practiceId)
-            .ilike('phone', `%${normalized}`)
-            .limit(1)
-            .single()
-          existingPatient = data
-        }
-
-        if (!existingPatient) {
-          await supabaseAdmin.from('patients').insert({
-            practice_id: practiceId,
-            first_name: firstName,
-            last_name: lastName,
-            phone: phone || null,
-            email: info.patientEmail || null,
-            insurance: info.patientInsurance || null,
-            reason_for_seeking: info.reasonForSeeking || null,
-          })
-          console.log(`[Vapi] Patient created: ${firstName} ${lastName}`)
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[Vapi] Failed to extract/create patient:', err)
+    console.log('[Vapi] Regex fallback extracted:', JSON.stringify(info))
   }
 
-  // 5. Crisis alert - save and SMS the therapist
+  // Determine the best phone number available
+  const patientPhone = info.patientPhone || customerPhone || ''
+
+  // Check if patient already exists by phone number
+  let existingPatient: any = null
+  if (patientPhone) {
+    const normalized = patientPhone.replace(/\D/g, '').slice(-10)
+    if (normalized.length >= 10) {
+      const { data } = await supabaseAdmin
+        .from('patients')
+        .select('id, first_name, last_name')
+        .eq('practice_id', practiceId)
+        .ilike('phone', `%${normalized}`)
+        .limit(1)
+        .maybeSingle()
+      existingPatient = data
+    }
+  }
+
+  // Also check by email if no phone match
+  if (!existingPatient && info.patientEmail) {
+    const { data } = await supabaseAdmin
+      .from('patients')
+      .select('id, first_name, last_name')
+      .eq('practice_id', practiceId)
+      .ilike('email', info.patientEmail)
+      .limit(1)
+      .maybeSingle()
+    existingPatient = data
+  }
+
+  if (existingPatient) {
+    console.log(`[Vapi] Existing patient found: ${existingPatient.first_name} ${existingPatient.last_name} (${existingPatient.id})`)
+  } else {
+    // FIX: Create patient even with minimal info (phone number only)
+    // Previously required a name from extraction â now uses "New Caller" as fallback
+    const nameParts = (info.patientName || '').trim().split(/\s+/).filter(Boolean)
+    const firstName = nameParts[0] || 'New'
+    const lastName = nameParts.slice(1).join(' ') || (nameParts[0] ? '' : 'Caller')
+
+    // Only skip if we have absolutely no identifying info
+    if (patientPhone || info.patientEmail || info.patientName) {
+      const { data: newPatient, error: patientError } = await supabaseAdmin
+        .from('patients')
+        .insert({
+          practice_id: practiceId,
+          first_name: firstName,
+          last_name: lastName,
+          phone: patientPhone || null,
+          email: info.patientEmail || null,
+          insurance: info.patientInsurance || null,
+          reason_for_seeking: info.reasonForSeeking || null,
+        })
+        .select('id')
+        .single()
+
+      if (patientError) {
+        console.error('[Vapi] Failed to create patient:', patientError.message, patientError.details)
+      } else {
+        console.log(`[Vapi] Patient created: ${firstName} ${lastName} (${newPatient?.id})`)
+      }
+    } else {
+      console.log('[Vapi] No patient info available (no phone, email, or name) â skipping patient creation')
+    }
+  }
+
+  // 5. Crisis alert â save and SMS the therapist
   if (crisisDetected) {
     try {
-      await supabaseAdmin.from('crisis_alerts').insert({
+      const { error: crisisError } = await supabaseAdmin.from('crisis_alerts').insert({
         practice_id: practiceId,
         call_id: vapiCallId,
         patient_phone: customerPhone || null,
@@ -512,6 +591,7 @@ async function processEndOfCall(opts: {
         transcript_excerpt: transcriptText.slice(0, 500),
         created_at: new Date().toISOString(),
       })
+      if (crisisError) console.error('[Vapi] Crisis alert save error:', crisisError.message)
 
       const { data: practiceData } = await supabaseAdmin
         .from('practices')
@@ -637,7 +717,6 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
 
   const phq = parseInt(phq2Score) || 0
   const gad = parseInt(gad2Score) || 0
-
   if (phq >= 3 || gad >= 3) {
     return 'Thank you for sharing that. I want to make sure the therapist has this information before your appointment so they can provide you with the best care.'
   }
@@ -754,18 +833,15 @@ function buildFallbackAssistant() {
 function formatHours(hoursJson: any): string {
   if (!hoursJson) return 'Monday through Friday, 9am to 5pm'
   if (typeof hoursJson === 'string') return hoursJson
-
   try {
     const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
     const parts: string[] = []
-
     for (const day of days) {
       const hours = hoursJson[day]
       if (hours && hours !== 'closed') {
         parts.push(`${day.charAt(0).toUpperCase() + day.slice(1)}: ${hours}`)
       }
     }
-
     return parts.length > 0 ? parts.join(', ') : 'Monday through Friday, 9am to 5pm'
   } catch {
     return 'Monday through Friday, 9am to 5pm'
