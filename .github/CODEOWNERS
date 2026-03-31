@@ -1,0 +1,5 @@
+# CODEOWNERS - Protect critical voice server code
+# Any changes to voice-server/ require @WTDchance review
+# This prevents automated tools from deploying voice changes without approval
+
+/voice-server/ @WTDchance
