@@ -3,16 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams } from 'next/navigation'
 
-// âââ Constants ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Constants ---
 const PHQ9_QUESTIONS = [
   'Little interest or pleasure in doing things',
   'Feeling down, depressed, or hopeless',
   'Trouble falling or staying asleep, or sleeping too much',
   'Feeling tired or having little energy',
   'Poor appetite or overeating',
-  'Feeling bad about yourself â or that you are a failure or have let yourself or your family down',
+  'Feeling bad about yourself  - or that you are a failure or have let yourself or your family down',
   'Trouble concentrating on things, such as reading the newspaper or watching television',
-  'Moving or speaking so slowly that other people could have noticed â or the opposite, being so fidgety or restless',
+  'Moving or speaking so slowly that other people could have noticed  - or the opposite, being so fidgety or restless',
   'Thoughts that you would be better off dead, or of hurting yourself in some way'
 ]
 
@@ -70,7 +70,7 @@ type InsuranceInfo = {
   relationship_to_subscriber: string
 }
 
-// âââ Signature Pad Component ââââââââââââââââââââââââââââââââââââââââââââ
+// --- Signature Pad Component ---
 function SignaturePad({ onSignatureChange, label }: { onSignatureChange: (data: string | null) => void; label: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -165,7 +165,7 @@ function SignaturePad({ onSignatureChange, label }: { onSignatureChange: (data: 
   )
 }
 
-// âââ Progress Bar âââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Progress Bar ---
 function ProgressBar({ current, total }: { current: number; total: number }) {
   const pct = Math.round((current / total) * 100)
   return (
@@ -181,7 +181,7 @@ function ProgressBar({ current, total }: { current: number; total: number }) {
   )
 }
 
-// âââ Main Page ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Main Page ---
 export default function IntakePage() {
   const params = useParams()
   const token = params?.token as string
@@ -211,107 +211,8 @@ export default function IntakePage() {
     group_number: '', subscriber_name: '', subscriber_dob: '', relationship_to_subscriber: 'self'
   })
 
-  useEffect(() => {
-    if (!token) return
-    fetch(`/api/intake/submit?token=${token}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.valid) {
-          setPatientName(data.patient_name || '')
-          setPracticeName(data.practice_name || '')
-          if (data.patient_name) {
-            const parts = data.patient_name.split(' ')
-            setDemographics(d => ({
-              ...d,
-              first_name: parts[0] || '',
-              last_name: parts.slice(1).join(' ') || ''
-            }))
-          }
-          if (data.patient_phone) setDemographics(d => ({ ...d, phone: data.patient_phone }))
-          if (data.patient_email) setDemographics(d => ({ ...d, email: data.patient_email }))
-          if (data.documents) setDocuments(data.documents)
-          setStep('intro')
-        } else if (data.status === 'completed') {
-          setStep('done')
-        } else {
-          setErrorMessage('This intake form has expired or is no longer valid.')
-          setStep('error')
-        }
-      })
-      .catch(() => {
-        setErrorMessage('Unable to load intake form. Please try again.')
-        setStep('error')
-      })
-  }, [token])
-
-  const allPHQ9Answered = phq9Answers.every(a => a >= 0)
-  const allGAD7Answered = gad7Answers.every(a => a >= 0)
-  const demographicsValid = demographics.first_name && demographics.last_name && demographics.date_of_birth && demographics.phone
-  const allDocsAcknowledged = documents.every(d => documentAcks[d.id])
-  const allRequiredSigned = documents.filter(d => d.requires_signature).every(d => documentSignatures[d.id])
-  const consentComplete = allDocsAcknowledged && allRequiredSigned && mainSignature && signedName
-
-  const steps: Step[] = ['intro', 'demographics', 'insurance', 'phq9', 'gad7', 'consent', 'notes']
-  const currentStepIndex = steps.indexOf(step)
-  const totalSteps = steps.length - 1 // exclude intro
-
-  async function handleSubmit() {
-    setStep('submitting')
-    try {
-      const res = await fetch('/api/intake/submit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          token,
-          phq9_answers: phq9Answers,
-          gad7_answers: gad7Answers,
-          additional_notes: notes || null,
-          demographics,
-          insurance,
-          signature: mainSignature,
-          signed_name: signedName,
-          document_acknowledgments: documentAcks,
-          document_signatures: documentSignatures
-        })
-      })
-      const data = await res.json()
-      if (data.success) {
-        setStep('done')
-      } else {
-        setErrorMessage(data.error || 'Something went wrong. Please try again.')
-        setStep('error')
-      }
-    } catch {
-      setErrorMessage('Network error. Please check your connection and try again.')
-      setStep('error')
-    }
-  }
-
-  function updateDemographics(field: keyof Demographics, value: string) {
-    setDemographics(d => ({ ...d, [field]: value }))
-  }
-
-  function updateInsurance(field: keyof InsuranceInfo, value: string | boolean | null) {
-    setInsurance(i => ({ ...i, [field]: value }))
-  }
-
-  // âââ Render States ââââââââââââââââââââââââââââââââââââââââââââââââââ
-  if (step === 'loading') {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Loading your intake form...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (step === 'error') {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-          <div className="text-4xl mb-4">â ï¸</div>
+  useEcenter">
+          <div className="text-4xl mb-4">[!]</div>
           <h1 className="text-xl font-bold text-gray-900 mb-2">Form Unavailable</h1>
           <p className="text-gray-500">{errorMessage}</p>
         </div>
@@ -323,7 +224,7 @@ export default function IntakePage() {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow p-8 max-w-md w-full text-center">
-          <div className="text-5xl mb-4">â</div>
+          <div className="text-5xl mb-4">[OK]</div>
           <h1 className="text-2xl font-bold text-gray-900 mb-3">Thank you!</h1>
           <p className="text-gray-600 text-lg">Your intake forms have been submitted. Your therapist will review everything before your first appointment.</p>
           <p className="text-gray-400 text-sm mt-4">You can close this window.</p>
@@ -358,35 +259,35 @@ export default function IntakePage() {
           <ProgressBar current={currentStepIndex} total={totalSteps} />
         )}
 
-        {/* âââ Intro ââââââââââââââââââââââââââââââââââââââââââââ */}
+        {/* --- Intro --- */}
         {step === 'intro' && (
           <div className="bg-white rounded-2xl shadow p-6">
-            <h2 className="text-xl font-semibold text-gray-900 mb-3">{greeting} ð</h2>
+            <h2 className="text-xl font-semibold text-gray-900 mb-3">{greeting} </h2>
             <p className="text-gray-600 mb-4">
               {practiceLabel} has sent you an intake packet to complete before your first appointment. This helps your therapist prepare for your session.
             </p>
             <div className="bg-teal-50 rounded-xl p-4 mb-6">
               <p className="text-teal-800 text-sm font-medium mb-2">You will complete:</p>
               <ul className="text-teal-700 text-sm space-y-1.5">
-                <li className="flex items-center gap-2"><span className="text-teal-500">ð</span> Personal information</li>
-                <li className="flex items-center gap-2"><span className="text-teal-500">ð¥</span> Insurance details</li>
-                <li className="flex items-center gap-2"><span className="text-teal-500">ð</span> Mental health screenings (PHQ-9 &amp; GAD-7)</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500"></span> Personal information</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500"></span> Insurance details</li>
+                <li className="flex items-center gap-2"><span className="text-teal-500"></span> Mental health screenings (PHQ-9 &amp; GAD-7)</li>
                 {documents.length > 0 && (
-                  <li className="flex items-center gap-2"><span className="text-teal-500">ð</span> Consent forms &amp; e-signatures</li>
+                  <li className="flex items-center gap-2"><span className="text-teal-500"></span> Consent forms &amp; e-signatures</li>
                 )}
               </ul>
-              <p className="text-teal-600 text-xs mt-3">Takes about 5â10 minutes</p>
+              <p className="text-teal-600 text-xs mt-3">Takes about 5-10 minutes</p>
             </div>
             <button
               onClick={() => setStep('demographics')}
               className="w-full bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl transition"
             >
-              Get Started â
+              Get Started
             </button>
           </div>
         )}
 
-        {/* âââ Demographics âââââââââââââââââââââââââââââââââââââ */}
+        {/* --- Demographics --- */}
         {step === 'demographics' && (
           <div className="bg-white rounded-2xl shadow p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-1">Personal Information</h2>
@@ -505,13 +406,74 @@ export default function IntakePage() {
               disabled={!demographicsValid}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition"
             >
-              Next: Insurance â
+              Next: Insurance
             </button>
-            <button onClick={() => setStep('intro')} className="w-full mt-2 text-gray-400 text-sm py-2">â Back</button>
+            <button onClick={() => setStep('intro')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
           </div>
         )}
 
-        {/* âââ Insurance ââââââââââââââââââââââââââââââââââââââââ */}
+        {/* --- Insurance --- */}
+        {step === 'insurance' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Insurance Information</h2>
+            <p className="text-gray-500 text-sm mb-5">We need this to verify your coverage</p>
+
+            {insurance.has_insurance === null ? (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-700 font-medium">Do you have health insurance?</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <button onClick={() => updateInsurance('has_insurance', true)}
+                    className="py-4 px-4 border-2 border-gray-200 rounded-xl text-sm font-medium hover:border-teal-400 transition text-center">
+                    Yes, I have insurance
+                  </button>
+                  <button onClick={() => updateInsurance('has_insurance', false)}
+                    className="py-4 px-4 border-2 border-gray-200 rounded-xl text-sm font-medium hover:border-teal-400 transition text-center">
+                    No / Self-pay
+                  </button>
+                </div>
+              </div>
+            ) : insurance.has_insurance ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm text-teal-600 font-medium">Insurance Details</span>
+                  <button onClick={() => updateInsurance('has_insurance', null)} className="text-xs text-gray-400 hover:text-gray-600">Change</button>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Insurance Provider *</label>
+                  <input type="text" value={insurance.insurance_provider} onChange={e => updateInsurance('insurance_provider', e.target.value)}
+                    placeholder="e.g., Blue Cross, Aetna, United"
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Policy/Member ID *</label>
+                    <input type="text" value={insurance.policy_number} onChange={e => updateInsurance('policy_number', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-600 mb-1">Group Number</label>
+                    <input type="text" value={insurance.group_number} onChange={e => updateInsurance('group_number', e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Subscri</option>
+                </select>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setStep('insurance')}
+              disabled={!demographicsValid}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition"
+            >
+              Next: Insurance
+            </button>
+            <button onClick={() => setStep('intro')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
+          </div>
+        )}
+
+        {/* --- Insurance --- */}
         {step === 'insurance' && (
           <div className="bg-white rounded-2xl shadow p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-1">Insurance Information</h2>
@@ -591,13 +553,13 @@ export default function IntakePage() {
               disabled={insurance.has_insurance === null || (insurance.has_insurance && !insurance.insurance_provider)}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition"
             >
-              Next: Mental Health Screening â
+              Next: Mental Health Screening
             </button>
-            <button onClick={() => setStep('demographics')} className="w-full mt-2 text-gray-400 text-sm py-2">â Back</button>
+            <button onClick={() => setStep('demographics')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
           </div>
         )}
 
-        {/* âââ PHQ-9 ââââââââââââââââââââââââââââââââââââââââââââ */}
+        {/*  PHQ-9  */}
         {step === 'phq9' && (
           <div className="bg-white rounded-2xl shadow p-6">
             <div className="mb-4">
@@ -626,13 +588,13 @@ export default function IntakePage() {
             </div>
             <button onClick={() => setStep('gad7')} disabled={!allPHQ9Answered}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              Next: Anxiety Screening â
+              Next: Anxiety Screening
             </button>
-            <button onClick={() => setStep('insurance')} className="w-full mt-2 text-gray-400 text-sm py-2">â Back</button>
+            <button onClick={() => setStep('insurance')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
           </div>
         )}
 
-        {/* âââ GAD-7 ââââââââââââââââââââââââââââââââââââââââââââ */}
+        {/*  GAD-7  */}
         {step === 'gad7' && (
           <div className="bg-white rounded-2xl shadow p-6">
             <div className="mb-4">
@@ -661,13 +623,13 @@ export default function IntakePage() {
             </div>
             <button onClick={() => setStep(documents.length > 0 ? 'consent' : 'notes')} disabled={!allGAD7Answered}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              {documents.length > 0 ? 'Next: Consent & Signatures â' : 'Almost done â'}
+              {documents.length > 0 ? 'Next: Consent & Signatures ' : 'Almost done '}
             </button>
-            <button onClick={() => setStep('phq9')} className="w-full mt-2 text-gray-400 text-sm py-2">â Back</button>
+            <button onClick={() => setStep('phq9')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
           </div>
         )}
 
-        {/* âââ Consent & Signatures âââââââââââââââââââââââââââââ */}
+        {/*  Consent & Signatures  */}
         {step === 'consent' && (
           <div className="bg-white rounded-2xl shadow p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-1">Consent Forms &amp; Signatures</h2>
@@ -687,7 +649,7 @@ export default function IntakePage() {
                   {doc.content_url && (
                     <a href={doc.content_url} target="_blank" rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs text-teal-600 hover:text-teal-700 mb-3">
-                      ð View full document
+                       View full document
                     </a>
                   )}
 
@@ -729,13 +691,13 @@ export default function IntakePage() {
 
             <button onClick={() => setStep('notes')} disabled={!consentComplete}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              Almost done â
+              Almost done
             </button>
-            <button onClick={() => setStep('gad7')} className="w-full mt-2 text-gray-400 text-sm py-2">â Back</button>
+            <button onClick={() => setStep('gad7')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
           </div>
         )}
 
-        {/* âââ Notes & Submit âââââââââââââââââââââââââââââââââââ */}
+        {/*  Notes & Submit  */}
         {step === 'notes' && (
           <div className="bg-white rounded-2xl shadow p-6">
             <h2 className="text-lg font-semibold text-gray-900 mb-2">Anything else to share?</h2>
@@ -760,9 +722,9 @@ export default function IntakePage() {
             <button onClick={handleSubmit}
               disabled={!signedName || !mainSignature}
               className="w-full mt-4 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              Submit Intake Forms â
+              Submit Intake Forms
             </button>
-            <button onClick={() => setStep(documents.length > 0 ? 'consent' : 'gad7')} className="w-full mt-2 text-gray-400 text-sm py-2">â Back</button>
+            <button onClick={() => setStep(documents.length > 0 ? 'consent' : 'gad7')} className="w-full mt-2 text-gray-400 text-sm py-2"> Back</button>
           </div>
         )}
       </div>
