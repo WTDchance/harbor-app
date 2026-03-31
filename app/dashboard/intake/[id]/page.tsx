@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/intake/[id]/page.tsx
-// Harbor — Intake Submission Detail View
+// Harbor â Intake Submission Detail View (expanded with demographics, insurance, signatures)
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
@@ -8,10 +8,38 @@ import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
+type Demographics = {
+  first_name?: string;
+  last_name?: string;
+  date_of_birth?: string;
+  phone?: string;
+  email?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  emergency_contact_name?: string;
+  emergency_contact_phone?: string;
+  emergency_contact_relationship?: string;
+  preferred_pronouns?: string;
+  referral_source?: string;
+};
+
+type InsuranceInfo = {
+  has_insurance?: boolean | null;
+  insurance_provider?: string;
+  policy_number?: string;
+  group_number?: string;
+  subscriber_name?: string;
+  subscriber_dob?: string;
+  relationship_to_subscriber?: string;
+};
+
 type DocumentSignature = {
   id: string;
   signed_name: string | null;
   signed_at: string;
+  signature_image: string | null;
   additional_fields: Record<string, unknown> | null;
   intake_documents: { id: string; name: string; requires_signature: boolean } | null;
 };
@@ -24,6 +52,10 @@ type SubmissionDetail = {
   patient_email: string | null;
   patient_dob: string | null;
   patient_address: string | null;
+  demographics: Demographics | null;
+  insurance: InsuranceInfo | null;
+  signature_data: string | null;
+  signed_name: string | null;
   phq9_answers: number[] | null;
   phq9_score: number | null;
   phq9_severity: string | null;
@@ -68,6 +100,16 @@ const SEVERITY_COLORS: Record<string, string> = {
   Severe: "bg-red-200 text-red-900 border-red-300",
 };
 
+const REFERRAL_LABELS: Record<string, string> = {
+  doctor_referral: "Doctor / Medical Referral",
+  insurance: "Insurance Provider",
+  friend_family: "Friend or Family",
+  online_search: "Online Search",
+  social_media: "Social Media",
+  psychology_today: "Psychology Today",
+  other: "Other",
+};
+
 async function getAuthToken(): Promise<string | null> {
   const { data: { session } } = await supabase.auth.getSession();
   return session?.access_token ?? null;
@@ -86,20 +128,20 @@ async function apiFetch(url: string, options?: RequestInit) {
 }
 
 function formatDate(iso: string | null) {
-  if (!iso) return "—";
+  if (!iso) return "â";
   return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
 function formatDateTime(iso: string | null) {
-  if (!iso) return "—";
+  if (!iso) return "â";
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 }
 
 function InfoRow({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3 py-2.5 border-b border-gray-100 last:border-0">
-      <span className="text-sm font-medium text-gray-500 sm:w-36 shrink-0">{label}</span>
-      <span className="text-sm text-gray-900">{value ?? "—"}</span>
+      <span className="text-sm font-medium text-gray-500 sm:w-40 shrink-0">{label}</span>
+      <span className="text-sm text-gray-900">{value ?? "â"}</span>
     </div>
   );
 }
@@ -120,17 +162,17 @@ function ScoreCard({ title, score, severity, answers, questions, maxScore }: {
         <div className="flex items-center gap-4">
           <div>
             <h3 className="font-semibold text-gray-900">{title}</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{questions.length} questions · max {maxScore}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{questions.length} questions Â· max {maxScore}</p>
           </div>
           {score !== null && severity ? (
             <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${SEVERITY_COLORS[severity] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-              {severity} · {score}
+              {severity} Â· {score}
             </span>
           ) : (
             <span className="text-gray-400 text-sm">Not completed</span>
           )}
         </div>
-        <span className="text-gray-400 text-lg">{expanded ? "▲" : "▼"}</span>
+        <span className="text-gray-400 text-lg">{expanded ? "â²" : "â¼"}</span>
       </button>
 
       {expanded && answers && answers.length > 0 && (
@@ -169,6 +211,7 @@ export default function IntakeDetailPage() {
   const [submission, setSubmission] = useState<SubmissionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showSignature, setShowSignature] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -212,6 +255,8 @@ export default function IntakeDetailPage() {
   }
 
   const sigs = submission.intake_document_signatures ?? [];
+  const demo = submission.demographics;
+  const ins = submission.insurance;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -219,7 +264,7 @@ export default function IntakeDetailPage() {
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={() => router.push("/dashboard/intake")} className="text-sm text-gray-500 hover:text-teal-600 transition-colors">
-              ← Intake
+              â Intake
             </button>
             <div>
               <h1 className="text-xl font-bold text-gray-900">{submission.patient_name ?? "Unnamed Patient"}</h1>
@@ -235,21 +280,57 @@ export default function IntakeDetailPage() {
       </div>
 
       <div className="max-w-4xl mx-auto px-6 py-6 space-y-5">
+        {/* Patient Information */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
           <h2 className="text-base font-semibold text-gray-900 mb-3">Patient Information</h2>
           <InfoRow label="Full Name" value={submission.patient_name} />
-          <InfoRow label="Phone" value={submission.patient_phone} />
-          <InfoRow label="Email" value={submission.patient_email} />
-          <InfoRow label="Date of Birth" value={submission.patient_dob ? formatDate(submission.patient_dob) : null} />
-          <InfoRow label="Address" value={submission.patient_address} />
+          <InfoRow label="Phone" value={demo?.phone || submission.patient_phone} />
+          <InfoRow label="Email" value={demo?.email || submission.patient_email} />
+          <InfoRow label="Date of Birth" value={demo?.date_of_birth ? formatDate(demo.date_of_birth) : submission.patient_dob ? formatDate(submission.patient_dob) : null} />
+          <InfoRow label="Pronouns" value={demo?.preferred_pronouns || null} />
+          <InfoRow label="Address" value={
+            demo ? [demo.address, demo.city, demo.state, demo.zip].filter(Boolean).join(", ") || null : submission.patient_address
+          } />
+          <InfoRow label="Referral Source" value={demo?.referral_source ? (REFERRAL_LABELS[demo.referral_source] ?? demo.referral_source) : null} />
         </div>
 
-        <ScoreCard title="PHQ-9 — Depression Screen" score={submission.phq9_score} severity={submission.phq9_severity}
+        {/* Emergency Contact */}
+        {demo && (demo.emergency_contact_name || demo.emergency_contact_phone) && (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+            <h2 className="text-base font-semibold text-gray-900 mb-3">Emergency Contact</h2>
+            <InfoRow label="Name" value={demo.emergency_contact_name || null} />
+            <InfoRow label="Phone" value={demo.emergency_contact_phone || null} />
+            <InfoRow label="Relationship" value={demo.emergency_contact_relationship || null} />
+          </div>
+        )}
+
+        {/* Insurance */}
+        {ins && (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+            <h2 className="text-base font-semibold text-gray-900 mb-3">Insurance Information</h2>
+            {ins.has_insurance === false ? (
+              <p className="text-sm text-gray-600">Self-pay / No insurance</p>
+            ) : (
+              <>
+                <InfoRow label="Provider" value={ins.insurance_provider || null} />
+                <InfoRow label="Policy/Member ID" value={ins.policy_number || null} />
+                <InfoRow label="Group Number" value={ins.group_number || null} />
+                <InfoRow label="Subscriber" value={ins.subscriber_name || null} />
+                <InfoRow label="Subscriber DOB" value={ins.subscriber_dob ? formatDate(ins.subscriber_dob) : null} />
+                <InfoRow label="Relationship" value={ins.relationship_to_subscriber || null} />
+              </>
+            )}
+          </div>
+        )}
+
+        {/* PHQ-9 & GAD-7 */}
+        <ScoreCard title="PHQ-9 â Depression Screen" score={submission.phq9_score} severity={submission.phq9_severity}
           answers={submission.phq9_answers} questions={PHQ9_QUESTIONS} maxScore={27} />
 
-        <ScoreCard title="GAD-7 — Anxiety Screen" score={submission.gad7_score} severity={submission.gad7_severity}
+        <ScoreCard title="GAD-7 â Anxiety Screen" score={submission.gad7_score} severity={submission.gad7_severity}
           answers={submission.gad7_answers} questions={GAD7_QUESTIONS} maxScore={21} />
 
+        {/* Additional Notes */}
         {submission.additional_notes && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <h2 className="text-base font-semibold text-gray-900 mb-3">Additional Notes</h2>
@@ -257,13 +338,14 @@ export default function IntakeDetailPage() {
           </div>
         )}
 
+        {/* Signed Documents */}
         {sigs.length > 0 && (
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
             <h2 className="text-base font-semibold text-gray-900 mb-4">Signed Documents</h2>
             <div className="space-y-3">
               {sigs.map((sig) => (
                 <div key={sig.id} className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="text-green-500 mt-0.5 text-lg">✓</div>
+                  <div className="text-green-500 mt-0.5 text-lg">â</div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900">{sig.intake_documents?.name ?? "Document"}</p>
                     {sig.signed_name && (
@@ -271,6 +353,11 @@ export default function IntakeDetailPage() {
                     )}
                     {!sig.intake_documents?.requires_signature && (
                       <p className="text-xs text-gray-400 mt-0.5">Read & acknowledged</p>
+                    )}
+                    {sig.signature_image && (
+                      <div className="mt-2">
+                        <img src={sig.signature_image} alt="Document signature" className="h-12 border border-gray-200 rounded bg-white p-1" />
+                      </div>
                     )}
                     {sig.additional_fields && Object.keys(sig.additional_fields).length > 0 && (
                       <div className="mt-2 space-y-1">
@@ -291,8 +378,31 @@ export default function IntakeDetailPage() {
           </div>
         )}
 
+        {/* Patient Consent Signature */}
+        {(submission.signed_name || submission.signature_data) && (
+          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
+            <h2 className="text-base font-semibold text-gray-900 mb-3">Patient Consent Signature</h2>
+            {submission.signed_name && (
+              <InfoRow label="Signed Name" value={submission.signed_name} />
+            )}
+            {submission.signature_data && (
+              <div className="mt-3">
+                <button onClick={() => setShowSignature(!showSignature)}
+                  className="text-sm text-teal-600 hover:text-teal-700 font-medium">
+                  {showSignature ? "Hide signature" : "View signature"}
+                </button>
+                {showSignature && (
+                  <div className="mt-2 p-3 border border-gray-200 rounded-xl bg-gray-50 inline-block">
+                    <img src={submission.signature_data} alt="Patient consent signature" className="h-20" />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="text-xs text-gray-400 text-center pb-4">
-          Form ID: {submission.id} · Created {formatDateTime(submission.created_at)}
+          Form ID: {submission.id} Â· Created {formatDateTime(submission.created_at)}
         </div>
       </div>
     </div>
