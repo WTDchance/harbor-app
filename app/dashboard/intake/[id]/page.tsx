@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/intake/[id]/page.tsx
-// Harbor â Intake Submission Detail View (expanded with demographics, insurance, signatures)
+// Harbor  - Intake Submission Detail View (expanded with demographics, insurance, signatures)
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
@@ -128,12 +128,12 @@ async function apiFetch(url: string, options?: RequestInit) {
 }
 
 function formatDate(iso: string | null) {
-  if (!iso) return "â";
+  if (!iso) return " - ";
   return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
 }
 
 function formatDateTime(iso: string | null) {
-  if (!iso) return "â";
+  if (!iso) return " - ";
   return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 }
 
@@ -141,7 +141,7 @@ function InfoRow({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="flex flex-col sm:flex-row sm:items-baseline gap-0.5 sm:gap-3 py-2.5 border-b border-gray-100 last:border-0">
       <span className="text-sm font-medium text-gray-500 sm:w-40 shrink-0">{label}</span>
-      <span className="text-sm text-gray-900">{value ?? "â"}</span>
+      <span className="text-sm text-gray-900">{value ?? " - "}</span>
     </div>
   );
 }
@@ -162,17 +162,17 @@ function ScoreCard({ title, score, severity, answers, questions, maxScore }: {
         <div className="flex items-center gap-4">
           <div>
             <h3 className="font-semibold text-gray-900">{title}</h3>
-            <p className="text-xs text-gray-400 mt-0.5">{questions.length} questions Â· max {maxScore}</p>
+            <p className="text-xs text-gray-400 mt-0.5">{questions.length} questions | max {maxScore}</p>
           </div>
           {score !== null && severity ? (
             <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold border ${SEVERITY_COLORS[severity] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-              {severity} Â· {score}
+              {severity} | {score}
             </span>
           ) : (
             <span className="text-gray-400 text-sm">Not completed</span>
           )}
         </div>
-        <span className="text-gray-400 text-lg">{expanded ? "â²" : "â¼"}</span>
+        <span className="text-gray-400 text-lg">{expanded ? "^" : "v"}</span>
       </button>
 
       {expanded && answers && answers.length > 0 && (
@@ -264,7 +264,7 @@ export default function IntakeDetailPage() {
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={() => router.push("/dashboard/intake")} className="text-sm text-gray-500 hover:text-teal-600 transition-colors">
-              â Intake
+               Intake
             </button>
             <div>
               <h1 className="text-xl font-bold text-gray-900">{submission.patient_name ?? "Unnamed Patient"}</h1>
@@ -324,10 +324,10 @@ export default function IntakeDetailPage() {
         )}
 
         {/* PHQ-9 & GAD-7 */}
-        <ScoreCard title="PHQ-9 â Depression Screen" score={submission.phq9_score} severity={submission.phq9_severity}
+        <ScoreCard title="PHQ-9  - Depression Screen" score={submission.phq9_score} severity={submission.phq9_severity}
           answers={submission.phq9_answers} questions={PHQ9_QUESTIONS} maxScore={27} />
 
-        <ScoreCard title="GAD-7 â Anxiety Screen" score={submission.gad7_score} severity={submission.gad7_severity}
+        <ScoreCard title="GAD-7  - Anxiety Screen" score={submission.gad7_score} severity={submission.gad7_severity}
           answers={submission.gad7_answers} questions={GAD7_QUESTIONS} maxScore={21} />
 
         {/* Additional Notes */}
@@ -345,7 +345,7 @@ export default function IntakeDetailPage() {
             <div className="space-y-3">
               {sigs.map((sig) => (
                 <div key={sig.id} className="flex items-start gap-4 p-4 bg-gray-50 rounded-xl border border-gray-100">
-                  <div className="text-green-500 mt-0.5 text-lg">â</div>
+                  <div className="text-green-500 mt-0.5 text-lg"></div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium text-gray-900">{sig.intake_documents?.name ?? "Document"}</p>
                     {sig.signed_name && (
@@ -402,7 +402,7 @@ export default function IntakeDetailPage() {
         )}
 
         <div className="text-xs text-gray-400 text-center pb-4">
-          Form ID: {submission.id} Â· Created {formatDateTime(submission.created_at)}
+          Form ID: {submission.id} | Created {formatDateTime(submission.created_at)}
         </div>
       </div>
     </div>
