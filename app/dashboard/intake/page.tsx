@@ -1,6 +1,6 @@
 "use client";
 // app/dashboard/intake/page.tsx
-// Harbor â Intake Submissions Dashboard
+// Harbor  - Intake Submissions Dashboard
 // Shows all completed patient intake forms for the practice
 
 import { useState, useEffect, useCallback } from "react";
@@ -9,7 +9,7 @@ import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
-// âââ Types ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Types ---
 
 type Severity = "Minimal" | "Mild" | "Moderate" | "Moderately Severe" | "Severe";
 
@@ -28,7 +28,7 @@ type Submission = {
   created_at: string;
 };
 
-// âââ Helpers ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Helpers ---
 
 async function getAuthToken(): Promise<string | null> {
   const {
@@ -49,7 +49,7 @@ async function apiFetch(url: string, options?: RequestInit) {
   });
 }
 
-// âââ Severity badge âââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Severity badge ---
 
 const SEVERITY_COLORS: Record<string, string> = {
   Minimal: "bg-green-100 text-green-800",
@@ -69,7 +69,7 @@ function SeverityBadge({
   label: string;
 }) {
   if (score === null || severity === null) {
-    return <span className="text-gray-400 text-xs">â</span>;
+    return <span className="text-gray-400 text-xs"> - </span>;
   }
   return (
     <div>
@@ -87,7 +87,7 @@ function SeverityBadge({
   );
 }
 
-// âââ Main Page ââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââââ
+// --- Main Page ---
 
 export default function IntakeDashboardPage() {
   const router = useRouter();
@@ -166,10 +166,10 @@ export default function IntakeDashboardPage() {
           </div>
           <div className="flex items-center gap-3">
             <a href="/dashboard/intake/documents" className="px-3 py-1.5 text-sm text-teal-600 border border-teal-200 rounded-lg hover:bg-teal-50 transition-colors font-medium">
-              ð Manage Documents
+               Manage Documents
             </a>
             <a href="/dashboard/appointments" className="text-sm text-gray-500 hover:text-teal-600 transition-colors">
-              â Appointments
+               Appointments
             </a>
             <a href="/dashboard/settings" className="text-sm text-gray-500 hover:text-teal-600 transition-colors">
               Settings
@@ -185,14 +185,14 @@ export default function IntakeDashboardPage() {
             { label: "On This Page", value: submissions.length, sub: `of ${total}`, color: "text-teal-600" },
             {
               label: "Avg PHQ-9",
-              value: avgPhq9 !== null ? avgPhq9 : "â",
+              value: avgPhq9 !== null ? avgPhq9 : " - ",
               sub: "depression screen",
               color: avgPhq9 !== null && avgPhq9 >= 10 ? "text-orange-600" : "text-gray-900",
             },
             {
               label: "Elevated Scores",
               value: elevated,
-              sub: "PHQ-9 â¥10 or GAD-7 â¥10",
+              sub: "PHQ-9 >=10 or GAD-7 >=10",
               color: elevated > 0 ? "text-red-600" : "text-green-600",
             },
           ].map((s) => (
@@ -209,7 +209,7 @@ export default function IntakeDashboardPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by patient nameâ¦"
+            placeholder="Search by patient name..."
             className="flex-1 min-w-48 px-4 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
           />
           <div className="flex items-center gap-2">
@@ -243,7 +243,7 @@ export default function IntakeDashboardPage() {
             </div>
           ) : submissions.length === 0 ? (
             <div className="p-12 text-center text-gray-400">
-              <p className="text-4xl mb-3">ð</p>
+              <p className="text-4xl mb-3"></p>
               <p className="font-medium text-gray-600">No intake submissions found</p>
               <p className="text-sm mt-1">
                 {search || fromDate || toDate ? "Try adjusting your filters" :
@@ -270,7 +270,7 @@ export default function IntakeDashboardPage() {
                       <tr key={sub.id} onClick={() => router.push(`/dashboard/intake/${sub.id}`)}
                         className="hover:bg-teal-50/40 transition-colors cursor-pointer">
                         <td className="px-4 py-3">
-                          <p className="font-medium text-gray-900">{sub.patient_name ?? "â"}</p>
+                          <p className="font-medium text-gray-900">{sub.patient_name ?? " - "}</p>
                           <p className="text-xs text-gray-400 mt-0.5">{sub.patient_phone ?? sub.patient_email ?? ""}</p>
                         </td>
                         <td className="px-4 py-3">
@@ -282,7 +282,7 @@ export default function IntakeDashboardPage() {
                         <td className="px-4 py-3 text-gray-600">
                           {sub.completed_at
                             ? new Date(sub.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
-                            : "â"}
+                            : " - "}
                           {sub.completed_at && (
                             <p className="text-xs text-gray-400 mt-0.5">
                               {new Date(sub.completed_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true })}
@@ -297,7 +297,7 @@ export default function IntakeDashboardPage() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-teal-600 text-xs font-medium">View â</span>
+                          <span className="text-teal-600 text-xs font-medium">View </span>
                         </td>
                       </tr>
                     ))}
@@ -308,16 +308,16 @@ export default function IntakeDashboardPage() {
               {totalPages > 1 && (
                 <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
                   <p className="text-sm text-gray-500">
-                    Showing {(page - 1) * limit + 1}â{Math.min(page * limit, total)} of {total}
+                    Showing {(page - 1) * limit + 1}-{Math.min(page * limit, total)} of {total}
                   </p>
                   <div className="flex gap-2">
                     <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}
                       className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                      â Prev
+                       Prev
                     </button>
                     <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages}
                       className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-                      Next â
+                      Next 
                     </button>
                   </div>
                 </div>
