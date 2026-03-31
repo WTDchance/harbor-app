@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { createClient } frhom "@/lib/supabase-browser"h;
+import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
