@@ -1,10 +1,15 @@
+// FILE: app/api/intake/send/route.ts
+// FIX: Use intake_forms table (which submit route reads from) instead of intake_tokens
+// Also generates token via crypto since intake_forms.token has no default
+
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import twilio from 'twilio'
+import crypto from 'crypto'
 
 // POST /api/intake/send
-// Called by the voice server after a new patient call, or manually from dashboard
-// Creates an intake token and sends the link via SMS and/or email
+// Called by the webhook after a new patient call, or manually from dashboard
+// Creates an intake_forms record with a token and sends the link via SMS and/or email
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -23,7 +28,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (!patient_phone && !patient_email) {
-      return NextResponse.json({ error: 'Need at least a phone or email to send intake forms' }, { status: 400 })
+      return NextResponse.json(
+        { error: 'Need at least a phone or email to send intake forms' },
+        { status: 400 }
+      )
     }
 
     // Get practice info for the message
@@ -37,8 +45,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
     }
 
-    // Create the token
-    const { data: tokenData, error: tokenError } = await supabaseAdmin
+    // Generate a secure random token
+    const token = crypto.randomBytes(32).toString('hex')
+
+    // Calculate expiry (7 days from now)
+    const expiresAt = new Date()
+    expiresAt.setDate(expiresAt.getDate() + 7)
+
+    // Create the intake form record in intake_forms table
+    // (This is the table that the submit route reads from)
+    const { data: formData, error: formError } = await supabaseAdmin
+      .from('intake_forms')
+      .insert({
+        token,
+        practice_id,
+        patient_name: patient_name || null,
+        patient_phone: patient_phone || null,
+        patient_email: patient_email || null,
+        status: 'pending',
+        expires_at: expiresAt.toISOString(),
+        created_at: new Date().toISOString(),
+      })
+      .select('id, token')
+      .single()
+
+    if (formError || !formData) {
+      console.error('[Intake] Failed to create intake form:', formError)
+      return NextResponse.json({ error: 'Failed to create intake link' }, { status: 500 })
+    }
+
+    // Also create a tracking record in intake_tokens (for delivery tracking)
+    const { error: tokenError } = await supabaseAdmin
       .from('intake_tokens')
       .insert({
         practice_id,
@@ -50,16 +87,13 @@ export async function POST(request: NextRequest) {
         delivery_method: delivery_method || 'sms',
         status: 'pending',
       })
-      .select('id, token')
-      .single()
 
-    if (tokenError || !tokenData) {
-      console.error('Failed to create intake token:', tokenError)
-      return NextResponse.json({ error: 'Failed to create intake link' }, { status: 500 })
+    if (tokenError) {
+      console.warn('[Intake] Failed to create tracking token (non-fatal):', tokenError.message)
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-    const intakeUrl = `${baseUrl}/intake/${tokenData.token}`
+    const intakeUrl = `${baseUrl}/intake/${token}`
     const practiceName = practice.name || 'the practice'
     const firstName = patient_name?.split(' ')[0] || 'there'
 
@@ -67,13 +101,13 @@ export async function POST(request: NextRequest) {
     let emailSent = false
 
     // Send via SMS
-    if ((delivery_method === 'sms' || delivery_method === 'both') && patient_phone) {
+    if ((delivery_method === 'sms' || delivery_method === 'both' || !delivery_method) && patient_phone) {
       try {
         await sendIntakeSMS(patient_phone, firstName, practiceName, intakeUrl)
         smsSent = true
-        console.log(`✓ Intake SMS sent to ${patient_phone}`)
+        console.log(`[Intake] ✓ SMS sent to ${patient_phone}`)
       } catch (err) {
-        console.error('Intake SMS failed:', err)
+        console.error('[Intake] SMS failed:', err)
       }
     }
 
@@ -82,44 +116,69 @@ export async function POST(request: NextRequest) {
       try {
         await sendIntakeEmail(patient_email, firstName, practiceName, intakeUrl)
         emailSent = true
-        console.log(`✓ Intake email sent to ${patient_email}`)
+        console.log(`[Intake] ✓ Email sent to ${patient_email}`)
       } catch (err) {
-        console.error('Intake email failed:', err)
+        console.error('[Intake] Email failed:', err)
       }
     }
 
-    // Update token status
+    // Update intake_forms with email tracking
+    if (emailSent) {
+      await supabaseAdmin
+        .from('intake_forms')
+        .update({ email_sent: true, email_sent_at: new Date().toISOString() })
+        .eq('id', formData.id)
+    }
+
+    // Update intake_tokens status
     if (smsSent || emailSent) {
       await supabaseAdmin
         .from('intake_tokens')
         .update({ status: 'sent', sent_at: new Date().toISOString() })
-        .eq('id', tokenData.id)
+        .eq('practice_id', practice_id)
+        .eq('patient_phone', patient_phone || '')
+        .is('sent_at', null)
     }
 
     // Mark call log as intake sent
     if (call_log_id) {
       await supabaseAdmin
         .from('call_logs')
-        .update({ intake_sent: true })
+        .update({
+          intake_sent: true,
+          intake_delivery_preference: delivery_method || 'sms',
+          intake_email: patient_email || null,
+        })
         .eq('id', call_log_id)
     }
 
+    console.log(`[Intake] Delivery complete: sms=${smsSent}, email=${emailSent}, form_id=${formData.id}`)
+
     return NextResponse.json({
       success: true,
-      token_id: tokenData.id,
+      form_id: formData.id,
       intake_url: intakeUrl,
       sms_sent: smsSent,
       email_sent: emailSent,
     })
   } catch (error) {
-    console.error('Intake send error:', error)
+    console.error('[Intake] Send error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
 
 // ── SMS delivery via Twilio ──
-async function sendIntakeSMS(phone: string, firstName: string, practiceName: string, intakeUrl: string) {
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_PHONE_NUMBER) {
+async function sendIntakeSMS(
+  phone: string,
+  firstName: string,
+  practiceName: string,
+  intakeUrl: string
+) {
+  if (
+    !process.env.TWILIO_ACCOUNT_SID ||
+    !process.env.TWILIO_AUTH_TOKEN ||
+    !process.env.TWILIO_PHONE_NUMBER
+  ) {
     throw new Error('Twilio credentials not configured')
   }
 
@@ -133,7 +192,12 @@ async function sendIntakeSMS(phone: string, firstName: string, practiceName: str
 }
 
 // ── Email delivery via Resend ──
-async function sendIntakeEmail(email: string, firstName: string, practiceName: string, intakeUrl: string) {
+async function sendIntakeEmail(
+  email: string,
+  firstName: string,
+  practiceName: string,
+  intakeUrl: string
+) {
   const resendKey = process.env.RESEND_API_KEY
   if (!resendKey) {
     throw new Error('Resend API key not configured')
@@ -144,7 +208,7 @@ async function sendIntakeEmail(email: string, firstName: string, practiceName: s
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${resendKey}`,
+      Authorization: `Bearer ${resendKey}`,
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
