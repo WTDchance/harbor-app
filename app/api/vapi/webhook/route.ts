@@ -453,8 +453,8 @@ async function processEndOfCall(opts: {
   const { error: callLogError } = await supabaseAdmin.from('call_logs').upsert({
     practice_id: practiceId,
     vapi_call_id: vapiCallId || null,
-    patient_phone: customerPhone || null,
-    duration_seconds: duration,
+    patient_phone: customerPhone || 'unknown',
+    duration_seconds: Math.round(duration),
     transcript: transcriptText,
     summary: callSummary,
     ended_reason: endedReason,
@@ -468,8 +468,8 @@ async function processEndOfCall(opts: {
     const { error: insertError } = await supabaseAdmin.from('call_logs').insert({
       practice_id: practiceId,
       vapi_call_id: vapiCallId || null,
-      patient_phone: customerPhone || null,
-      duration_seconds: duration,
+      patient_phone: customerPhone || 'unknown',
+      duration_seconds: Math.round(duration),
       transcript: transcriptText,
       summary: callSummary,
       ended_reason: endedReason,
