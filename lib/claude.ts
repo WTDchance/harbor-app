@@ -118,6 +118,7 @@ export async function extractCallInformation(
   reasonForSeeking?: string
   appointmentScheduled?: boolean
   appointmentTime?: string
+  intakeDeliveryPreference?: string
 }> {
   if (!client) {
     console.warn('⚠️ Anthropic not configured - skipping information extraction')
@@ -131,8 +132,8 @@ export async function extractCallInformation(
       messages: [
         {
           role: 'user',
-          content: `Extract the following information from this call transcript. If not mentioned, leave blank.
-Return in this exact JSON format:
+          content: `Extract the following information from this call transcript. If not mentioned, leave blank. Return in this exact JSON format:
+
 {
   "patientName": "full name or blank",
   "patientPhone": "phone number or blank",
@@ -140,8 +141,11 @@ Return in this exact JSON format:
   "patientInsurance": "insurance provider or blank",
   "reasonForSeeking": "reason for therapy or blank",
   "appointmentScheduled": true/false,
-  "appointmentTime": "scheduled time or blank"
+  "appointmentTime": "scheduled time or blank",
+  "intakeDeliveryPreference": "sms or email or both or blank"
 }
+
+For intakeDeliveryPreference: if the caller says "text me", "send a text", or mentions their phone, put "sms". If they say "email me" or provide an email for forms, put "email". If they say both or don't specify, put "both". If not discussed, leave blank.
 
 TRANSCRIPT:
 ${transcript}`,
@@ -152,13 +156,13 @@ ${transcript}`,
     const textBlock = response.content.find((block) => block.type === 'text')
     if (textBlock && textBlock.type === 'text') {
       try {
-// Strip markdown code blocks if present
-          let jsonText = textBlock.text.trim()
-          const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/)
-          if (codeBlockMatch) {
-            jsonText = codeBlockMatch[1].trim()
-          }
-          return JSON.parse(jsonText)
+        // Strip markdown code blocks if present
+        let jsonText = textBlock.text.trim()
+        const codeBlockMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)```/)
+        if (codeBlockMatch) {
+          jsonText = codeBlockMatch[1].trim()
+        }
+        return JSON.parse(jsonText)
       } catch {
         console.warn('Could not parse extracted information as JSON')
         return {}

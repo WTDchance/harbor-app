@@ -679,6 +679,56 @@ async function processEndOfCall(opts: {
   } catch (err) {
     console.error('[Vapi] Email notification error:', err)
   }
+
+  // 7. Auto-send intake forms for NEW patients
+  if (newPatient && patientPhone) {
+    try {
+      // Get the call_log record to pass the ID
+      const { data: callLogRecord } = await supabaseAdmin
+        .from('call_logs')
+        .select('id')
+        .eq('vapi_call_id', vapiCallId)
+        .single()
+
+      // Determine delivery method: default to SMS since we always have the phone
+      // If caller provided an email, send via both
+      const deliveryMethod = info.patientEmail ? 'both' : 'sms'
+
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+      const intakePayload = {
+        practice_id: practiceId,
+        patient_id: newPatient.id,
+        call_log_id: callLogRecord?.id || null,
+        patient_phone: patientPhone,
+        patient_email: info.patientEmail || null,
+        patient_name: info.patientName || null,
+        delivery_method: deliveryMethod,
+      }
+
+      console.log('[Vapi] Sending intake forms to new patient:', JSON.stringify({
+        patient: info.patientName,
+        phone: patientPhone,
+        email: info.patientEmail || '(none)',
+        method: deliveryMethod,
+      }))
+
+      const intakeRes = await fetch(`${baseUrl}/api/intake/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(intakePayload),
+      })
+
+      if (intakeRes.ok) {
+        const intakeResult = await intakeRes.json()
+        console.log(`[Vapi] Intake forms sent: sms=${intakeResult.sms_sent}, email=${intakeResult.email_sent}`)
+      } else {
+        const intakeError = await intakeRes.text()
+        console.error('[Vapi] Intake send failed:', intakeRes.status, intakeError)
+      }
+    } catch (err) {
+      console.error('[Vapi] Intake auto-send error:', err)
+    }
+  }
 }
 
 // ---- Tool handlers ----
