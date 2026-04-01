@@ -449,7 +449,7 @@ async function processEndOfCall(opts: {
 
   // 3. Save call log to Supabase
   // FIX: Check Supabase {error} return instead of relying on try/catch
-  // (Supabase JS v2 does NOT throw on errors â it returns {data, error})
+  // (Supabase JS v2 does NOT throw on errors Ã¢ÂÂ it returns {data, error})
   const { error: callLogError } = await supabaseAdmin.from('call_logs').upsert({
     practice_id: practiceId,
     vapi_call_id: vapiCallId || null,
@@ -560,7 +560,7 @@ async function processEndOfCall(opts: {
     console.log(`[Vapi] Existing patient found: ${existingPatient.first_name} ${existingPatient.last_name} (${existingPatient.id})`)
   } else {
     // FIX: Create patient even with minimal info (phone number only)
-    // Previously required a name from extraction â now uses "New Caller" as fallback
+    // Previously required a name from extraction Ã¢ÂÂ now uses "New Caller" as fallback
     const nameParts = (info.patientName || '').trim().split(/\s+/).filter(Boolean)
     const firstName = nameParts[0] || 'New'
     const lastName = nameParts.slice(1).join(' ') || (nameParts[0] ? '' : 'Caller')
@@ -588,7 +588,7 @@ async function processEndOfCall(opts: {
         console.log(`[Vapi] Patient created: ${firstName} ${lastName} (${created.id})`)
       }
     } else {
-      console.log('[Vapi] No patient info available (no phone, email, or name) â skipping patient creation')
+      console.log('[Vapi] No patient info available (no phone, email, or name) Ã¢ÂÂ skipping patient creation')
     }
   }
 
@@ -614,7 +614,7 @@ async function processEndOfCall(opts: {
     }
   }
 
-  // 5. Crisis alert â save and SMS the therapist
+  // 5. Crisis alert Ã¢ÂÂ save and SMS the therapist
   if (crisisDetected) {
     try {
       const { error: crisisError } = await supabaseAdmin.from('crisis_alerts').insert({
@@ -757,8 +757,117 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
 }
 
 async function handleCheckAvailability(params: any, practiceId: string | null): Promise<string> {
-  const { preferredDay, preferredTime } = params
-  return `I have noted your preference for ${preferredDay || 'a convenient day'} ${preferredTime ? `around ${preferredTime}` : ''}. The scheduling team will check availability and get back to you within one business day to confirm a time.`
+  if (!practiceId) {
+    return 'I\'m sorry, I\'m not able to check the schedule right now. Would you like to leave your name and number so the office can call you back with available times?'
+  }
+
+  const { preferredDay, preferredTime, appointmentType } = params
+
+  try {
+    let startDate = new Date()
+    let days = 7
+
+    if (preferredDay) {
+      const dayMap: Record<string, number> = {
+        'sunday': 0, 'monday': 1, 'tuesday': 2, 'wednesday': 3,
+        'thursday': 4, 'friday': 5, 'saturday': 6,
+        'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6,
+      }
+      const targetDay = dayMap[preferredDay.toLowerCase()]
+      if (targetDay !== undefined) {
+        const today = new Date()
+        const todayDay = today.getDay()
+        let daysUntil = targetDay - todayDay
+        if (daysUntil <= 0) daysUntil += 7
+        startDate = new Date(today)
+        startDate.setDate(today.getDate() + daysUntil)
+        days = 1
+      }
+    }
+
+    let duration = 60
+    if (appointmentType) {
+      const lowerType = appointmentType.toLowerCase()
+      if (lowerType.includes('initial') || lowerType.includes('intake') || lowerType.includes('new')) {
+        duration = 90
+      } else if (lowerType.includes('follow') || lowerType.includes('check')) {
+        duration = 30
+      }
+    }
+
+    const dateStr = startDate.toISOString().split('T')[0]
+
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://harborreceptionist.com'
+    const url = `${appUrl}/api/calendar/availability?practice_id=${practiceId}&date=${dateStr}&days=${days}&duration=${duration}`
+
+    console.log(`[Vapi] Checking availability: ${url}`)
+    const response = await fetch(url)
+
+    if (!response.ok) {
+      console.error('[Vapi] Availability API error:', response.status, await response.text())
+      return 'I\'m having trouble checking the schedule right now. Would you like to leave your preferred times and we\'ll call you back to confirm?'
+    }
+
+    const data = await response.json()
+
+    if (data.provider === 'none') {
+      return 'The scheduling system is being set up. Let me take down your preferred day and time, and the office will call you back within one business day to confirm your appointment.'
+    }
+
+    const slots = data.availableSlots || []
+
+    if (slots.length === 0) {
+      if (preferredDay) {
+        const expandedUrl = `${appUrl}/api/calendar/availability?practice_id=${practiceId}&days=7&duration=${duration}`
+        const expandedRes = await fetch(expandedUrl)
+        if (expandedRes.ok) {
+          const expandedData = await expandedRes.json()
+          const expandedSlots = expandedData.availableSlots || []
+          if (expandedSlots.length > 0) {
+            const nextFew = expandedSlots.slice(0, 5).map((s: any) => s.display)
+            return `I don't see any openings on ${preferredDay}, but here are the next available times: ${nextFew.join(', ')}. Would any of those work for you?`
+          }
+        }
+        return `I don't see any openings on ${preferredDay} this week. Would you like me to check a different day, or would you prefer to leave your contact info so the office can find a time that works?`
+      }
+      return 'It looks like the schedule is fully booked for this week. Would you like me to check the following week, or would you prefer to leave your contact info for a callback?'
+    }
+
+    if (slots.length <= 3) {
+      const slotList = slots.map((s: any) => s.display)
+      return `I have ${slots.length === 1 ? 'one opening' : `${slots.length} openings`} available: ${slotList.join(', ')}. Would any of those work for you?`
+    }
+
+    if (preferredTime) {
+      const hourMatch = preferredTime.match(/(\d{1,2})\s*(am|pm|AM|PM)?/)
+      if (hourMatch) {
+        let targetHour = parseInt(hourMatch[1])
+        const ampm = (hourMatch[2] || '').toLowerCase()
+        if (ampm === 'pm' && targetHour < 12) targetHour += 12
+        if (ampm === 'am' && targetHour === 12) targetHour = 0
+
+        const nearbySlots = slots.filter((s: any) => {
+          const slotHour = new Date(s.start).getHours()
+          return Math.abs(slotHour - targetHour) <= 2
+        })
+
+        if (nearbySlots.length > 0) {
+          const display = nearbySlots.slice(0, 4).map((s: any) => s.display)
+          return `Around ${preferredTime}, I have these openings: ${display.join(', ')}. Would any of those work?`
+        } else {
+          const display = slots.slice(0, 4).map((s: any) => s.display)
+          return `I don't have anything right around ${preferredTime}, but here are some other available times: ${display.join(', ')}. Would any of those work instead?`
+        }
+      }
+    }
+
+    const display = slots.slice(0, 5).map((s: any) => s.display)
+    return `Here are the next available appointment times: ${display.join(', ')}. Would any of those work for you?`
+
+  } catch (err) {
+    console.error('[Vapi] Calendar availability check failed:', err)
+    return 'I\'m having a little trouble pulling up the schedule right now. Can I take down your preferred day and time, and have someone from the office call you back to confirm?'
+  }
 }
 
 async function handleTakeMessage(params: any, practiceId: string | null): Promise<string> {
