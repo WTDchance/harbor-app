@@ -284,7 +284,16 @@ async function handleEndOfCallReport(message: any) {
   const messages = artifact.messages || []
   const vapiCallId = call.id || ''
   const endedReason = message.endedReason || 'unknown'
-  const duration = call.duration || 0
+  // FIX: Calculate duration from Vapi timestamps if call.duration is 0
+  let duration = call.duration || 0
+  if (!duration && call.startedAt && call.endedAt) {
+    duration = Math.round((new Date(call.endedAt).getTime() - new Date(call.startedAt).getTime()) / 1000)
+    console.log(`[Vapi] Duration calculated from timestamps: ${duration}s`)
+  }
+  if (!duration && message.durationSeconds) {
+    duration = message.durationSeconds
+    console.log(`[Vapi] Duration from message.durationSeconds: ${duration}s`)
+  }
   const customerPhone = call.customer?.number || ''
 
   console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s | caller: ${customerPhone || '(unknown)'}`)
@@ -545,6 +554,8 @@ async function processEndOfCall(opts: {
     existingPatient = data
   }
 
+  let newPatient: any = null
+
   if (existingPatient) {
     console.log(`[Vapi] Existing patient found: ${existingPatient.first_name} ${existingPatient.last_name} (${existingPatient.id})`)
   } else {
@@ -556,7 +567,7 @@ async function processEndOfCall(opts: {
 
     // Only skip if we have absolutely no identifying info
     if (patientPhone || info.patientEmail || info.patientName) {
-      const { data: newPatient, error: patientError } = await supabaseAdmin
+      const { data: created, error: patientError } = await supabaseAdmin
         .from('patients')
         .insert({
           practice_id: practiceId,
@@ -572,11 +583,34 @@ async function processEndOfCall(opts: {
 
       if (patientError) {
         console.error('[Vapi] Failed to create patient:', patientError.message, patientError.details)
-      } else {
-        console.log(`[Vapi] Patient created: ${firstName} ${lastName} (${newPatient?.id})`)
+      } else if (created) {
+        newPatient = created
+        console.log(`[Vapi] Patient created: ${firstName} ${lastName} (${created.id})`)
       }
     } else {
       console.log('[Vapi] No patient info available (no phone, email, or name) â skipping patient creation')
+    }
+  }
+
+  // 4b. FIX: Link patient to call_log and update extracted caller info
+  const resolvedPatientId = existingPatient?.id || newPatient?.id
+  if (resolvedPatientId || info.patientName) {
+    const updateData: any = {
+      call_type: existingPatient ? 'returning_patient' : (newPatient ? 'new_patient' : 'unknown'),
+    }
+    if (resolvedPatientId) updateData.patient_id = resolvedPatientId
+    if (info.patientName) updateData.caller_name = info.patientName
+    if (duration && duration > 0) updateData.duration_seconds = duration
+
+    const { error: linkError } = await supabaseAdmin
+      .from('call_logs')
+      .update(updateData)
+      .eq('vapi_call_id', vapiCallId)
+
+    if (linkError) {
+      console.error('[Vapi] Failed to update call log with patient info:', linkError.message)
+    } else {
+      console.log(`[Vapi] Call log updated: patient_id=${resolvedPatientId}, caller_name=${info.patientName}, call_type=${updateData.call_type}`)
     }
   }
 
