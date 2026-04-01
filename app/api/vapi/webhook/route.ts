@@ -600,7 +600,7 @@ async function processEndOfCall(opts: {
     }
     if (resolvedPatientId) updateData.patient_id = resolvedPatientId
     if (info.patientName) updateData.caller_name = info.patientName
-    if (duration && duration > 0) updateData.duration_seconds = duration
+    if (duration && duration > 0) updateData.duration_seconds = Math.round(duration)
 
     const { error: linkError } = await supabaseAdmin
       .from('call_logs')
