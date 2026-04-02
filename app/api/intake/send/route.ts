@@ -1,5 +1,6 @@
 // FILE: app/api/intake/send/route.ts
 // FIX: Use intake_forms table (which submit route reads from) instead of intake_tokens
+// FIX: Link intake_forms to patient_id directly so intake is always tied to a patient
 // Also generates token via crypto since intake_forms.token has no default
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -9,7 +10,7 @@ import crypto from 'crypto'
 
 // POST /api/intake/send
 // Called by the webhook after a new patient call, or manually from dashboard
-// Creates an intake_forms record with a token and sends the link via SMS and/or email
+// Creates an intake_forms record linked to the patient and sends the link via SMS and/or email
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
@@ -26,7 +27,6 @@ export async function POST(request: NextRequest) {
     if (!practice_id) {
       return NextResponse.json({ error: 'Missing practice_id' }, { status: 400 })
     }
-
     if (!patient_phone && !patient_email) {
       return NextResponse.json(
         { error: 'Need at least a phone or email to send intake forms' },
@@ -53,12 +53,13 @@ export async function POST(request: NextRequest) {
     expiresAt.setDate(expiresAt.getDate() + 7)
 
     // Create the intake form record in intake_forms table
-    // (This is the table that the submit route reads from)
+    // FIX: Include patient_id so the intake form is directly linked to the patient record
     const { data: formData, error: formError } = await supabaseAdmin
       .from('intake_forms')
       .insert({
         token,
         practice_id,
+        patient_id: patient_id || null,  // Direct link to patient record
         patient_name: patient_name || null,
         patient_phone: patient_phone || null,
         patient_email: patient_email || null,
@@ -105,7 +106,7 @@ export async function POST(request: NextRequest) {
       try {
         await sendIntakeSMS(patient_phone, firstName, practiceName, intakeUrl)
         smsSent = true
-        console.log(`[Intake] ✓ SMS sent to ${patient_phone}`)
+        console.log(`[Intake] SMS sent to ${patient_phone}`)
       } catch (err) {
         console.error('[Intake] SMS failed:', err)
       }
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
       try {
         await sendIntakeEmail(patient_email, firstName, practiceName, intakeUrl)
         emailSent = true
-        console.log(`[Intake] ✓ Email sent to ${patient_email}`)
+        console.log(`[Intake] Email sent to ${patient_email}`)
       } catch (err) {
         console.error('[Intake] Email failed:', err)
       }
@@ -152,7 +153,7 @@ export async function POST(request: NextRequest) {
         .eq('id', call_log_id)
     }
 
-    console.log(`[Intake] Delivery complete: sms=${smsSent}, email=${emailSent}, form_id=${formData.id}`)
+    console.log(`[Intake] Delivery complete: sms=${smsSent}, email=${emailSent}, form_id=${formData.id}, patient_id=${patient_id || '(none)'}`)
 
     return NextResponse.json({
       success: true,
@@ -167,7 +168,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ── SMS delivery via Twilio ──
+// -- SMS delivery via Twilio --
 async function sendIntakeSMS(
   phone: string,
   firstName: string,
@@ -187,11 +188,11 @@ async function sendIntakeSMS(
   await client.messages.create({
     to: phone.startsWith('+') ? phone : `+1${phone.replace(/\D/g, '')}`,
     from: process.env.TWILIO_PHONE_NUMBER,
-    body: `Hi ${firstName}! Thanks for calling ${practiceName}. Here's a link to your new patient intake forms — just tap to get started:\n\n${intakeUrl}\n\nThe link is valid for 7 days. Reply STOP to opt out.`,
+    body: `Hi ${firstName}! Thanks for calling ${practiceName}. Here's a link to your new patient intake forms â just tap to get started:\n\n${intakeUrl}\n\nThe link is valid for 7 days. Reply STOP to opt out.`,
   })
 }
 
-// ── Email delivery via Resend ──
+// -- Email delivery via Resend --
 async function sendIntakeEmail(
   email: string,
   firstName: string,
@@ -222,7 +223,8 @@ async function sendIntakeEmail(
             Thanks for calling ${practiceName}. To get you started, please complete your new patient intake forms using the link below.
           </p>
           <div style="text-align: center; margin: 28px 0;">
-            <a href="${intakeUrl}" style="background: #4f8a6e; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 16px; display: inline-block;">
+            <a href="${intakeUrl}"
+               style="background: #4f8a6e; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 16px; display: inline-block;">
               Complete Intake Forms
             </a>
           </div>
