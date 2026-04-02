@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     // Build patient name from demographics if available
     const patientName = demographics?.first_name && demographics?.last_name
-      ? `${demographics.first_name} ${demographics.last_name}`
+      ? \`\${demographics.first_name} \${demographics.last_name}\`
       : intake.patient_name
 
     const { error: updateError } = await supabase
@@ -80,12 +80,9 @@ export async function POST(req: NextRequest) {
         patient_phone: demographics?.phone || intake.patient_phone,
         patient_email: demographics?.email || intake.patient_email,
         patient_dob: demographics?.date_of_birth || intake.patient_dob,
-        patient_address: demographics ? [
-          demographics.address,
-          demographics.city,
-          demographics.state,
-          demographics.zip
-        ].filter(Boolean).join(', ') : intake.patient_address,
+        patient_address: demographics
+          ? [demographics.address, demographics.city, demographics.state, demographics.zip].filter(Boolean).join(', ')
+          : intake.patient_address,
         demographics: demographics || null,
         insurance: insurance || null,
         signature_data: signature || null,
@@ -106,13 +103,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to save your responses' }, { status: 500 })
     }
 
+    // FIX: Update the PATIENT record with demographics from intake
+    await updatePatientFromIntake(supabase, intake, demographics, insurance, phq9Result, gad7Result)
+
     // Save document signatures/acknowledgments
     if (document_acknowledgments && typeof document_acknowledgments === 'object') {
       const docIds = Object.keys(document_acknowledgments).filter(id => document_acknowledgments[id])
-
       for (const docId of docIds) {
         const sigData = document_signatures?.[docId] || null
-
         await supabase
           .from('intake_document_signatures')
           .insert({
@@ -132,10 +130,97 @@ export async function POST(req: NextRequest) {
       gad7: gad7Result,
       message: 'Thank you! Your responses have been saved. Your therapist will review them before your appointment.'
     })
-
   } catch (error) {
     console.error('Intake submit error:', error)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+async function updatePatientFromIntake(
+  supabase: any,
+  intake: any,
+  demographics: any,
+  insurance: any,
+  phq9Result: any,
+  gad7Result: any
+) {
+  try {
+    let patientId = intake.patient_id
+
+    if (!patientId && intake.patient_phone) {
+      const normalized = intake.patient_phone.replace(/\D/g, '').slice(-10)
+      if (normalized.length >= 10) {
+        const { data: found } = await supabase
+          .from('patients')
+          .select('id')
+          .eq('practice_id', intake.practice_id)
+          .ilike('phone', `%${normalized}`)
+          .limit(1)
+          .maybeSingle()
+        if (found) patientId = found.id
+      }
+    }
+
+    if (!patientId) {
+      console.log('[Intake] No patient record found to update — skipping patient sync')
+      return
+    }
+
+    const updates: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    }
+
+    if (demographics?.first_name) updates.first_name = demographics.first_name
+    if (demographics?.last_name) updates.last_name = demographics.last_name
+    if (demographics?.email) updates.email = demographics.email
+    if (demographics?.phone) updates.phone = demographics.phone
+    if (demographics?.date_of_birth) updates.date_of_birth = demographics.date_of_birth
+    if (demographics?.pronouns) updates.pronouns = demographics.pronouns
+    if (demographics?.address) {
+      updates.address = [
+        demographics.address,
+        demographics.city,
+        demographics.state,
+        demographics.zip
+      ].filter(Boolean).join(', ')
+    }
+    if (demographics?.emergency_contact_name) {
+      updates.emergency_contact_name = demographics.emergency_contact_name
+    }
+    if (demographics?.emergency_contact_phone) {
+      updates.emergency_contact_phone = demographics.emergency_contact_phone
+    }
+    if (demographics?.referral_source) {
+      updates.referral_source = demographics.referral_source
+    }
+
+    if (insurance?.provider) updates.insurance_provider = insurance.provider
+    if (insurance?.member_id) updates.insurance_member_id = insurance.member_id
+    if (insurance?.group_number) updates.insurance_group_number = insurance.group_number
+
+    updates.intake_completed = true
+    updates.intake_completed_at = new Date().toISOString()
+
+    const { error: updateError } = await supabase
+      .from('patients')
+      .update(updates)
+      .eq('id', patientId)
+
+    if (updateError) {
+      console.error('[Intake] Failed to update patient record:', updateError.message)
+    } else {
+      console.log(`[Intake] Patient record updated with intake demographics: ${patientId}`)
+    }
+
+    if (!intake.patient_id) {
+      await supabase
+        .from('intake_forms')
+        .update({ patient_id: patientId })
+        .eq('id', intake.id)
+      console.log(`[Intake] Linked intake form ${intake.id} to patient ${patientId}`)
+    }
+  } catch (err) {
+    console.error('[Intake] Error updating patient from intake:', err)
   }
 }
 
@@ -146,6 +231,7 @@ export async function GET(req: NextRequest) {
     if (!token) return NextResponse.json({ error: 'Token required' }, { status: 400 })
 
     const supabase = createServiceClient()
+
     const { data: intake } = await supabase
       .from('intake_forms')
       .select('status, patient_name, patient_phone, patient_email, expires_at, questionnaire_type, practice_id')
@@ -154,7 +240,6 @@ export async function GET(req: NextRequest) {
 
     if (!intake) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    // Fetch practice name
     let practiceName = ''
     if (intake.practice_id) {
       const { data: practice } = await supabase
@@ -165,8 +250,10 @@ export async function GET(req: NextRequest) {
       practiceName = practice?.provider_name || practice?.name || ''
     }
 
-    // Fetch practice documents for this practice
-    let documents: Array<{ id: string; name: string; requires_signature: boolean; content_url: string | null; description: string | null }> = []
+    let documents: Array<{
+      id: string; name: string; requires_signature: boolean;
+      content_url: string | null; description: string | null
+    }> = []
     if (intake.practice_id) {
       const { data: docs } = await supabase
         .from('intake_documents')
@@ -174,7 +261,6 @@ export async function GET(req: NextRequest) {
         .eq('practice_id', intake.practice_id)
         .eq('active', true)
         .order('sort_order', { ascending: true })
-
       documents = docs || []
     }
 
