@@ -14,7 +14,7 @@ import crypto from 'crypto'
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const {
+    let {
       practice_id,
       patient_id,
       call_log_id,
@@ -24,8 +24,20 @@ export async function POST(request: NextRequest) {
       delivery_method, // 'sms' | 'email' | 'both'
     } = body
 
+    // If practice_id not provided, look it up from patient record
+    if (!practice_id && patient_id) {
+      const { data: patientRecord } = await supabaseAdmin
+        .from('patients')
+        .select('practice_id')
+        .eq('id', patient_id)
+        .single()
+      if (patientRecord) {
+        practice_id = patientRecord.practice_id
+      }
+    }
+
     if (!practice_id) {
-      return NextResponse.json({ error: 'Missing practice_id' }, { status: 400 })
+      return NextResponse.json({ error: 'Missing practice_id and could not derive from patient' }, { status: 400 })
     }
     if (!patient_phone && !patient_email) {
       return NextResponse.json(
