@@ -1,7 +1,9 @@
 "use client";
 // app/dashboard/patients/[id]/page.tsx
-// Harbor — Patient Hub Detail View
-// Unified patient profile with outcome trend chart, intake history, and appointments
+// Harbor - Patient Detail View
+// FIX: Uses real patient UUID from patients table (not base64-encoded email/phone)
+// Features: patient info, intake status with send/resend action (email or text),
+// call history, appointments, outcome trend chart, crisis alerts
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
@@ -9,409 +11,612 @@ import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
 
-type OutcomePoint = {
-  intake_form_id: string;
-  date: string;
-  phq9_score: number | null;
-  phq9_severity: string | null;
-  gad7_score: number | null;
-  gad7_severity: string | null;
-};
-
-type IntakeForm = {
-  id: string;
-  patient_name: string | null;
-  patient_email: string | null;
-  patient_phone: string | null;
-  patient_dob: string | null;
-  patient_address: string | null;
-  phq9_answers: number[] | null;
-  phq9_score: number | null;
-  phq9_severity: string | null;
-  gad7_answers: number[] | null;
-  gad7_score: number | null;
-  gad7_severity: string | null;
-  additional_notes: string | null;
-  completed_at: string | null;
-  created_at: string;
-  status: string;
-  appointment_id: string | null;
-  intake_document_signatures: {
+type PatientData = {
+  patient: {
     id: string;
-    signed_name: string | null;
-    signed_at: string;
-    intake_documents: { id: string; name: string; requires_signature: boolean } | null;
+    first_name: string | null;
+    last_name: string | null;
+    phone: string | null;
+    email: string | null;
+    date_of_birth: string | null;
+    insurance_provider: string | null;
+    insurance_member_id: string | null;
+    notes: string | null;
+    created_at: string;
+  };
+  intake_status: string;
+  intake_forms: {
+    id: string;
+    status: string;
+    phq9_score: number | null;
+    phq9_severity: string | null;
+    gad7_score: number | null;
+    gad7_severity: string | null;
+    created_at: string;
+    completed_at: string | null;
+  }[];
+  call_logs: {
+    id: string;
+    caller_phone: string | null;
+    duration_seconds: number | null;
+    summary: string | null;
+    new_patient: boolean;
+    intake_sent: boolean;
+    created_at: string;
+  }[];
+  appointments: {
+    id: string;
+    appointment_date: string;
+    appointment_time: string | null;
+    duration_minutes: number | null;
+    status: string;
+    provider_name: string | null;
+    type: string | null;
+    notes: string | null;
+  }[];
+  crisis_alerts: {
+    id: string;
+    severity: string;
+    summary: string;
+    status: string;
+    created_at: string;
+  }[];
+  outcome_trend: {
+    date: string;
+    phq9_score: number | null;
+    gad7_score: number | null;
   }[];
 };
 
-type Appointment = {
-  id: string;
-  scheduled_at: string;
-  appointment_type: string;
-  status: string;
-  providers: { full_name: string } | null;
-};
-
-type PatientProfile = {
-  key: string;
-  patient_name: string | null;
-  patient_email: string | null;
-  patient_phone: string | null;
-  patient_dob: string | null;
-  patient_address: string | null;
-  intake_count: number;
-  last_seen: string | null;
-};
-
-type PatientData = {
-  patient: PatientProfile;
-  intake_forms: IntakeForm[];
-  appointments: Appointment[];
-  outcome_history: OutcomePoint[];
-};
-
-const SEVERITY_COLORS: Record<string, string> = {
-  Minimal: "bg-green-100 text-green-800 border-green-200",
-  Mild: "bg-yellow-100 text-yellow-800 border-yellow-200",
-  Moderate: "bg-orange-100 text-orange-800 border-orange-200",
-  "Moderately Severe": "bg-red-100 text-red-800 border-red-200",
-  Severe: "bg-red-200 text-red-900 border-red-300",
-};
-
-const APPT_STATUS_COLORS: Record<string, string> = {
-  scheduled: "bg-blue-100 text-blue-800",
-  completed: "bg-green-100 text-green-800",
-  cancelled: "bg-gray-100 text-gray-600",
-  "no-show": "bg-red-100 text-red-800",
-};
-
-async function getAuthToken(): Promise<string | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
-}
-
-async function apiFetch(url: string, options?: RequestInit) {
-  const token = await getAuthToken();
-  return fetch(url, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options?.headers ?? {}),
-    },
+function formatDate(d: string | null) {
+  if (!d) return "--";
+  return new Date(d).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
   });
 }
 
-function formatDate(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
-}
-
-function formatDateShort(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
-
-function formatDateTime(iso: string | null) {
-  if (!iso) return "—";
-  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
-}
-
-function ageFromDob(dob: string | null) {
-  if (!dob) return null;
-  const age = Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 24 * 60 * 60 * 1000));
-  return isNaN(age) ? null : age;
-}
-
-function OutcomeChart({ history }: { history: OutcomePoint[] }) {
-  if (history.length === 0) {
-    return <div className="h-40 flex items-center justify-center text-gray-400 text-sm">No outcome data yet</div>;
+function formatTime(t: string | null) {
+  if (!t) return "";
+  try {
+    const [h, m] = t.split(":").map(Number);
+    const ampm = h >= 12 ? "PM" : "AM";
+    return `${h % 12 || 12}:${m.toString().padStart(2, "0")} ${ampm}`;
+  } catch {
+    return t;
   }
+}
 
-  const W = 600, H = 160;
-  const PAD = { top: 16, right: 16, bottom: 40, left: 36 };
-  const chartW = W - PAD.left - PAD.right;
-  const chartH = H - PAD.top - PAD.bottom;
-  const maxScore = 27;
-  const xStep = history.length > 1 ? chartW / (history.length - 1) : chartW;
+function formatDuration(seconds: number | null) {
+  if (!seconds) return "--";
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+}
 
-  function yPos(score: number | null) {
-    if (score === null) return null;
-    return PAD.top + chartH - (score / maxScore) * chartH;
-  }
-
-  function xPos(i: number) {
-    return PAD.left + (history.length > 1 ? i * xStep : chartW / 2);
-  }
-
-  const phq9Points = history.map((p, i) => { const y = yPos(p.phq9_score); return y !== null ? `${xPos(i)},${y}` : null; }).filter(Boolean);
-  const gad7Points = history.map((p, i) => { const y = yPos(p.gad7_score); return y !== null ? `${xPos(i)},${y}` : null; }).filter(Boolean);
-  const yTicks = [0, 5, 10, 15, 20, 27];
-
+function IntakeStatusBadge({ status }: { status: string }) {
+  const colors: Record<string, string> = {
+    completed: "bg-green-100 text-green-800",
+    opened: "bg-blue-100 text-blue-800",
+    sent: "bg-yellow-100 text-yellow-800",
+    pending: "bg-yellow-100 text-yellow-800",
+    none: "bg-gray-100 text-gray-600",
+  };
+  const labels: Record<string, string> = {
+    completed: "Completed",
+    opened: "Opened",
+    sent: "Sent",
+    pending: "Pending",
+    none: "Not Sent",
+  };
   return (
-    <div className="w-full overflow-x-auto">
-      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ minWidth: 300, maxHeight: 200 }}>
-        {yTicks.map((tick) => {
-          const y = PAD.top + chartH - (tick / maxScore) * chartH;
-          return (
-            <g key={tick}>
-              <line x1={PAD.left} y1={y} x2={W - PAD.right} y2={y} stroke="#f0f0f0" strokeWidth="1" />
-              <text x={PAD.left - 6} y={y + 4} fontSize="10" fill="#9ca3af" textAnchor="end">{tick}</text>
-            </g>
-          );
-        })}
-        <rect x={PAD.left} y={PAD.top + chartH - (14 / maxScore) * chartH} width={chartW} height={((14 - 10) / maxScore) * chartH} fill="#fff7ed" opacity="0.5" />
-        <rect x={PAD.left} y={PAD.top + chartH - (19 / maxScore) * chartH} width={chartW} height={((19 - 15) / maxScore) * chartH} fill="#fff1f2" opacity="0.5" />
-        <rect x={PAD.left} y={PAD.top} width={chartW} height={((27 - 20) / maxScore) * chartH} fill="#ffe4e6" opacity="0.5" />
-        {phq9Points.length >= 2 && <polyline points={phq9Points.join(" ")} fill="none" stroke="#f97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
-        {gad7Points.length >= 2 && <polyline points={gad7Points.join(" ")} fill="none" stroke="#8b5cf6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
-        {history.map((p, i) => (
-          <g key={p.intake_form_id}>
-            {p.phq9_score !== null && yPos(p.phq9_score) !== null && <circle cx={xPos(i)} cy={yPos(p.phq9_score)!} r="3.5" fill="#f97316" />}
-            {p.gad7_score !== null && yPos(p.gad7_score) !== null && <circle cx={xPos(i)} cy={yPos(p.gad7_score)!} r="3.5" fill="#8b5cf6" />}
-            <text x={xPos(i)} y={H - 6} fontSize="9" fill="#9ca3af" textAnchor="middle">
-              {new Date(p.date).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-            </text>
-          </g>
-        ))}
-        <circle cx={PAD.left + 4} cy={H - PAD.bottom + 6} r="4" fill="#f97316" />
-        <text x={PAD.left + 12} y={H - PAD.bottom + 10} fontSize="10" fill="#6b7280">PHQ-9</text>
-        <circle cx={PAD.left + 56} cy={H - PAD.bottom + 6} r="4" fill="#8b5cf6" />
-        <text x={PAD.left + 64} y={H - PAD.bottom + 10} fontSize="10" fill="#6b7280">GAD-7</text>
-      </svg>
-    </div>
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+        colors[status] || colors.none
+      }`}
+    >
+      {labels[status] || status}
+    </span>
   );
 }
 
-export default function PatientHubPage() {
+function SeverityBadge({ severity }: { severity: string }) {
+  const colors: Record<string, string> = {
+    minimal: "bg-green-100 text-green-800",
+    mild: "bg-yellow-100 text-yellow-800",
+    moderate: "bg-orange-100 text-orange-800",
+    "moderately severe": "bg-red-100 text-red-800",
+    severe: "bg-red-200 text-red-900",
+  };
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+        colors[severity?.toLowerCase()] || "bg-gray-100 text-gray-600"
+      }`}
+    >
+      {severity || "--"}
+    </span>
+  );
+}
+
+export default function PatientDetailPage() {
   const router = useRouter();
   const params = useParams();
-  const id = params?.id as string;
+  const patientId = params.id as string;
 
   const [data, setData] = useState<PatientData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedForm, setExpandedForm] = useState<string | null>(null);
+
+  // Send intake form state
+  const [showSendIntake, setShowSendIntake] = useState(false);
+  const [deliveryMethod, setDeliveryMethod] = useState<"sms" | "email">("sms");
+  const [intakeEmail, setIntakeEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sendResult, setSendResult] = useState<{
+    ok: boolean;
+    msg: string;
+  } | null>(null);
 
   useEffect(() => {
-    if (!id) return;
-    (async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await apiFetch(`/api/patients/${id}`);
-        if (res.status === 401) { router.push("/login"); return; }
-        if (res.status === 404) { setError("Patient not found"); return; }
-        const json = await res.json();
-        if (!res.ok) throw new Error(json.error ?? "Failed to load");
-        setData(json);
-      } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Failed to load patient");
-      } finally {
-        setLoading(false);
+    fetchPatient();
+  }, [patientId]);
+
+  async function fetchPatient() {
+    setLoading(true);
+    setError(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+        return;
       }
-    })();
-  }, [id, router]);
+
+      const res = await fetch(`/api/patients/${patientId}`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        setError(err.error || "Failed to load patient");
+        return;
+      }
+
+      const json = await res.json();
+      setData(json);
+      if (json.patient.email) setIntakeEmail(json.patient.email);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function sendIntakeForms() {
+    if (!data) return;
+    setSending(true);
+    setSendResult(null);
+
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const body: Record<string, any> = {
+        patient_id: data.patient.id,
+        patient_name:
+          [data.patient.first_name, data.patient.last_name]
+            .filter(Boolean)
+            .join(" ") || "Patient",
+        patient_phone: data.patient.phone,
+        delivery_method: deliveryMethod,
+      };
+
+      if (deliveryMethod === "email") {
+        body.patient_email = intakeEmail;
+      }
+
+      const res = await fetch("/api/intake/send", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      const json = await res.json();
+
+      if (!res.ok) {
+        setSendResult({ ok: false, msg: json.error || "Failed to send" });
+      } else {
+        setSendResult({
+          ok: true,
+          msg: `Intake forms sent via ${deliveryMethod === "sms" ? "text message" : "email"}!`,
+        });
+        setShowSendIntake(false);
+        // Refresh data to show updated status
+        setTimeout(fetchPatient, 1000);
+      }
+    } catch (e: any) {
+      setSendResult({ ok: false, msg: e.message });
+    } finally {
+      setSending(false);
+    }
+  }
 
   if (loading) {
-    return <div className="min-h-screen bg-gray-50 flex items-center justify-center"><div className="w-8 h-8 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin" /></div>;
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal-600" />
+      </div>
+    );
   }
 
   if (error || !data) {
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-gray-600 mb-4">{error ?? "Patient not found"}</p>
-          <button onClick={() => router.push("/dashboard/patients")} className="px-4 py-2 bg-teal-600 text-white rounded-lg text-sm hover:bg-teal-700">Back to Patients</button>
+      <div className="max-w-4xl mx-auto p-6">
+        <button
+          onClick={() => router.back()}
+          className="text-teal-600 hover:text-teal-800 mb-4 flex items-center gap-1"
+        >
+          &larr; Back to Patients
+        </button>
+        <div className="bg-red-50 text-red-700 p-4 rounded-lg">
+          {error || "Patient not found"}
         </div>
       </div>
     );
   }
 
-  const { patient, intake_forms, appointments, outcome_history } = data;
-  const age = ageFromDob(patient.patient_dob);
-  const latestForm = intake_forms[0];
-  const latestPhq9 = latestForm?.phq9_severity;
-  const latestGad7 = latestForm?.gad7_severity;
+  const { patient, intake_status, intake_forms, call_logs, appointments, crisis_alerts, outcome_trend } = data;
+  const fullName = [patient.first_name, patient.last_name].filter(Boolean).join(" ") || "Unknown Patient";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white border-b border-gray-200 px-6 py-4">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button onClick={() => router.push("/dashboard/patients")} className="text-sm text-gray-500 hover:text-teal-600 transition-colors">← Patients</button>
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">{patient.patient_name ?? "Unknown Patient"}</h1>
-              <p className="text-sm text-gray-500 mt-0.5">
-                {age !== null ? `Age ${age}` : ""}
-                {age !== null && patient.patient_email ? " · " : ""}
-                {patient.patient_email ?? patient.patient_phone ?? ""}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {latestPhq9 && (
-              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${SEVERITY_COLORS[latestPhq9] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-                PHQ-9: {latestPhq9}
-              </span>
-            )}
-            {latestGad7 && (
-              <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold border ${SEVERITY_COLORS[latestGad7] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-                GAD-7: {latestGad7}
-              </span>
-            )}
-          </div>
+    <div className="max-w-5xl mx-auto p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <button
+            onClick={() => router.back()}
+            className="text-teal-600 hover:text-teal-800 mb-2 flex items-center gap-1 text-sm"
+          >
+            &larr; Back to Patients
+          </button>
+          <h1 className="text-2xl font-bold text-gray-900">{fullName}</h1>
+          <p className="text-gray-500 text-sm">
+            Patient since {formatDate(patient.created_at)}
+          </p>
         </div>
+        <IntakeStatusBadge status={intake_status} />
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-6 space-y-5">
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">Demographics</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            {[
-              { label: "Full Name", value: patient.patient_name },
-              { label: "Date of Birth", value: patient.patient_dob ? `${formatDate(patient.patient_dob)}${age !== null ? ` (age ${age})` : ""}` : null },
-              { label: "Email", value: patient.patient_email },
-              { label: "Phone", value: patient.patient_phone },
-              { label: "Address", value: patient.patient_address },
-              { label: "Last Seen", value: formatDateShort(patient.last_seen) },
-            ].map(({ label, value }) => (
-              <div key={label}>
-                <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">{label}</p>
-                <p className="text-sm text-gray-900 mt-0.5">{value ?? "—"}</p>
-              </div>
-            ))}
-          </div>
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <p className="text-xs font-medium text-gray-400 uppercase tracking-wide">Total Intakes</p>
-            <p className="text-2xl font-bold text-teal-600 mt-0.5">{patient.intake_count}</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-base font-semibold text-gray-900">Outcome Trends</h2>
-              <p className="text-xs text-gray-400 mt-0.5">PHQ-9 (depression) and GAD-7 (anxiety) over time</p>
+      {/* Crisis alerts banner */}
+      {crisis_alerts.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <h3 className="font-semibold text-red-800 mb-2">
+            Crisis Alerts ({crisis_alerts.length})
+          </h3>
+          {crisis_alerts.map((alert) => (
+            <div key={alert.id} className="text-sm text-red-700 mb-1">
+              <span className="font-medium">{formatDate(alert.created_at)}</span>{" "}
+              - {alert.severity}: {alert.summary}
+              <span className="ml-2 text-xs bg-red-100 px-1.5 py-0.5 rounded">
+                {alert.status}
+              </span>
             </div>
-            {outcome_history.length > 0 && (
-              <div className="text-right text-xs text-gray-400">{outcome_history.length} data point{outcome_history.length !== 1 ? "s" : ""}</div>
+          ))}
+        </div>
+      )}
+
+      {/* Patient info + Send Intake */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Contact info card */}
+        <div className="bg-white border rounded-lg p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-900 mb-3">Contact Info</h2>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-gray-500">Phone</span>
+              <span className="font-medium">{patient.phone || "--"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Email</span>
+              <span className="font-medium">{patient.email || "--"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Date of Birth</span>
+              <span className="font-medium">
+                {patient.date_of_birth || "--"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-gray-500">Insurance</span>
+              <span className="font-medium">
+                {patient.insurance_provider || "--"}
+              </span>
+            </div>
+            {patient.notes && (
+              <div className="mt-3 pt-3 border-t">
+                <span className="text-gray-500 text-xs block mb-1">Notes</span>
+                <p className="text-gray-700">{patient.notes}</p>
+              </div>
             )}
           </div>
-          <OutcomeChart history={outcome_history} />
         </div>
 
-        {appointments.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <h2 className="text-base font-semibold text-gray-900 mb-4">Appointments <span className="text-sm font-normal text-gray-400">({appointments.length})</span></h2>
-            <div className="space-y-2">
-              {appointments.map((appt) => (
-                <div key={appt.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <div>
-                    <p className="text-sm font-medium text-gray-900">{appt.appointment_type}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">{formatDateTime(appt.scheduled_at)}{appt.providers?.full_name ? ` · ${appt.providers.full_name}` : ""}</p>
-                  </div>
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${APPT_STATUS_COLORS[appt.status] ?? "bg-gray-100 text-gray-700"}`}>
-                    {appt.status.charAt(0).toUpperCase() + appt.status.slice(1)}
-                  </span>
-                </div>
-              ))}
-            </div>
+        {/* Intake forms card */}
+        <div className="bg-white border rounded-lg p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold text-gray-900">Intake Forms</h2>
+            <button
+              onClick={() => setShowSendIntake(!showSendIntake)}
+              className="text-sm bg-teal-600 text-white px-3 py-1.5 rounded-md hover:bg-teal-700 transition"
+            >
+              {intake_status === "none" || intake_status === "expired"
+                ? "Send Intake Forms"
+                : "Resend Intake Forms"}
+            </button>
           </div>
-        )}
 
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-          <h2 className="text-base font-semibold text-gray-900 mb-4">
-            Intake History <span className="text-sm font-normal text-gray-400">({intake_forms.length} submission{intake_forms.length !== 1 ? "s" : ""})</span>
-          </h2>
-          <div className="space-y-2">
-            {intake_forms.map((form, idx) => {
-              const isExpanded = expandedForm === form.id;
-              return (
-                <div key={form.id} className="border border-gray-100 rounded-xl overflow-hidden">
-                  <button
-                    onClick={() => setExpandedForm(isExpanded ? null : form.id)}
-                    className="w-full flex items-center justify-between p-4 text-left hover:bg-gray-50 transition-colors"
-                  >
-                    <div className="flex items-center gap-4">
-                      <div className="w-7 h-7 rounded-full bg-teal-100 text-teal-700 text-xs font-semibold flex items-center justify-center shrink-0">
-                        {intake_forms.length - idx}
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-gray-900">{formatDateShort(form.completed_at)}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">
-                          {form.status === "completed" ? "Completed" : "Pending"}
-                          {form.additional_notes ? " · Has notes" : ""}
-                          {form.intake_document_signatures?.length ? ` · ${form.intake_document_signatures.length} doc${form.intake_document_signatures.length !== 1 ? "s" : ""} signed` : ""}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      {form.phq9_severity && (
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${SEVERITY_COLORS[form.phq9_severity] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-                          PHQ {form.phq9_score}
+          {/* Send intake form UI */}
+          {showSendIntake && (
+            <div className="bg-teal-50 border border-teal-200 rounded-lg p-4 mb-3">
+              <h3 className="font-medium text-teal-900 mb-2">
+                How should the patient receive their intake paperwork?
+              </h3>
+              <div className="flex gap-3 mb-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="delivery"
+                    checked={deliveryMethod === "sms"}
+                    onChange={() => setDeliveryMethod("sms")}
+                    className="text-teal-600"
+                  />
+                  <span className="text-sm">
+                    Text Message {patient.phone ? `(${patient.phone})` : ""}
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="delivery"
+                    checked={deliveryMethod === "email"}
+                    onChange={() => setDeliveryMethod("email")}
+                    className="text-teal-600"
+                  />
+                  <span className="text-sm">Email</span>
+                </label>
+              </div>
+
+              {deliveryMethod === "email" && (
+                <input
+                  type="email"
+                  value={intakeEmail}
+                  onChange={(e) => setIntakeEmail(e.target.value)}
+                  placeholder="patient@example.com"
+                  className="w-full border rounded px-3 py-2 text-sm mb-3"
+                />
+              )}
+
+              {deliveryMethod === "sms" && !patient.phone && (
+                <p className="text-sm text-red-600 mb-2">
+                  No phone number on file. Add a phone number first or use
+                  email.
+                </p>
+              )}
+
+              <div className="flex gap-2">
+                <button
+                  onClick={sendIntakeForms}
+                  disabled={
+                    sending ||
+                    (deliveryMethod === "sms" && !patient.phone) ||
+                    (deliveryMethod === "email" && !intakeEmail)
+                  }
+                  className="bg-teal-600 text-white px-4 py-2 rounded text-sm hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+                >
+                  {sending ? "Sending..." : "Send Now"}
+                </button>
+                <button
+                  onClick={() => {
+                    setShowSendIntake(false);
+                    setSendResult(null);
+                  }}
+                  className="text-gray-600 px-4 py-2 rounded text-sm hover:bg-gray-100 transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Send result message */}
+          {sendResult && (
+            <div
+              className={`p-3 rounded text-sm mb-3 ${
+                sendResult.ok
+                  ? "bg-green-50 text-green-700"
+                  : "bg-red-50 text-red-700"
+              }`}
+            >
+              {sendResult.msg}
+            </div>
+          )}
+
+          {/* Intake forms list */}
+          {intake_forms.length > 0 ? (
+            <div className="space-y-2">
+              {intake_forms.map((form) => (
+                <div
+                  key={form.id}
+                  className="flex items-center justify-between text-sm border-b py-2 last:border-0"
+                >
+                  <div>
+                    <IntakeStatusBadge status={form.status} />
+                    <span className="ml-2 text-gray-500">
+                      {formatDate(form.created_at)}
+                    </span>
+                  </div>
+                  {form.status === "completed" && (
+                    <div className="flex gap-3">
+                      {form.phq9_score !== null && (
+                        <span className="text-xs">
+                          PHQ-9: <strong>{form.phq9_score}</strong>
                         </span>
                       )}
-                      {form.gad7_severity && (
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${SEVERITY_COLORS[form.gad7_severity] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-                          GAD {form.gad7_score}
+                      {form.gad7_score !== null && (
+                        <span className="text-xs">
+                          GAD-7: <strong>{form.gad7_score}</strong>
                         </span>
-                      )}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); router.push(`/dashboard/intake/${form.id}`); }}
-                        className="text-xs text-teal-600 hover:text-teal-700 font-medium px-2 py-1 rounded hover:bg-teal-50 transition-colors"
-                      >
-                        Full view →
-                      </button>
-                      <span className="text-gray-400">{isExpanded ? "▲" : "▼"}</span>
-                    </div>
-                  </button>
-
-                  {isExpanded && (
-                    <div className="border-t border-gray-100 p-4 space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="p-3 bg-orange-50 rounded-lg">
-                          <p className="text-xs font-medium text-orange-700 uppercase tracking-wide">PHQ-9</p>
-                          <p className="text-xl font-bold text-orange-800 mt-1">{form.phq9_score !== null ? `${form.phq9_score}/27` : "—"}</p>
-                          <p className="text-xs text-orange-600 mt-0.5">{form.phq9_severity ?? "Not completed"}</p>
-                        </div>
-                        <div className="p-3 bg-violet-50 rounded-lg">
-                          <p className="text-xs font-medium text-violet-700 uppercase tracking-wide">GAD-7</p>
-                          <p className="text-xl font-bold text-violet-800 mt-1">{form.gad7_score !== null ? `${form.gad7_score}/21` : "—"}</p>
-                          <p className="text-xs text-violet-600 mt-0.5">{form.gad7_severity ?? "Not completed"}</p>
-                        </div>
-                      </div>
-                      {form.additional_notes && (
-                        <div className="p-3 bg-gray-50 rounded-lg">
-                          <p className="text-xs font-medium text-gray-500 mb-1">Additional Notes</p>
-                          <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{form.additional_notes}</p>
-                        </div>
-                      )}
-                      {form.intake_document_signatures?.length > 0 && (
-                        <div>
-                          <p className="text-xs font-medium text-gray-500 mb-2">Signed Documents</p>
-                          <div className="space-y-1.5">
-                            {form.intake_document_signatures.map((sig) => (
-                              <div key={sig.id} className="flex items-center gap-2 text-sm">
-                                <span className="text-green-500">✓</span>
-                                <span className="text-gray-700">{sig.intake_documents?.name ?? "Document"}</span>
-                                {sig.signed_name && <span className="text-gray-400 text-xs">signed as {sig.signed_name}</span>}
-                                <span className="text-gray-300 text-xs ml-auto">{formatDateTime(sig.signed_at)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
                       )}
                     </div>
                   )}
                 </div>
-              );
-            })}
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No intake forms yet.</p>
+          )}
+        </div>
+      </div>
+
+      {/* Outcome trend (if data exists) */}
+      {outcome_trend.length > 1 && (
+        <div className="bg-white border rounded-lg p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-900 mb-3">Outcome Trends</h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-500 border-b">
+                  <th className="pb-2">Date</th>
+                  <th className="pb-2">PHQ-9</th>
+                  <th className="pb-2">Severity</th>
+                  <th className="pb-2">GAD-7</th>
+                  <th className="pb-2">Severity</th>
+                </tr>
+              </thead>
+              <tbody>
+                {outcome_trend.map((point, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-2">{formatDate(point.date)}</td>
+                    <td className="py-2 font-medium">
+                      {point.phq9_score ?? "--"}
+                    </td>
+                    <td className="py-2">
+                      <SeverityBadge
+                        severity={
+                          (data as any).outcome_trend[i]?.phq9_severity || ""
+                        }
+                      />
+                    </td>
+                    <td className="py-2 font-medium">
+                      {point.gad7_score ?? "--"}
+                    </td>
+                    <td className="py-2">
+                      <SeverityBadge
+                        severity={
+                          (data as any).outcome_trend[i]?.gad7_severity || ""
+                        }
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
+      )}
 
-        <div className="text-xs text-gray-400 text-center pb-4">Patient key: {patient.key}</div>
+      {/* Call history */}
+      <div className="bg-white border rounded-lg p-5 shadow-sm">
+        <h2 className="font-semibold text-gray-900 mb-3">
+          Call History ({call_logs.length})
+        </h2>
+        {call_logs.length > 0 ? (
+          <div className="space-y-3">
+            {call_logs.map((call) => (
+              <div key={call.id} className="border-b pb-3 last:border-0">
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">
+                      {formatDate(call.created_at)}
+                    </span>
+                    {call.new_patient && (
+                      <span className="bg-blue-100 text-blue-800 text-xs px-1.5 py-0.5 rounded">
+                        New Patient
+                      </span>
+                    )}
+                    {call.intake_sent && (
+                      <span className="bg-green-100 text-green-800 text-xs px-1.5 py-0.5 rounded">
+                        Intake Sent
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-gray-500">
+                    {formatDuration(call.duration_seconds)}
+                  </span>
+                </div>
+                {call.summary && (
+                  <p className="text-sm text-gray-600 mt-1">{call.summary}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No call records.</p>
+        )}
+      </div>
+
+      {/* Appointments */}
+      <div className="bg-white border rounded-lg p-5 shadow-sm">
+        <h2 className="font-semibold text-gray-900 mb-3">
+          Appointments ({appointments.length})
+        </h2>
+        {appointments.length > 0 ? (
+          <div className="space-y-2">
+            {appointments.map((appt) => (
+              <div
+                key={appt.id}
+                className="flex items-center justify-between text-sm border-b pb-2 last:border-0"
+              >
+                <div>
+                  <span className="font-medium">
+                    {formatDate(appt.appointment_date)}
+                  </span>
+                  {appt.appointment_time && (
+                    <span className="text-gray-500 ml-1">
+                      at {formatTime(appt.appointment_time)}
+                    </span>
+                  )}
+                  {appt.provider_name && (
+                    <span className="text-gray-400 ml-2">
+                      w/ {appt.provider_name}
+                    </span>
+                  )}
+                </div>
+                <span
+                  className={`text-xs px-2 py-0.5 rounded ${
+                    appt.status === "confirmed"
+                      ? "bg-green-100 text-green-800"
+                      : appt.status === "cancelled"
+                      ? "bg-red-100 text-red-800"
+                      : "bg-gray-100 text-gray-600"
+                  }`}
+                >
+                  {appt.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No appointments scheduled.</p>
+        )}
       </div>
     </div>
   );
-                                                                   }
+}
