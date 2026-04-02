@@ -1,9 +1,7 @@
 // app/api/patients/route.ts
 // Harbor — Practice-scoped patient list
-// FIX: Queries the `patients` table as the primary source (not just completed intake_forms).
-// This ensures ALL patients appear on the dashboard — including new patients who called
-// but haven't completed their intake forms yet.
-// Enriches with intake_forms data (PHQ-9/GAD-7 scores, completion dates) where available.
+// FIX: Queries the `patients` table as the primary source.
+// BUGFIX: Filter intake_forms by status='completed' so pending forms don't show as "Intake Complete"
 // GET /api/patients?search=&page=&limit=
 
 import { NextRequest, NextResponse } from "next/server";
@@ -19,11 +17,13 @@ async function getAuthenticatedUser(req: NextRequest) {
   if (!authHeader?.startsWith("Bearer ")) {
     return { user: null, error: "Missing or invalid authorization header" };
   }
+
   const token = authHeader.slice(7);
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) {
     return { user: null, error: "Unauthorized" };
   }
+
   return { user, error: null };
 }
 
@@ -45,7 +45,6 @@ export async function GET(req: NextRequest) {
   }
 
   const practiceId = userRecord.practice_id;
-
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search")?.toLowerCase().trim();
 
@@ -60,14 +59,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: patientsError.message }, { status: 500 });
   }
 
-  // 2. Get completed intake forms to enrich patient data with screening scores
-  const { data: forms } = await supabase
+  // 2. Get COMPLETED intake forms only — to enrich patient data with screening scores
+  // BUGFIX: Previously fetched ALL forms without status filter, causing pending forms
+  // to be incorrectly shown as "Intake Complete"
+  const { data: completedForms } = await supabase
     .from("intake_forms")
     .select(
-      `id, patient_name, patient_email, patient_phone, patient_dob,
-       phq9_score, phq9_severity, gad7_score, gad7_severity, status, completed_at`
+      `id, patient_name, patient_email, patient_phone, patient_dob, phq9_score, phq9_severity, gad7_score, gad7_severity, status, completed_at`
     )
     .eq("practice_id", practiceId)
+    .eq("status", "completed")
     .order("completed_at", { ascending: false });
 
   // 3. Get pending/sent intake forms to show intake status for patients who haven't completed yet
@@ -94,8 +95,8 @@ export async function GET(req: NextRequest) {
   >();
 
   // Process completed forms first
-  if (forms) {
-    for (const form of forms) {
+  if (completedForms) {
+    for (const form of completedForms) {
       const phone = form.patient_phone?.replace(/\D/g, "");
       if (!phone) continue;
 
@@ -114,33 +115,30 @@ export async function GET(req: NextRequest) {
       }
 
       const entry = intakeByPhone.get(phone)!;
+      entry.intake_count++;
 
-      if (form.status === "completed") {
-        entry.intake_count++;
+      // First completed entry (newest) sets the "latest" values
+      if (entry.last_seen === null && form.completed_at) {
+        entry.last_seen = form.completed_at;
+        entry.latest_phq9_score = form.phq9_score;
+        entry.latest_phq9_severity = form.phq9_severity;
+        entry.latest_gad7_score = form.gad7_score;
+        entry.latest_gad7_severity = form.gad7_severity;
+      }
 
-        // First completed entry (newest) sets the "latest" values
-        if (entry.last_seen === null && form.completed_at) {
-          entry.last_seen = form.completed_at;
-          entry.latest_phq9_score = form.phq9_score;
-          entry.latest_phq9_severity = form.phq9_severity;
-          entry.latest_gad7_score = form.gad7_score;
-          entry.latest_gad7_severity = form.gad7_severity;
+      // Build chronological history
+      if (form.completed_at) {
+        if (form.phq9_score !== null) {
+          entry.phq9_history.unshift({ date: form.completed_at, score: form.phq9_score });
         }
-
-        // Build chronological history
-        if (form.completed_at) {
-          if (form.phq9_score !== null) {
-            entry.phq9_history.unshift({ date: form.completed_at, score: form.phq9_score });
-          }
-          if (form.gad7_score !== null) {
-            entry.gad7_history.unshift({ date: form.completed_at, score: form.gad7_score });
-          }
+        if (form.gad7_score !== null) {
+          entry.gad7_history.unshift({ date: form.completed_at, score: form.gad7_score });
         }
       }
     }
   }
 
-  // Mark patients with pending intake forms
+  // Mark patients with pending intake forms (only if they don't already have completed forms)
   if (pendingForms) {
     for (const form of pendingForms) {
       const phone = form.patient_phone?.replace(/\D/g, "");

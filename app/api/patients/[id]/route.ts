@@ -1,7 +1,7 @@
 // app/api/patients/[id]/route.ts
 // Harbor — Full patient profile by UUID
-// FIX: Looks up patient by actual UUID from the patients table
-// (old version used base64-encoded email/phone, which broke when patients came from calls)
+// FIX: Enriches patient record with demographics from completed intake forms
+// so every patient has a complete profile page regardless of when they filled out intake.
 // GET /api/patients/[id]
 
 import { NextRequest, NextResponse } from "next/server";
@@ -64,34 +64,51 @@ export async function GET(
     );
   }
 
-  // 2. Get all intake forms for this patient (by phone match)
-  const normalizedPhone = patient.phone?.replace(/\D/g, "");
+  // 2. Get all intake forms for this patient
+  // FIX: Match by patient_id first (direct link), then fall back to phone match
   let intakeForms: any[] = [];
 
-  if (normalizedPhone) {
-    const { data: forms } = await supabase
-      .from("intake_forms")
-      .select(
-        `id, patient_name, patient_email, patient_phone, patient_dob,
-         phq9_score, phq9_severity, gad7_score, gad7_severity,
-         status, token, created_at, completed_at, expires_at`
-      )
-      .eq("practice_id", practiceId)
-      .order("created_at", { ascending: false });
+  // Try patient_id match first
+  const { data: formsByPatientId } = await supabase
+    .from("intake_forms")
+    .select(
+      `id, patient_name, patient_email, patient_phone, patient_dob,
+       phq9_score, phq9_severity, gad7_score, gad7_severity,
+       status, token, created_at, completed_at, expires_at, patient_id`
+    )
+    .eq("practice_id", practiceId)
+    .eq("patient_id", patientId)
+    .order("created_at", { ascending: false });
 
-    // Filter by phone match (normalize both sides)
-    intakeForms = (forms || []).filter(
-      (f) => f.patient_phone?.replace(/\D/g, "") === normalizedPhone
-    );
+  if (formsByPatientId && formsByPatientId.length > 0) {
+    intakeForms = formsByPatientId;
+  } else {
+    // Fallback: match by phone number (for forms created before patient_id linking)
+    const normalizedPhone = patient.phone?.replace(/\D/g, "");
+    if (normalizedPhone) {
+      const { data: forms } = await supabase
+        .from("intake_forms")
+        .select(
+          `id, patient_name, patient_email, patient_phone, patient_dob,
+           phq9_score, phq9_severity, gad7_score, gad7_severity,
+           status, token, created_at, completed_at, expires_at`
+        )
+        .eq("practice_id", practiceId)
+        .order("created_at", { ascending: false });
+
+      intakeForms = (forms || []).filter(
+        (f) => f.patient_phone?.replace(/\D/g, "") === normalizedPhone
+      );
+    }
   }
 
   // 3. Get call logs for this patient
   const { data: callLogs } = await supabase
     .from("call_logs")
     .select(
-      `id, vapi_call_id, caller_phone, duration_seconds, summary,
-       new_patient, intake_sent, intake_delivery_preference, intake_email,
-       created_at`
+      `id, patient_phone, duration_seconds, summary,
+       call_type, caller_name, intake_sent, intake_delivery_preference, intake_email,
+       crisis_detected, created_at`
     )
     .eq("practice_id", practiceId)
     .eq("patient_id", patientId)
@@ -102,24 +119,41 @@ export async function GET(
   const { data: appointments } = await supabase
     .from("appointments")
     .select(
-      `id, appointment_date, appointment_time, duration_minutes,
-       status, provider_name, type, notes, created_at`
+      `id, scheduled_at, duration_minutes,
+       status, appointment_type, source, patient_name`
     )
     .eq("practice_id", practiceId)
     .eq("patient_id", patientId)
-    .order("appointment_date", { ascending: false })
+    .order("scheduled_at", { ascending: false })
     .limit(20);
 
   // 5. Get crisis alerts for this patient
   const { data: crisisAlerts } = await supabase
     .from("crisis_alerts")
-    .select("id, severity, summary, status, created_at")
+    .select("id, call_log_id, patient_phone, triggered_at, sms_sent")
     .eq("practice_id", practiceId)
     .eq("patient_phone", patient.phone)
-    .order("created_at", { ascending: false })
+    .order("triggered_at", { ascending: false })
     .limit(10);
 
-  // 6. Build outcome trend data from completed intake forms
+  // 6. Get tasks/messages for this patient
+  // tasks columns: id, practice_id, type, patient_name, patient_phone, transcript, summary, status, created_at
+  let tasks: any[] = [];
+  if (patient.phone) {
+    const normalizedPhone = patient.phone.replace(/\D/g, "");
+    const { data: allTasks } = await supabase
+      .from("tasks")
+      .select("id, type, patient_name, patient_phone, summary, status, created_at")
+      .eq("practice_id", practiceId)
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    tasks = (allTasks || []).filter(
+      (t) => t.patient_phone?.replace(/\D/g, "") === normalizedPhone
+    ).slice(0, 20);
+  }
+
+  // 7. Build outcome trend data from completed intake forms
   const outcomeTrend = intakeForms
     .filter((f) => f.status === "completed" && f.completed_at)
     .map((f) => ({
@@ -131,12 +165,13 @@ export async function GET(
     }))
     .reverse(); // oldest first for charting
 
+  // 8. Enrich patient data with demographics from completed intake forms
+  const completedIntake = intakeForms.find((f) => f.status === "completed");
+
   // Determine current intake status
   const pendingIntake = intakeForms.find(
     (f) => f.status === "pending" || f.status === "sent" || f.status === "opened"
   );
-  const completedIntake = intakeForms.find((f) => f.status === "completed");
-
   const intakeStatus = pendingIntake
     ? pendingIntake.status
     : completedIntake
@@ -149,12 +184,24 @@ export async function GET(
       first_name: patient.first_name,
       last_name: patient.last_name,
       phone: patient.phone,
-      email: patient.email,
-      date_of_birth: patient.date_of_birth,
-      insurance_provider: patient.insurance_provider,
-      insurance_member_id: patient.insurance_member_id,
+      email: patient.email || completedIntake?.patient_email || null,
+      date_of_birth: patient.date_of_birth || completedIntake?.patient_dob || null,
+      insurance_provider: patient.insurance_provider || patient.insurance || null,
+      insurance_member_id: patient.insurance_member_id || null,
+      insurance_group_number: patient.insurance_group_number || null,
       notes: patient.notes,
       created_at: patient.created_at,
+      // Additional demographics from intake (enrichment)
+      address: patient.address || null,
+      pronouns: patient.pronouns || null,
+      emergency_contact_name: patient.emergency_contact_name || null,
+      emergency_contact_phone: patient.emergency_contact_phone || null,
+      referral_source: patient.referral_source || null,
+      reason_for_seeking: patient.reason_for_seeking || null,
+      telehealth_preference: patient.telehealth_preference || null,
+      // Status fields
+      intake_completed: patient.intake_completed || intakeStatus === 'completed',
+      intake_completed_at: patient.intake_completed_at || completedIntake?.completed_at || null,
     },
     intake_status: intakeStatus,
     intake_forms: intakeForms.map((f) => ({
@@ -170,6 +217,7 @@ export async function GET(
     call_logs: callLogs || [],
     appointments: appointments || [],
     crisis_alerts: crisisAlerts || [],
+    tasks: tasks || [],
     outcome_trend: outcomeTrend,
   });
 }
@@ -196,7 +244,7 @@ export async function PATCH(
 
   const body = await req.json();
 
-  // Only allow updating specific fields
+  // Allow updating all patient fields
   const allowedFields = [
     "first_name",
     "last_name",
@@ -205,7 +253,15 @@ export async function PATCH(
     "date_of_birth",
     "insurance_provider",
     "insurance_member_id",
+    "insurance_group_number",
     "notes",
+    "address",
+    "pronouns",
+    "emergency_contact_name",
+    "emergency_contact_phone",
+    "referral_source",
+    "reason_for_seeking",
+    "telehealth_preference",
   ];
 
   const updates: Record<string, any> = {};
@@ -216,7 +272,10 @@ export async function PATCH(
   }
 
   if (Object.keys(updates).length === 0) {
-    return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
+    return NextResponse.json(
+      { error: "No valid fields to update" },
+      { status: 400 }
+    );
   }
 
   updates.updated_at = new Date().toISOString();

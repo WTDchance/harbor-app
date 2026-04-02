@@ -772,21 +772,72 @@ async function processEndOfCall(opts: {
 async function handleCollectIntake(params: any, practiceId: string | null): Promise<string> {
   const { name, phone, insurance, telehealthPreference, reason, preferredTimes } = params
 
-  if (practiceId) {
-    try {
-      await supabaseAdmin.from('intake_submissions').insert({
-        practice_id: practiceId,
-        patient_name: name || '',
-        patient_phone: phone || '',
-        insurance: insurance || '',
-        telehealth_preference: telehealthPreference || '',
-        reason_for_seeking: reason || '',
-        preferred_times: preferredTimes || '',
-        created_at: new Date().toISOString(),
-      })
-    } catch (err) {
-      console.error('[Vapi] Intake save error:', err)
+  if (!practiceId) {
+    return 'Intake information has been recorded. The practice team will follow up within one business day to confirm the appointment.'
+  }
+
+  try {
+    const nameParts = (name || '').trim().split(/\s+/).filter(Boolean)
+    const firstName = nameParts[0] || ''
+    const lastName = nameParts.slice(1).join(' ') || ''
+    const normalizedPhone = phone?.replace(/\D/g, '').slice(-10) || ''
+
+    let patientId: string | null = null
+
+    if (normalizedPhone && normalizedPhone.length >= 10) {
+      const { data: existing } = await supabaseAdmin
+        .from('patients')
+        .select('id')
+        .eq('practice_id', practiceId)
+        .ilike('phone', `%${normalizedPhone}`)
+        .limit(1)
+        .maybeSingle()
+
+      if (existing) {
+        patientId = existing.id
+      }
     }
+
+    if (patientId) {
+      const updates: Record<string, any> = { updated_at: new Date().toISOString() }
+      if (firstName) updates.first_name = firstName
+      if (lastName) updates.last_name = lastName
+      if (insurance) updates.insurance_provider = insurance
+      if (reason) updates.reason_for_seeking = reason
+      if (telehealthPreference) updates.telehealth_preference = telehealthPreference
+      if (preferredTimes) updates.preferred_times = preferredTimes
+
+      await supabaseAdmin
+        .from('patients')
+        .update(updates)
+        .eq('id', patientId)
+
+      console.log(`[Vapi] Updated existing patient ${patientId} with intake info from call`)
+    } else {
+      const { data: created, error: createErr } = await supabaseAdmin
+        .from('patients')
+        .insert({
+          practice_id: practiceId,
+          first_name: firstName || 'New',
+          last_name: lastName || 'Caller',
+          phone: phone || null,
+          insurance_provider: insurance || null,
+          reason_for_seeking: reason || null,
+          telehealth_preference: telehealthPreference || null,
+          preferred_times: preferredTimes || null,
+          created_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single()
+
+      if (createErr) {
+        console.error('[Vapi] Failed to create patient from intake tool:', createErr.message)
+      } else {
+        console.log(`[Vapi] Created new patient ${created?.id} from intake tool call`)
+      }
+    }
+  } catch (err) {
+    console.error('[Vapi] Intake tool handler error:', err)
   }
 
   return 'Intake information has been recorded. The practice team will follow up within one business day to confirm the appointment.'
@@ -800,18 +851,64 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
 async function handleTakeMessage(params: any, practiceId: string | null): Promise<string> {
   const { callerName, phone, message: msg } = params
 
-  if (practiceId) {
-    try {
-      await supabaseAdmin.from('intake_submissions').insert({
-        practice_id: practiceId,
-        patient_name: callerName || '',
-        patient_phone: phone || '',
-        reason_for_seeking: `Message: ${msg || 'No message provided'}`,
-        created_at: new Date().toISOString(),
-      })
-    } catch (err) {
-      console.error('[Vapi] Message save error:', err)
+  if (!practiceId) {
+    return 'Your message has been recorded. The therapist will get back to you as soon as possible.'
+  }
+
+  try {
+    const nameParts = (callerName || '').trim().split(/\s+/).filter(Boolean)
+    const firstName = nameParts[0] || ''
+    const lastName = nameParts.slice(1).join(' ') || ''
+    const normalizedPhone = phone?.replace(/\D/g, '').slice(-10) || ''
+
+    let patientId: string | null = null
+
+    if (normalizedPhone && normalizedPhone.length >= 10) {
+      const { data: existing } = await supabaseAdmin
+        .from('patients')
+        .select('id')
+        .eq('practice_id', practiceId)
+        .ilike('phone', `%${normalizedPhone}`)
+        .limit(1)
+        .maybeSingle()
+
+      if (existing) {
+        patientId = existing.id
+      }
     }
+
+    if (!patientId && (firstName || normalizedPhone)) {
+      const { data: created } = await supabaseAdmin
+        .from('patients')
+        .insert({
+          practice_id: practiceId,
+          first_name: firstName || 'Unknown',
+          last_name: lastName || 'Caller',
+          phone: phone || null,
+          created_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single()
+
+      if (created) {
+        patientId = created.id
+        console.log(`[Vapi] Created patient ${patientId} from takeMessage tool`)
+      }
+    }
+
+    await supabaseAdmin.from('tasks').insert({
+      practice_id: practiceId,
+      type: 'message',
+      patient_name: callerName || 'Unknown Caller',
+      patient_phone: phone || null,
+      summary: msg || 'No message provided',
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    })
+
+    console.log(`[Vapi] Message saved as task for patient ${patientId || '(unknown)'}`)
+  } catch (err) {
+    console.error('[Vapi] TakeMessage handler error:', err)
   }
 
   return 'Your message has been recorded. The therapist will get back to you as soon as possible.'
@@ -822,14 +919,37 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
 
   if (practiceId) {
     try {
-      await supabaseAdmin.from('intake_submissions').upsert({
+      const nameParts = (patientName || '').trim().split(/\s+/).filter(Boolean)
+
+      let patientId: string | null = null
+      if (nameParts.length > 0) {
+        const { data: found } = await supabaseAdmin
+          .from('patients')
+          .select('id')
+          .eq('practice_id', practiceId)
+          .ilike('first_name', nameParts[0])
+          .limit(1)
+          .maybeSingle()
+
+        if (found) patientId = found.id
+      }
+
+      const totalScore = (parseInt(phq2Score) || 0) + (parseInt(gad2Score) || 0)
+      const severity = totalScore >= 6 ? 'severe' : totalScore >= 3 ? 'moderate' : 'mild'
+
+      await supabaseAdmin.from('outcome_assessments').insert({
         practice_id: practiceId,
-        patient_name: patientName || '',
-        phq2_score: phq2Score || 0,
-        gad2_score: gad2Score || 0,
-        screening_completed: true,
+        patient_name: patientName || null,
+        assessment_type: 'phq2_gad2_phone',
+        status: 'completed',
+        score: totalScore,
+        severity: severity,
+        responses: { phq2: phq2Score || 0, gad2: gad2Score || 0 },
+        completed_at: new Date().toISOString(),
         created_at: new Date().toISOString(),
       })
+
+      console.log(`[Vapi] Phone screening saved for patient ${patientId || '(unknown)'}: PHQ-2=${phq2Score}, GAD-2=${gad2Score}`)
     } catch (err) {
       console.error('[Vapi] Screening save error:', err)
     }
@@ -837,6 +957,7 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
 
   const phq = parseInt(phq2Score) || 0
   const gad = parseInt(gad2Score) || 0
+
   if (phq >= 3 || gad >= 3) {
     return 'Thank you for sharing that. I want to make sure the therapist has this information before your appointment so they can provide you with the best care.'
   }
