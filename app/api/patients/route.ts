@@ -1,6 +1,9 @@
 // app/api/patients/route.ts
 // Harbor — Practice-scoped patient list
-// Aggregates unique patients from completed intake_forms for the practice.
+// FIX: Queries the `patients` table as the primary source (not just completed intake_forms).
+// This ensures ALL patients appear on the dashboard — including new patients who called
+// but haven't completed their intake forms yet.
+// Enriches with intake_forms data (PHQ-9/GAD-7 scores, completion dates) where available.
 // GET /api/patients?search=&page=&limit=
 
 import { NextRequest, NextResponse } from "next/server";
@@ -18,50 +21,67 @@ async function getAuthenticatedUser(req: NextRequest) {
   }
   const token = authHeader.slice(7);
   const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return { user: null, error: "Unauthorized" };
+  if (error || !user) {
+    return { user: null, error: "Unauthorized" };
+  }
   return { user, error: null };
 }
 
 export async function GET(req: NextRequest) {
   const { user, error } = await getAuthenticatedUser(req);
-  if (!user) return NextResponse.json({ error }, { status: 401 });
+  if (error || !user) {
+    return NextResponse.json({ error }, { status: 401 });
+  }
 
-  // Look up practice via users table (practices has no user_id column)
+  // Look up practice via users table
   const { data: userRecord } = await supabase
     .from("users")
     .select("practice_id")
     .eq("id", user.id)
     .single();
 
-  if (!userRecord?.practice_id) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  if (!userRecord?.practice_id) {
+    return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  }
+
   const practiceId = userRecord.practice_id;
 
   const { searchParams } = new URL(req.url);
-  const search = searchParams.get("search")?.toLowerCase().trim() ?? "";
+  const search = searchParams.get("search")?.toLowerCase().trim();
 
-  // Pull all completed intake forms for this practice, newest first
-  const { data: forms, error: formsError } = await supabase
+  // 1. Get ALL patients for this practice from the patients table
+  const { data: patients, error: patientsError } = await supabase
+    .from("patients")
+    .select("id, first_name, last_name, phone, email, date_of_birth, created_at")
+    .eq("practice_id", practiceId)
+    .order("created_at", { ascending: false });
+
+  if (patientsError) {
+    return NextResponse.json({ error: patientsError.message }, { status: 500 });
+  }
+
+  // 2. Get completed intake forms to enrich patient data with screening scores
+  const { data: forms } = await supabase
     .from("intake_forms")
     .select(
       `id, patient_name, patient_email, patient_phone, patient_dob,
-       phq9_score, phq9_severity, gad7_score, gad7_severity, completed_at`
+       phq9_score, phq9_severity, gad7_score, gad7_severity, status, completed_at`
     )
     .eq("practice_id", practiceId)
-    .eq("status", "completed")
-    .not("completed_at", "is", null)
     .order("completed_at", { ascending: false });
 
-  if (formsError) return NextResponse.json({ error: formsError.message }, { status: 500 });
+  // 3. Get pending/sent intake forms to show intake status for patients who haven't completed yet
+  const { data: pendingForms } = await supabase
+    .from("intake_forms")
+    .select("id, patient_phone, patient_name, status, created_at")
+    .eq("practice_id", practiceId)
+    .in("status", ["pending", "sent", "opened"]);
 
-  // Aggregate by email (fall back to phone, then name) to deduplicate patients
-  const patientMap = new Map<
+  // Build a map of intake data by phone number for enrichment
+  const intakeByPhone = new Map<
     string,
     {
-      key: string;
-      patient_name: string | null;
-      patient_email: string | null;
-      patient_phone: string | null;
-      patient_dob: string | null;
+      intake_status: string;
       intake_count: number;
       last_seen: string | null;
       latest_phq9_score: number | null;
@@ -73,59 +93,103 @@ export async function GET(req: NextRequest) {
     }
   >();
 
-  for (const form of forms ?? []) {
-    const key =
-      form.patient_email?.toLowerCase() ||
-      form.patient_phone ||
-      form.patient_name ||
-      form.id;
+  // Process completed forms first
+  if (forms) {
+    for (const form of forms) {
+      const phone = form.patient_phone?.replace(/\D/g, "");
+      if (!phone) continue;
 
-    if (!patientMap.has(key)) {
-      patientMap.set(key, {
-        key,
-        patient_name: form.patient_name,
-        patient_email: form.patient_email,
-        patient_phone: form.patient_phone,
-        patient_dob: form.patient_dob,
-        intake_count: 0,
-        last_seen: null,
-        latest_phq9_score: null,
-        latest_phq9_severity: null,
-        latest_gad7_score: null,
-        latest_gad7_severity: null,
-        phq9_history: [],
-        gad7_history: [],
-      });
-    }
-
-    const p = patientMap.get(key)!;
-    p.intake_count++;
-
-    // First entry (newest) sets the "latest" values
-    if (p.last_seen === null) {
-      p.last_seen = form.completed_at;
-      p.latest_phq9_score = form.phq9_score;
-      p.latest_phq9_severity = form.phq9_severity;
-      p.latest_gad7_score = form.gad7_score;
-      p.latest_gad7_severity = form.gad7_severity;
-    }
-
-    // Build chronological history (oldest first for charting)
-    if (form.completed_at) {
-      if (form.phq9_score !== null) {
-        p.phq9_history.unshift({ date: form.completed_at, score: form.phq9_score });
+      if (!intakeByPhone.has(phone)) {
+        intakeByPhone.set(phone, {
+          intake_status: "completed",
+          intake_count: 0,
+          last_seen: null,
+          latest_phq9_score: null,
+          latest_phq9_severity: null,
+          latest_gad7_score: null,
+          latest_gad7_severity: null,
+          phq9_history: [],
+          gad7_history: [],
+        });
       }
-      if (form.gad7_score !== null) {
-        p.gad7_history.unshift({ date: form.completed_at, score: form.gad7_score });
+
+      const entry = intakeByPhone.get(phone)!;
+
+      if (form.status === "completed") {
+        entry.intake_count++;
+
+        // First completed entry (newest) sets the "latest" values
+        if (entry.last_seen === null && form.completed_at) {
+          entry.last_seen = form.completed_at;
+          entry.latest_phq9_score = form.phq9_score;
+          entry.latest_phq9_severity = form.phq9_severity;
+          entry.latest_gad7_score = form.gad7_score;
+          entry.latest_gad7_severity = form.gad7_severity;
+        }
+
+        // Build chronological history
+        if (form.completed_at) {
+          if (form.phq9_score !== null) {
+            entry.phq9_history.unshift({ date: form.completed_at, score: form.phq9_score });
+          }
+          if (form.gad7_score !== null) {
+            entry.gad7_history.unshift({ date: form.completed_at, score: form.gad7_score });
+          }
+        }
       }
     }
   }
 
-  let patients = Array.from(patientMap.values());
+  // Mark patients with pending intake forms
+  if (pendingForms) {
+    for (const form of pendingForms) {
+      const phone = form.patient_phone?.replace(/\D/g, "");
+      if (!phone) continue;
 
-  // Apply search filter
+      if (!intakeByPhone.has(phone)) {
+        intakeByPhone.set(phone, {
+          intake_status: form.status, // "pending", "sent", or "opened"
+          intake_count: 0,
+          last_seen: null,
+          latest_phq9_score: null,
+          latest_phq9_severity: null,
+          latest_gad7_score: null,
+          latest_gad7_severity: null,
+          phq9_history: [],
+          gad7_history: [],
+        });
+      }
+    }
+  }
+
+  // 4. Build the patient list from the patients table, enriched with intake data
+  let result = (patients || []).map((p) => {
+    const normalizedPhone = p.phone?.replace(/\D/g, "") || "";
+    const intake = intakeByPhone.get(normalizedPhone);
+    const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ") || null;
+
+    return {
+      key: p.id,
+      patient_name: fullName,
+      patient_email: p.email,
+      patient_phone: p.phone,
+      patient_dob: p.date_of_birth,
+      intake_status: intake?.intake_status || "none", // "completed", "pending", "sent", "opened", or "none"
+      intake_count: intake?.intake_count || 0,
+      last_seen: intake?.last_seen || p.created_at,
+      latest_phq9_score: intake?.latest_phq9_score || null,
+      latest_phq9_severity: intake?.latest_phq9_severity || null,
+      latest_gad7_score: intake?.latest_gad7_score || null,
+      latest_gad7_severity: intake?.latest_gad7_severity || null,
+      phq9_history: intake?.phq9_history || [],
+      gad7_history: intake?.gad7_history || [],
+      created_at: p.created_at,
+    };
+  });
+
+  // 5. Apply search filter
   if (search) {
-    patients = patients.filter(
+    result = result.filter(
       (p) =>
         p.patient_name?.toLowerCase().includes(search) ||
         p.patient_email?.toLowerCase().includes(search) ||
@@ -133,10 +197,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Sort by last_seen descending
-  patients.sort((a, b) =>
-    (b.last_seen ?? "").localeCompare(a.last_seen ?? "")
-  );
+  // 6. Sort by last_seen descending (most recent activity first)
+  result.sort((a, b) => {
+    if (!a.last_seen && !b.last_seen) return 0;
+    if (!a.last_seen) return 1;
+    if (!b.last_seen) return -1;
+    return b.last_seen.localeCompare(a.last_seen);
+  });
 
-  return NextResponse.json({ patients, total: patients.length });
+  return NextResponse.json({ patients: result, total: result.length });
 }

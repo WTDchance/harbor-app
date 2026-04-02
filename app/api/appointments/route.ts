@@ -1,3 +1,9 @@
+// FILE: app/api/appointments/route.ts
+// FIXES:
+//   1. getPractice() now queries users table for practice_id (like every other route)
+//      instead of fragile notification_email match on practices table
+//   2. Cancellation fill baseUrl uses NEXT_PUBLIC_APP_URL (not NEXT_PUBLIC_SITE_URL/VERCEL_URL)
+
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
@@ -10,23 +16,44 @@ async function getPractice() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
       cookies: {
-        getAll: () => cookieStore.getAll(),
-        setAll: (s) => {
-          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
+        getAll() { return cookieStore.getAll() },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }: any) => {
+              cookieStore.set(name, value, options)
+            })
+          } catch {}
         }
       }
     }
   )
+
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabase.from('practices').select('id, name').eq('notification_email', user.email).single()
-  return data
+
+  const { data: userData } = await supabaseAdmin
+    .from('users')
+    .select('practice_id')
+    .eq('id', user.id)
+    .single()
+
+  if (!userData?.practice_id) return null
+
+  const { data: practice } = await supabaseAdmin
+    .from('practices')
+    .select('id, name')
+    .eq('id', userData.practice_id)
+    .single()
+
+  return practice
 }
 
 export async function GET(req: NextRequest) {
   try {
     const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!practice) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
     const { searchParams } = new URL(req.url)
     const week = searchParams.get('week')
@@ -34,23 +61,29 @@ export async function GET(req: NextRequest) {
     const end = searchParams.get('end')
     const today = new Date().toISOString().split('T')[0]
 
-    let query = supabaseAdmin.from('appointments').select('*').eq('practice_id', practice.id).order('appointment_date').order('appointment_time')
+    let query = supabaseAdmin
+      .from('appointments')
+      .select('*')
+      .eq('practice_id', practice.id)
+      .order('appointment_date')
+      .order('appointment_time')
 
     if (start && end) {
       query = query.gte('appointment_date', start).lte('appointment_date', end)
     } else if (week) {
       const endDate = new Date(week + 'T00:00:00Z')
-      endDate.setDate(endDate.getDate() + 6)
+      endDate.setDate(endDate.getDate() + 7)
       query = query.gte('appointment_date', week).lte('appointment_date', endDate.toISOString().split('T')[0])
     } else {
       const future = new Date()
-      future.setDate(future.getDate() + 30)
+      future.setDate(future.getDate() + 7)
       query = query.gte('appointment_date', today).lte('appointment_date', future.toISOString().split('T')[0])
     }
 
     const { data, error } = await query
     if (error) throw error
-    return NextResponse.json({ appointments: data || [] })
+
+    return NextResponse.json({ appointments: data })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
@@ -59,13 +92,21 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!practice) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const body = await req.json()
-    const { data, error } = await supabaseAdmin.from('appointments').insert({
-      practice_id: practice.id,
-      source: 'manual',
-      ...body
-    }).select().single()
+    const { data, error } = await supabaseAdmin
+      .from('appointments')
+      .insert({
+        practice_id: practice.id,
+        source: 'manual',
+        ...body,
+      })
+      .select()
+      .single()
+
     if (error) throw error
     return NextResponse.json({ appointment: data })
   } catch (e: any) {
@@ -76,10 +117,12 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!practice) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { id, ...updates } = await req.json()
 
-    // Get the appointment before updating so we know if it's becoming a cancellation
     const { data: existing } = await supabaseAdmin
       .from('appointments')
       .select('status, appointment_date, appointment_time, duration_minutes, patient_id')
@@ -87,13 +130,19 @@ export async function PATCH(req: NextRequest) {
       .eq('practice_id', practice.id)
       .single()
 
-    const { data, error } = await supabaseAdmin.from('appointments').update({
-      ...updates,
-      updated_at: new Date().toISOString()
-    }).eq('id', id).eq('practice_id', practice.id).select().single()
+    const { data, error } = await supabaseAdmin
+      .from('appointments')
+      .update({
+        ...updates,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('practice_id', practice.id)
+      .select()
+      .single()
+
     if (error) throw error
 
-    // Auto-trigger cancellation fill when appointment is cancelled
     if (
       updates.status === 'cancelled' &&
       existing?.status !== 'cancelled' &&
@@ -102,17 +151,17 @@ export async function PATCH(req: NextRequest) {
     ) {
       try {
         const slotTime = new Date(`${existing.appointment_date}T${existing.appointment_time}`)
-        const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || process.env.VERCEL_URL || 'http://localhost:3000'
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+
         await fetch(`${baseUrl}/api/cancellation/fill`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             practice_id: practice.id,
             slot_time: slotTime.toISOString(),
-            was_telehealth: false, // Could be enhanced to track this on appointments
+            was_telehealth: false,
           }),
         })
-        console.log(`✓ Auto-triggered cancellation fill for ${existing.appointment_date} ${existing.appointment_time}`)
       } catch (fillErr) {
         console.error('Auto-fill trigger failed (non-blocking):', fillErr)
       }
@@ -127,12 +176,19 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if (!practice) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
     const { searchParams } = new URL(req.url)
-    await supabaseAdmin.from('appointments').delete().eq('id', searchParams.get('id')!).eq('practice_id', practice.id)
+    await supabaseAdmin
+      .from('appointments')
+      .delete()
+      .eq('id', searchParams.get('id')!)
+      .eq('practice_id', practice.id)
+
     return NextResponse.json({ success: true })
   } catch (e: any) {
     return NextResponse.json({ error: e.message }, { status: 500 })
   }
 }
-

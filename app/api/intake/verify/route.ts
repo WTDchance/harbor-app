@@ -1,3 +1,9 @@
+// FILE: app/api/intake/verify/route.ts
+// FIX: Query intake_forms table instead of intake_tokens
+// The send route writes tokens to intake_forms. The old verify route queried
+// intake_tokens which has its own auto-generated token — so it could never
+// find tokens created by the send route.
+
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
@@ -10,8 +16,10 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Missing token' }, { status: 400 })
   }
 
-  const { data: tokenData, error } = await supabaseAdmin
-    .from('intake_tokens')
+  // FIX: Read from intake_forms (where the send route writes the token)
+  // instead of intake_tokens (which has its own unrelated auto-generated token)
+  const { data: formData, error } = await supabaseAdmin
+    .from('intake_forms')
     .select(`
       id,
       practice_id,
@@ -20,43 +28,63 @@ export async function GET(request: NextRequest) {
       patient_email,
       status,
       expires_at,
-      practices:practice_id (
-        name,
-        provider_name,
-        ai_name
+      created_at,
+      practices (
+        id,
+        name
       )
     `)
     .eq('token', token)
     .single()
 
-  if (error || !tokenData) {
-    return NextResponse.json({ error: 'Invalid or expired intake link.' }, { status: 404 })
+  if (error || !formData) {
+    return NextResponse.json(
+      { error: 'Invalid or expired intake link. Please contact the practice for a new one.' },
+      { status: 404 }
+    )
   }
 
   // Check expiry
-  if (tokenData.expires_at && new Date(tokenData.expires_at) < new Date()) {
-    return NextResponse.json({ error: 'This intake link has expired. Please contact the practice for a new one.' }, { status: 410 })
+  if (formData.expires_at && new Date(formData.expires_at) < new Date()) {
+    return NextResponse.json(
+      { error: 'This intake link has expired. Please contact the practice for a new one.' },
+      { status: 410 }
+    )
   }
 
   // Check if already completed
-  if (tokenData.status === 'completed') {
-    return NextResponse.json({ error: 'This intake form has already been submitted.' }, { status: 410 })
+  if (formData.status === 'completed') {
+    return NextResponse.json(
+      { error: 'This intake form has already been submitted.' },
+      { status: 410 }
+    )
   }
 
   // Mark as opened if first time
-  if (tokenData.status === 'pending' || tokenData.status === 'sent') {
+  if (formData.status === 'pending' || formData.status === 'sent') {
     await supabaseAdmin
-      .from('intake_tokens')
+      .from('intake_forms')
       .update({ status: 'opened', opened_at: new Date().toISOString() })
-      .eq('id', tokenData.id)
+      .eq('id', formData.id)
+
+    // Also update the corresponding intake_tokens record if one exists
+    // (for tracking purposes — correlate by practice_id + patient_phone)
+    if (formData.patient_phone) {
+      await supabaseAdmin
+        .from('intake_tokens')
+        .update({ status: 'opened', opened_at: new Date().toISOString() })
+        .eq('practice_id', formData.practice_id)
+        .eq('patient_phone', formData.patient_phone)
+        .is('opened_at', null)
+    }
   }
 
   return NextResponse.json({
-    id: tokenData.id,
-    practice_id: tokenData.practice_id,
-    patient_name: tokenData.patient_name,
-    patient_phone: tokenData.patient_phone,
-    patient_email: tokenData.patient_email,
-    practice: tokenData.practices,
+    id: formData.id,
+    practice_id: formData.practice_id,
+    patient_name: formData.patient_name,
+    patient_phone: formData.patient_phone,
+    patient_email: formData.patient_email,
+    practice: formData.practices,
   })
 }
