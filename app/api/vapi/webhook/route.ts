@@ -729,6 +729,42 @@ async function processEndOfCall(opts: {
       console.error('[Vapi] Intake auto-send error:', err)
     }
   }
+
+  // 8. Create appointment record if one was scheduled during the call
+  if (info.appointmentScheduled && info.appointmentTime) {
+    try {
+      const appointmentPatientId = existingPatient?.id || newPatient?.id
+      const appointmentData: any = {
+        practice_id: practiceId,
+        patient_id: appointmentPatientId || null,
+        patient_name: info.patientName || null,
+        patient_phone: patientPhone || null,
+        patient_email: info.patientEmail || null,
+        appointment_time: info.appointmentTime,
+        status: 'scheduled',
+        source: 'ai_call',
+        duration_minutes: 60,
+      }
+
+      const parsedDate = parseAppointmentDate(info.appointmentTime)
+      if (parsedDate) {
+        appointmentData.scheduled_at = parsedDate.toISOString()
+        appointmentData.appointment_date = parsedDate.toISOString().split('T')[0]
+      }
+
+      const { error: apptError } = await supabaseAdmin
+        .from('appointments')
+        .insert(appointmentData)
+
+      if (apptError) {
+        console.error('[Vapi] Failed to create appointment:', apptError.message)
+      } else {
+        console.log(`[Vapi] Appointment created: ${info.appointmentTime} for ${info.patientName || patientPhone}`)
+      }
+    } catch (err) {
+      console.error('[Vapi] Appointment creation error:', err)
+    }
+  }
 }
 
 // ---- Tool handlers ----
@@ -930,4 +966,62 @@ function formatHours(hoursJson: any): string {
   } catch {
     return 'Monday through Friday, 9am to 5pm'
   }
+}
+
+function parseAppointmentDate(timeStr: string): Date | null {
+  if (!timeStr) return null
+  const now = new Date()
+  const lower = timeStr.toLowerCase()
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+  let targetDate: Date | null = null
+  if (lower.includes('tomorrow')) {
+    targetDate = new Date(now)
+    targetDate.setDate(targetDate.getDate() + 1)
+  }
+  if (!targetDate) {
+    for (let i = 0; i < dayNames.length; i++) {
+      if (lower.includes(dayNames[i])) {
+        const currentDay = now.getDay()
+        let daysUntil = i - currentDay
+        if (daysUntil <= 0) daysUntil += 7
+        targetDate = new Date(now)
+        targetDate.setDate(targetDate.getDate() + daysUntil)
+        break
+      }
+    }
+  }
+  if (!targetDate) {
+    const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
+    const monthDayMatch = lower.match(/(\w+)\s+(\d{1,2})/)
+    if (monthDayMatch) {
+      const monthIdx = months.indexOf(monthDayMatch[1])
+      if (monthIdx >= 0) {
+        targetDate = new Date(now.getFullYear(), monthIdx, parseInt(monthDayMatch[2]))
+        if (targetDate < now) targetDate.setFullYear(targetDate.getFullYear() + 1)
+      }
+    }
+  }
+  if (!targetDate) return null
+  let hours = 9
+  let minutes = 0
+  if (lower.includes('noon')) {
+    hours = 12; minutes = 0
+  } else if (lower.includes('morning') && !lower.match(/\d{1,2}/)) {
+    hours = 9
+  } else if (lower.includes('afternoon') && !lower.match(/\d{1,2}/)) {
+    hours = 14
+  } else if (lower.includes('evening') && !lower.match(/\d{1,2}/)) {
+    hours = 17
+  } else {
+    const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/)
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1])
+      minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0
+      const period = timeMatch[3]
+      if (period === 'pm' && hours < 12) hours += 12
+      if (period === 'am' && hours === 12) hours = 0
+    }
+  }
+  targetDate.setHours(hours, minutes, 0, 0)
+  return targetDate
 }
