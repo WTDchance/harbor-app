@@ -1,15 +1,17 @@
 // FILE: app/api/reminders/send/route.ts
-// FIXES:
-//   1. Queries now practice-scoped (iterates per-practice instead of global query)
-//   2. Reminder message includes practice name, provider, and appointment time
-//   3. Response JSON no longer exposes patient phone numbers
-//   4. Still needs external cron job to trigger — see CRON-SETUP.md
+// Sends appointment reminders via SMS and/or EMAIL
+// Triggered by cron job (Railway cron, external scheduler)
+// - SMS: sent via Twilio (when patient has phone and A2P is registered)
+// - Email: sent via Resend (when patient has email)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { sendSMS } from '@/lib/twilio'
+import { sendReminderEmail } from '@/lib/reminder-email'
 
 const REMINDER_SECRET = process.env.REMINDER_SECRET
+// Set to 'email' to only send email, 'sms' for only SMS, 'both' for both
+const REMINDER_CHANNEL = process.env.REMINDER_CHANNEL || 'both'
 
 async function handleReminders(request: NextRequest) {
   // Protect with secret header — only authorized cron callers can trigger this
@@ -18,38 +20,43 @@ async function handleReminders(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
+  // Allow override via query param: ?channel=email or ?channel=sms or ?channel=both
+  const channelOverride = request.nextUrl.searchParams.get('channel')
+  const channel = channelOverride || REMINDER_CHANNEL
+
   try {
-    // Target date: tomorrow in UTC (appointments are stored as YYYY-MM-DD strings)
+    // Target date: tomorrow in UTC
     const tomorrow = new Date()
     tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
     const tomorrowStr = tomorrow.toISOString().split('T')[0]
 
-    // FIX #1: Query per-practice so data is isolated and response doesn't leak cross-practice info
     const { data: practices, error: practicesError } = await supabaseAdmin
       .from('practices')
-      .select('id, name')
+      .select('id, name, phone_number, address')
 
     if (practicesError) {
       console.error('Failed to fetch practices:', practicesError)
       return NextResponse.json({ error: 'Failed to fetch practices' }, { status: 500 })
     }
 
-    let totalSent = 0
+    let totalSmsSent = 0
+    let totalEmailSent = 0
     let totalAppointments = 0
-    const practiceResults: { practice_id: string; sent: number; total: number; errors: string[] }[] = []
+    const practiceResults: {
+      practice_id: string
+      sms_sent: number
+      email_sent: number
+      total: number
+      errors: string[]
+    }[] = []
 
     for (const practice of practices || []) {
-      // FIX #2: Join with patients to get phone, and select appointment_time for message
-      // Also join with practices to get name for the reminder text
       const { data: appointments, error: fetchError } = await supabaseAdmin
         .from('appointments')
         .select(`
-          id,
-          appointment_date,
-          appointment_time,
-          patient_id,
-          patients!inner(phone, first_name),
-          practices!inner(name)
+          id, appointment_date, appointment_time, patient_id, provider_name,
+          patients!inner(phone, email, first_name),
+          practices!inner(name, phone_number, address)
         `)
         .eq('practice_id', practice.id)
         .eq('appointment_date', tomorrowStr)
@@ -59,34 +66,81 @@ async function handleReminders(request: NextRequest) {
 
       if (fetchError) {
         console.error(`Failed to fetch appointments for practice ${practice.id}:`, fetchError)
-        practiceResults.push({ practice_id: practice.id, sent: 0, total: 0, errors: [fetchError.message] })
+        practiceResults.push({
+          practice_id: practice.id,
+          sms_sent: 0,
+          email_sent: 0,
+          total: 0,
+          errors: [fetchError.message],
+        })
         continue
       }
 
       if (!appointments || appointments.length === 0) continue
 
-      let sent = 0
+      let smsSent = 0
+      let emailSent = 0
       const errors: string[] = []
 
       for (const appt of appointments) {
         const patient = (appt as any).patients
-        const practiceName = (appt as any).practices?.name || practice.name
+        const practiceData = (appt as any).practices
+        const practiceName = practiceData?.name || practice.name
+        const practicePhone = practiceData?.phone_number || practice.phone_number
+        const practiceAddress = practiceData?.address || practice.address
+        const firstName = patient?.first_name || 'there'
+        let reminderSent = false
 
-        if (!patient?.phone) {
-          console.log(`Skipping appointment ${appt.id} — no patient phone`)
-          continue
+        // Format time for display
+        const timeStr = appt.appointment_time ? formatTime(appt.appointment_time) : undefined
+        const dateStr = formatDate(appt.appointment_date)
+
+        // --- Send EMAIL reminder ---
+        if ((channel === 'email' || channel === 'both') && patient?.email) {
+          try {
+            const success = await sendReminderEmail(patient.email, {
+              patientFirstName: firstName,
+              practiceName,
+              appointmentDate: dateStr,
+              appointmentTime: timeStr,
+              providerName: appt.provider_name,
+              practicePhone,
+              practiceAddress,
+            })
+
+            if (success) {
+              emailSent++
+              reminderSent = true
+              console.log(`\u2713 Email reminder sent to ${firstName} at ${patient.email}`)
+            } else {
+              console.error(`Failed email reminder for appt ${appt.id}`)
+              errors.push(`email:${appt.id}`)
+            }
+          } catch (err) {
+            console.error(`Email error for appt ${appt.id}:`, err)
+            errors.push(`email:${appt.id}`)
+          }
         }
 
-        try {
-          // FIX #2: Build a useful reminder message with practice name and time
-          const timeStr = appt.appointment_time
-            ? ` at ${formatTime(appt.appointment_time)}`
-            : ''
-          const greeting = patient.first_name ? `Hi ${patient.first_name}!` : 'Hi!'
-          const message = `${greeting} This is a reminder of your appointment with ${practiceName} tomorrow${timeStr}. Reply STOP to opt out.`
+        // --- Send SMS reminder ---
+        if ((channel === 'sms' || channel === 'both') && patient?.phone) {
+          try {
+            const timeDisplay = timeStr ? ` at ${timeStr}` : ''
+            const greeting = patient.first_name ? `Hi ${patient.first_name}!` : 'Hi!'
+            const message = `${greeting} This is a reminder of your appointment with ${practiceName} tomorrow${timeDisplay}. Reply STOP to opt out.`
 
-          await sendSMS(patient.phone, message)
+            await sendSMS(patient.phone, message)
+            smsSent++
+            reminderSent = true
+            console.log(`\u2713 SMS reminder sent to ${firstName}`)
+          } catch (smsErr) {
+            console.error(`SMS error for appt ${appt.id}:`, smsErr)
+            errors.push(`sms:${appt.id}`)
+          }
+        }
 
+        // Mark as sent if at least one channel succeeded
+        if (reminderSent) {
           const { error: updateError } = await supabaseAdmin
             .from('appointments')
             .update({ reminder_sent_at: new Date().toISOString() })
@@ -94,33 +148,30 @@ async function handleReminders(request: NextRequest) {
 
           if (updateError) {
             console.error(`Failed to update reminder_sent_at for ${appt.id}:`, updateError)
-            errors.push(appt.id)
-          } else {
-            sent++
           }
-        } catch (smsErr) {
-          console.error(`Failed to send SMS for appointment ${appt.id}:`, smsErr)
-          errors.push(appt.id)
         }
       }
 
-      totalSent += sent
+      totalSmsSent += smsSent
+      totalEmailSent += emailSent
       totalAppointments += appointments.length
       practiceResults.push({
         practice_id: practice.id,
-        sent,
+        sms_sent: smsSent,
+        email_sent: emailSent,
         total: appointments.length,
         errors: errors.length > 0 ? errors : [],
       })
     }
 
-    // FIX #3: Response doesn't include patient phone numbers — just counts and IDs
     return NextResponse.json({
-      sent: totalSent,
+      channel,
       date: tomorrowStr,
-      total: totalAppointments,
+      total_appointments: totalAppointments,
+      sms_sent: totalSmsSent,
+      email_sent: totalEmailSent,
       practices: practiceResults.length,
-      message: `Sent ${totalSent} of ${totalAppointments} reminder(s) across ${practiceResults.length} practice(s)`,
+      message: `Sent ${totalSmsSent} SMS + ${totalEmailSent} email reminder(s) for ${totalAppointments} appointment(s) across ${practiceResults.length} practice(s)`,
     })
   } catch (error) {
     console.error('Reminder cron error:', error)
@@ -128,7 +179,7 @@ async function handleReminders(request: NextRequest) {
   }
 }
 
-// Helper to format "14:30:00" or "14:30" into "2:30 PM"
+// Helper to format "14:30:00" \u2192 "2:30 PM"
 function formatTime(timeStr: string): string {
   try {
     const [hours, minutes] = timeStr.split(':').map(Number)
@@ -136,16 +187,28 @@ function formatTime(timeStr: string): string {
     const displayHour = hours % 12 || 12
     return `${displayHour}:${minutes.toString().padStart(2, '0')} ${ampm}`
   } catch {
-    return timeStr // fallback to raw string
+    return timeStr
   }
 }
 
-// POST — primary endpoint for cron jobs (Railway, Vercel Cron, etc.)
+// Helper to format "2026-04-04" \u2192 "Friday, April 4"
+function formatDate(dateStr: string): string {
+  try {
+    const date = new Date(dateStr + 'T12:00:00')
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    })
+  } catch {
+    return dateStr
+  }
+}
+
 export async function POST(request: NextRequest) {
   return handleReminders(request)
 }
 
-// GET — fallback for cron services that only support GET
 export async function GET(request: NextRequest) {
   return handleReminders(request)
 }
