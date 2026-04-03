@@ -25,18 +25,16 @@ export default function LandingPage() {
             <Link href="/onboard" className="bg-white text-teal-700 px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-50 transition-colors">Get Started Free →</Link>
             <a href="#how-it-works" className="border border-teal-400 text-white px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-700 transition-colors">See How It Works</a>
           </div>
-          <p className="text-teal-300 mt-6 text-sm">$97/month founding (reg. $297) · 20 spots · Setup in 5 minutes</p>
+          <p className="text-teal-300 mt-6 text-sm">$197/month founding (reg. $397) · 20 spots · Setup in 5 minutes</p>
         </div>
       </section>
 
       {/* Social proof */}
       <section className="border-b border-gray-100 px-6 py-8">
         <div className="max-w-4xl mx-auto">
-          <p className="text-center text-sm text-gray-400 mb-6">Trusted by therapy practices across the US</p>
+          <p className="text-center text-sm text-gray-400 mb-6">Built alongside real therapy practices</p>
           <div className="flex flex-wrap justify-center gap-8 text-gray-300 font-semibold text-sm">
-            {["Hope & Harmony Counseling", "Westside Therapy", "Clarity Mental Health", "Mindful Path Wellness", "Pacific Crest Therapy"].map(name => (
-              <span key={name}>{name}</span>
-            ))}
+              <span className="text-gray-400 font-semibold">Hope & Harmony Counseling</span>
           </div>
         </div>
       </section>
@@ -131,9 +129,9 @@ export default function LandingPage() {
           {/* Founding Practice Banner */}
           <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 mb-8">
             <p className="text-orange-700 font-semibold text-sm">
-              🔒 Founding Practice Offer — First 50 practices only
+              🔒 Founding Practice Offer — First 20 practices only
             </p>
-            <p className="text-orange-600 text-sm mt-1">Lock in $97/mo forever — only 20 spots available. Price never increases, even as we add features.</p>
+            <p className="text-orange-600 text-sm mt-1">Lock in $197/mo forever — only 20 spots available. Price never increases, even as we add features.</p>
           </div>
 
           {/* Pricing Card */}
@@ -143,8 +141,8 @@ export default function LandingPage() {
             </div>
 
             <div className="mt-2 mb-2">
-              <span className="text-gray-400 line-through text-2xl mr-2">$297</span>
-              <span className="text-6xl font-bold text-gray-900">$97</span>
+              <span className="text-gray-400 line-through text-2xl mr-2">$397</span>
+              <span className="text-6xl font-bold text-gray-900">$197</span>
               <span className="text-gray-500 text-xl">/month</span>
             </div>
             <p className="text-gray-500 mb-8">Locked in forever for founding practices</p>
@@ -162,7 +160,7 @@ export default function LandingPage() {
             <a href="/onboard" className="block w-full text-center bg-teal-600 hover:bg-teal-700 text-white font-bold py-4 rounded-xl text-lg transition-colors">
               Claim Your Founding Practice Spot
             </a>
-            <p className="text-gray-400 text-sm mt-3">No contracts. Cancel anytime. Regular price $297/mo after founding spots fill.</p>
+            <p className="text-gray-400 text-sm mt-3">No contracts. Cancel anytime. Regular price $397/mo after founding spots fill.</p>
           </div>
         </div>
       </section>
