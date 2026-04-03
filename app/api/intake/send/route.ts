@@ -216,7 +216,7 @@ async function sendIntakeEmail(
     throw new Error('Resend API key not configured')
   }
 
-  const fromEmail = process.env.RESEND_FROM_EMAIL || 'intake@harborreceptionist.com'
+  const fromEmail = (process.env.RESEND_FROM_EMAIL || 'intake@harborreceptionist.com').replace(/.*<(.+)>.*/, '$1')
 
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
