@@ -72,6 +72,22 @@ const NAV = [
     ),
   },
   {
+    href: "/dashboard/messaging",
+    label: "Messages",
+    exact: false,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path
+          d="M16 12a2 2 0 01-2 2H6l-4 4V4a2 2 0 012-2h10a2 2 0 012 2v8z"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    ),
+  }
+  {
     href: "/dashboard/crisis",
     label: "Crisis Alerts",
     exact: false,
