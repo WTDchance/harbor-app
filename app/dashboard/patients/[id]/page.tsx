@@ -1,11 +1,10 @@
 "use client";
-
 // app/dashboard/patients/[id]/page.tsx
 // Harbor - Patient Detail View
 // FIX: Shows FULL patient information from both patients table AND intake demographics.
 // Every person is a PATIENT from first contact. Intake enriches their record.
-// Features: full patient info card, intake status, call history, appointments,
-//           outcome trend chart, crisis alerts, tasks/messages
+// Features: full patient info card, EDIT PATIENT modal, intake status, call history,
+// appointments, outcome trend chart, crisis alerts, tasks/messages
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
@@ -173,6 +172,343 @@ function InfoRow({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+// ---------- EDIT PATIENT MODAL ----------
+function EditPatientModal({
+  patient,
+  onClose,
+  onSaved,
+}: {
+  patient: PatientData["patient"];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [form, setForm] = useState({
+    first_name: patient.first_name || "",
+    last_name: patient.last_name || "",
+    phone: patient.phone || "",
+    email: patient.email || "",
+    date_of_birth: patient.date_of_birth || "",
+    address: patient.address || "",
+    pronouns: patient.pronouns || "",
+    insurance_provider: patient.insurance_provider || "",
+    insurance_member_id: patient.insurance_member_id || "",
+    insurance_group_number: patient.insurance_group_number || "",
+    emergency_contact_name: patient.emergency_contact_name || "",
+    emergency_contact_phone: patient.emergency_contact_phone || "",
+    referral_source: patient.referral_source || "",
+    reason_for_seeking: patient.reason_for_seeking || "",
+    telehealth_preference: patient.telehealth_preference || "",
+    notes: patient.notes || "",
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function handleChange(
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+  ) {
+    setForm({ ...form, [e.target.name]: e.target.value });
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) return;
+
+      const res = await fetch(`/api/patients/${patient.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(form),
+      });
+
+      if (!res.ok) {
+        const json = await res.json();
+        setError(json.error || "Failed to save changes");
+        return;
+      }
+
+      onSaved();
+      onClose();
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white border-b px-6 py-4 flex items-center justify-between rounded-t-xl">
+          <h2 className="text-lg font-semibold text-gray-900">Edit Patient</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 transition"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="px-6 py-5 space-y-5">
+          {error && (
+            <div className="bg-red-50 text-red-700 p-3 rounded-lg text-sm">
+              {error}
+            </div>
+          )}
+
+          {/* Name */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                First Name
+              </label>
+              <input
+                type="text"
+                name="first_name"
+                value={form.first_name}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Last Name
+              </label>
+              <input
+                type="text"
+                name="last_name"
+                value={form.last_name}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          {/* Contact */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Phone
+              </label>
+              <input
+                type="tel"
+                name="phone"
+                value={form.phone}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Email
+              </label>
+              <input
+                type="email"
+                name="email"
+                value={form.email}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          {/* DOB & Pronouns */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Date of Birth
+              </label>
+              <input
+                type="date"
+                name="date_of_birth"
+                value={form.date_of_birth}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Pronouns
+              </label>
+              <input
+                type="text"
+                name="pronouns"
+                value={form.pronouns}
+                onChange={handleChange}
+                placeholder="e.g., she/her, he/him, they/them"
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          {/* Address */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Address
+            </label>
+            <input
+              type="text"
+              name="address"
+              value={form.address}
+              onChange={handleChange}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+            />
+          </div>
+
+          {/* Insurance */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800 mb-2">Insurance</h3>
+            <div className="grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Provider</label>
+                <input
+                  type="text"
+                  name="insurance_provider"
+                  value={form.insurance_provider}
+                  onChange={handleChange}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Member ID</label>
+                <input
+                  type="text"
+                  name="insurance_member_id"
+                  value={form.insurance_member_id}
+                  onChange={handleChange}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Group #</label>
+                <input
+                  type="text"
+                  name="insurance_group_number"
+                  value={form.insurance_group_number}
+                  onChange={handleChange}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Emergency Contact */}
+          <div>
+            <h3 className="text-sm font-semibold text-gray-800 mb-2">Emergency Contact</h3>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Name</label>
+                <input
+                  type="text"
+                  name="emergency_contact_name"
+                  value={form.emergency_contact_name}
+                  onChange={handleChange}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-600 mb-1">Phone</label>
+                <input
+                  type="tel"
+                  name="emergency_contact_phone"
+                  value={form.emergency_contact_phone}
+                  onChange={handleChange}
+                  className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Telehealth & Referral */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Telehealth Preference
+              </label>
+              <select
+                name="telehealth_preference"
+                value={form.telehealth_preference}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              >
+                <option value="">Not specified</option>
+                <option value="in-person">In-Person</option>
+                <option value="telehealth">Telehealth</option>
+                <option value="no preference">No Preference</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Referral Source
+              </label>
+              <input
+                type="text"
+                name="referral_source"
+                value={form.referral_source}
+                onChange={handleChange}
+                className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+              />
+            </div>
+          </div>
+
+          {/* Reason for Seeking Care */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reason for Seeking Care
+            </label>
+            <textarea
+              name="reason_for_seeking"
+              value={form.reason_for_seeking}
+              onChange={handleChange}
+              rows={2}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-none"
+            />
+          </div>
+
+          {/* Notes */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Notes
+            </label>
+            <textarea
+              name="notes"
+              value={form.notes}
+              onChange={handleChange}
+              rows={3}
+              className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent resize-none"
+            />
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="sticky bottom-0 bg-white border-t px-6 py-4 flex justify-end gap-3 rounded-b-xl">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-5 py-2 text-sm text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+          >
+            {saving ? "Saving..." : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PatientDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -181,6 +517,7 @@ export default function PatientDetailPage() {
   const [data, setData] = useState<PatientData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showEditModal, setShowEditModal] = useState(false);
 
   // Send intake form state
   const [showSendIntake, setShowSendIntake] = useState(false);
@@ -207,17 +544,14 @@ export default function PatientDetailPage() {
         router.push("/login");
         return;
       }
-
       const res = await fetch(`/api/patients/${patientId}`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
       });
-
       if (!res.ok) {
         const err = await res.json();
         setError(err.error || "Failed to load patient");
         return;
       }
-
       const json = await res.json();
       setData(json);
       if (json.patient.email) setIntakeEmail(json.patient.email);
@@ -247,7 +581,6 @@ export default function PatientDetailPage() {
         patient_phone: data.patient.phone,
         delivery_method: deliveryMethod,
       };
-
       if (deliveryMethod === "email") {
         body.patient_email = intakeEmail;
       }
@@ -260,7 +593,6 @@ export default function PatientDetailPage() {
         },
         body: JSON.stringify(body),
       });
-
       const json = await res.json();
       if (!res.ok) {
         setSendResult({ ok: false, msg: json.error || "Failed to send" });
@@ -315,12 +647,22 @@ export default function PatientDetailPage() {
     tasks,
     outcome_trend,
   } = data;
+
   const fullName =
     [patient.first_name, patient.last_name].filter(Boolean).join(" ") ||
     "Unknown Patient";
 
   return (
     <div className="max-w-5xl mx-auto p-6 space-y-6">
+      {/* Edit Patient Modal */}
+      {showEditModal && (
+        <EditPatientModal
+          patient={patient}
+          onClose={() => setShowEditModal(false)}
+          onSaved={() => fetchPatient()}
+        />
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -336,11 +678,24 @@ export default function PatientDetailPage() {
               Patient since {formatDate(patient.created_at)}
             </p>
             {patient.pronouns && (
-              <span className="text-gray-400 text-sm">({patient.pronouns})</span>
+              <span className="text-gray-400 text-sm">
+                ({patient.pronouns})
+              </span>
             )}
           </div>
         </div>
-        <IntakeStatusBadge status={intake_status} />
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setShowEditModal(true)}
+            className="flex items-center gap-1.5 px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 text-gray-700 transition shadow-sm"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            Edit Patient
+          </button>
+          <IntakeStatusBadge status={intake_status} />
+        </div>
       </div>
 
       {/* Crisis alerts banner */}
@@ -351,7 +706,9 @@ export default function PatientDetailPage() {
           </h3>
           {crisis_alerts.map((alert) => (
             <div key={alert.id} className="text-sm text-red-700 mb-1">
-              <span className="font-medium">{formatDate(alert.created_at)}</span>{" "}
+              <span className="font-medium">
+                {formatDate(alert.created_at)}
+              </span>{" "}
               - {alert.severity}: {alert.summary}
               <span className="ml-2 text-xs bg-red-100 px-1.5 py-0.5 rounded">
                 {alert.status}
@@ -361,26 +718,42 @@ export default function PatientDetailPage() {
         </div>
       )}
 
-      {/* Patient Info â FULL DETAILS */}
+      {/* Patient Info - FULL DETAILS */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* Contact & Personal Info */}
         <div className="bg-white border rounded-lg p-5 shadow-sm">
-          <h2 className="font-semibold text-gray-900 mb-3">Patient Information</h2>
+          <h2 className="font-semibold text-gray-900 mb-3">
+            Patient Information
+          </h2>
           <div className="divide-y">
             <InfoRow label="Phone" value={patient.phone} />
             <InfoRow label="Email" value={patient.email} />
-            <InfoRow label="Date of Birth" value={patient.date_of_birth ? formatDate(patient.date_of_birth) : null} />
+            <InfoRow
+              label="Date of Birth"
+              value={
+                patient.date_of_birth
+                  ? formatDate(patient.date_of_birth)
+                  : null
+              }
+            />
             <InfoRow label="Address" value={patient.address} />
             <InfoRow label="Pronouns" value={patient.pronouns} />
             <InfoRow label="Referral Source" value={patient.referral_source} />
             {patient.reason_for_seeking && (
               <div className="py-2">
-                <span className="text-gray-500 text-sm block mb-1">Reason for Seeking Care</span>
-                <p className="text-sm text-gray-700">{patient.reason_for_seeking}</p>
+                <span className="text-gray-500 text-sm block mb-1">
+                  Reason for Seeking Care
+                </span>
+                <p className="text-sm text-gray-700">
+                  {patient.reason_for_seeking}
+                </p>
               </div>
             )}
             {patient.telehealth_preference && (
-              <InfoRow label="Telehealth Preference" value={patient.telehealth_preference} />
+              <InfoRow
+                label="Telehealth Preference"
+                value={patient.telehealth_preference}
+              />
             )}
           </div>
         </div>
@@ -390,17 +763,34 @@ export default function PatientDetailPage() {
           <div className="bg-white border rounded-lg p-5 shadow-sm">
             <h2 className="font-semibold text-gray-900 mb-3">Insurance</h2>
             <div className="divide-y">
-              <InfoRow label="Provider" value={patient.insurance_provider} />
-              <InfoRow label="Member ID" value={patient.insurance_member_id} />
-              <InfoRow label="Group Number" value={patient.insurance_group_number} />
+              <InfoRow
+                label="Provider"
+                value={patient.insurance_provider}
+              />
+              <InfoRow
+                label="Member ID"
+                value={patient.insurance_member_id}
+              />
+              <InfoRow
+                label="Group Number"
+                value={patient.insurance_group_number}
+              />
             </div>
           </div>
 
           <div className="bg-white border rounded-lg p-5 shadow-sm">
-            <h2 className="font-semibold text-gray-900 mb-3">Emergency Contact</h2>
+            <h2 className="font-semibold text-gray-900 mb-3">
+              Emergency Contact
+            </h2>
             <div className="divide-y">
-              <InfoRow label="Name" value={patient.emergency_contact_name} />
-              <InfoRow label="Phone" value={patient.emergency_contact_phone} />
+              <InfoRow
+                label="Name"
+                value={patient.emergency_contact_name}
+              />
+              <InfoRow
+                label="Phone"
+                value={patient.emergency_contact_phone}
+              />
             </div>
           </div>
 
@@ -469,7 +859,8 @@ export default function PatientDetailPage() {
             )}
             {deliveryMethod === "sms" && !patient.phone && (
               <p className="text-sm text-red-600 mb-2">
-                No phone number on file. Add a phone number first or use email.
+                No phone number on file. Add a phone number first or use
+                email.
               </p>
             )}
             <div className="flex gap-2">
@@ -534,13 +925,17 @@ export default function PatientDetailPage() {
                     {form.phq9_score !== null && (
                       <span className="text-xs">
                         PHQ-9: <strong>{form.phq9_score}</strong>{" "}
-                        <SeverityBadge severity={form.phq9_severity || ""} />
+                        <SeverityBadge
+                          severity={form.phq9_severity || ""}
+                        />
                       </span>
                     )}
                     {form.gad7_score !== null && (
                       <span className="text-xs">
                         GAD-7: <strong>{form.gad7_score}</strong>{" "}
-                        <SeverityBadge severity={form.gad7_severity || ""} />
+                        <SeverityBadge
+                          severity={form.gad7_severity || ""}
+                        />
                       </span>
                     )}
                   </div>
@@ -656,7 +1051,8 @@ export default function PatientDetailPage() {
                     <span className="font-medium">
                       {formatDate(call.created_at)}
                     </span>
-                    {(call.new_patient || call.call_type === "new_patient") && (
+                    {(call.new_patient ||
+                      call.call_type === "new_patient") && (
                       <span className="bg-blue-100 text-blue-800 text-xs px-1.5 py-0.5 rounded">
                         New Patient
                       </span>
@@ -672,7 +1068,9 @@ export default function PatientDetailPage() {
                   </span>
                 </div>
                 {call.summary && (
-                  <p className="text-sm text-gray-600 mt-1">{call.summary}</p>
+                  <p className="text-sm text-gray-600 mt-1">
+                    {call.summary}
+                  </p>
                 )}
               </div>
             ))}
