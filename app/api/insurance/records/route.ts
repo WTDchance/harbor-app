@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 
-// GET /api/insurance/records — list all insurance records for the practice
+// GET /api/insurance/records â list all insurance records for the practice
 export async function GET(req: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
       .order('created_at', { ascending: false })
 
     if (error) {
-      // Table may not exist yet — return empty gracefully
+      // Table may not exist yet â return empty gracefully
       if (error.code === '42P01') {
         return NextResponse.json({ records: [], setup_needed: true })
       }
@@ -59,10 +59,10 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST /api/insurance/records — create a new insurance record
+// POST /api/insurance/records â create a new insurance record
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -106,10 +106,10 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// PATCH /api/insurance/records — update an insurance record
+// PATCH /api/insurance/records â update an insurance record
 export async function PATCH(req: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -132,10 +132,10 @@ export async function PATCH(req: NextRequest) {
   }
 }
 
-// DELETE /api/insurance/records — delete an insurance record
+// DELETE /api/insurance/records â delete an insurance record
 export async function DELETE(req: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
