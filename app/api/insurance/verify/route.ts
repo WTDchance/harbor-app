@@ -29,7 +29,7 @@ const PAYER_IDS: Record<string, string> = {
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
@@ -152,7 +152,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ record_id: insuranceRecordId, status: 'error', error: errMsg }, { status: 422 })
     }
 
-    // Parse Stedi response — extract mental health benefits
+    // Parse Stedi response â extract mental health benefits
     const benefits = stediData?.benefitsInformation || []
     const activeCoverage = benefits.find((b: any) =>
       b.code === '1' || b.benefitsServiceLine === 'Plan'
