@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
 
     // Build patient name from demographics if available
     const patientName = demographics?.first_name && demographics?.last_name
-      ? \`\${demographics.first_name} \${demographics.last_name}\`
+      ? `${demographics.first_name} ${demographics.last_name}`
       : intake.patient_name
 
     const { error: updateError } = await supabase
