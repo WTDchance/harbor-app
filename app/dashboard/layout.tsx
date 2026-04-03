@@ -1,4 +1,4 @@
-"use client";
+h"use client";
 // app/dashboard/layout.tsx
 // Harbor -- Shared dashboard shell with sidebar navigation.
 // Wraps all /dashboard/* pages. Handles auth gate and logout.
@@ -86,7 +86,7 @@ const NAV = [
         />
       </svg>
     ),
-  }
+  },
   {
     href: "/dashboard/crisis",
     label: "Crisis Alerts",
