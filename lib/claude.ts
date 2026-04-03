@@ -6,13 +6,11 @@ import Anthropic from '@anthropic-ai/sdk'
 const apiKey = process.env.ANTHROPIC_API_KEY || ''
 
 if (!apiKey) {
-  console.warn('⚠️ Anthropic API key not configured. SMS AI responses will fail.')
+  console.warn('⚠️  Anthropic API key not configured. SMS AI responses will fail.')
 }
 
 // Initialize Anthropic client
-const client = apiKey
-  ? new Anthropic({ apiKey })
-  : null
+const client = apiKey ? new Anthropic({ apiKey }) : null
 
 /**
  * Generate an SMS response from Claude
@@ -29,7 +27,7 @@ export async function generateSMSResponse(
   conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = []
 ): Promise<string> {
   if (!client) {
-    console.warn('⚠️ Anthropic not configured - returning fallback message')
+    console.warn('⚠️  Anthropic not configured - returning fallback message')
     return 'Thanks for your message! Our team will get back to you soon.'
   }
 
@@ -73,7 +71,7 @@ export async function generateCallSummary(
   summaryPrompt: string
 ): Promise<string> {
   if (!client) {
-    console.warn('⚠️ Anthropic not configured - skipping summary generation')
+    console.warn('⚠️  Anthropic not configured - skipping summary generation')
     return 'Summary generation unavailable'
   }
 
@@ -115,20 +113,26 @@ export async function extractCallInformation(
   patientPhone?: string
   patientEmail?: string
   patientInsurance?: string
+  patientDob?: string
+  insuranceMemberId?: string
+  insuranceGroupNumber?: string
+  subscriberName?: string
+  subscriberDob?: string
+  relationshipToSubscriber?: string
   reasonForSeeking?: string
   appointmentScheduled?: boolean
   appointmentTime?: string
   intakeDeliveryPreference?: string
 }> {
   if (!client) {
-    console.warn('⚠️ Anthropic not configured - skipping information extraction')
+    console.warn('⚠️  Anthropic not configured - skipping information extraction')
     return {}
   }
 
   try {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 300,
+      max_tokens: 500,
       messages: [
         {
           role: 'user',
@@ -138,14 +142,26 @@ export async function extractCallInformation(
   "patientName": "full name or blank",
   "patientPhone": "phone number or blank",
   "patientEmail": "email or blank",
-  "patientInsurance": "insurance provider or blank",
+  "patientInsurance": "insurance company name or blank",
+  "patientDob": "date of birth in YYYY-MM-DD format or blank",
+  "insuranceMemberId": "insurance member ID number or blank",
+  "insuranceGroupNumber": "insurance group number or blank",
+  "subscriberName": "name of primary subscriber if different from patient, or blank",
+  "subscriberDob": "subscriber date of birth in YYYY-MM-DD if different from patient, or blank",
+  "relationshipToSubscriber": "self or dependent or blank",
   "reasonForSeeking": "reason for therapy or blank",
   "appointmentScheduled": true/false,
   "appointmentTime": "scheduled time or blank",
   "intakeDeliveryPreference": "sms or email or both or blank"
 }
 
-For intakeDeliveryPreference: if the caller says "text me", "send a text", or mentions their phone, put "sms". If they say "email me" or provide an email for forms, put "email". If they say both or don't specify, put "both". If not discussed, leave blank.
+EXTRACTION RULES:
+- For patientInsurance: Extract the insurance company name (e.g., "Blue Cross Blue Shield", "Aetna", "Oregon Health Plan"). If they say "self-pay" or "no insurance", leave blank.
+- For insuranceMemberId: This is the member ID, subscriber ID, or policy number on their insurance card. It may be alphanumeric.
+- For insuranceGroupNumber: This is the group number on the card. It may be alphanumeric.
+- For patientDob: Convert any date format to YYYY-MM-DD. If they say "March 15, 1990", output "1990-03-15".
+- For relationshipToSubscriber: "self" if they are the primary policyholder, "dependent" if they are on someone else's plan (spouse, parent, etc.).
+- For intakeDeliveryPreference: if the caller says "text me", "send a text", or mentions their phone, put "sms". If they say "email me" or provide an email for forms, put "email". If they say both or don't specify, put "both". If not discussed, leave blank.
 
 TRANSCRIPT:
 ${transcript}`,
@@ -185,7 +201,7 @@ ${transcript}`,
  */
 export async function detectCrisisIndicators(message: string): Promise<boolean> {
   if (!client) {
-    console.warn('⚠️ Anthropic not configured - skipping crisis detection')
+    console.warn('⚠️  Anthropic not configured - skipping crisis detection')
     return false
   }
 
@@ -196,9 +212,7 @@ export async function detectCrisisIndicators(message: string): Promise<boolean> 
       messages: [
         {
           role: 'user',
-          content: `Does this message contain language indicating a mental health crisis (suicide, self-harm, abuse, overdose, etc.)? Answer only YES or NO.
-
-Message: "${message}"`,
+          content: `Does this message contain language indicating a mental health crisis (suicide, self-harm, abuse, overdose, etc.)? Answer only YES or NO.\n\nMessage: "${message}"`,
         },
       ],
     })
