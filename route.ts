@@ -205,6 +205,9 @@ async function handleToolCalls(message: any) {
         case 'submitIntakeScreening':
           result = await handleSubmitScreening(params, practiceId)
           break
+        case 'collectInsuranceInfo':
+          result = await handleCollectInsurance(params, practiceId)
+          break
         default:
           result = `Unknown tool: ${toolName}`
       }
@@ -263,6 +266,9 @@ async function handleFunctionCall(message: any) {
       case 'submitIntakeScreening':
         result = await handleSubmitScreening(params, practiceId)
         break
+        case 'collectInsuranceInfo':
+          result = await handleCollectInsurance(params, practiceId)
+          break
       default:
         result = `Unknown function: ${toolName}`
     }
@@ -730,7 +736,57 @@ async function processEndOfCall(opts: {
     }
   }
 
-  // 8. Create appointment record if one was scheduled during the call
+  // 7b. Auto-verify insurance for patients with insurance info
+    const insuranceCompany = info.patientInsurance || ''
+    const insuranceMemberId = info.insuranceMemberId || ''
+
+    if (insuranceCompany && insuranceMemberId) {
+      try {
+        const resolvedPatientId = existingPatient?.id || newPatient?.id
+        const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+        const webhookSecret = process.env.VAPI_WEBHOOK_SECRET
+
+        const verifyPayload = {
+          practice_id: practiceId,
+          patient_id: resolvedPatientId || null,
+          patient_name: info.patientName || null,
+          patient_dob: info.patientDob || null,
+          insurance_company: insuranceCompany,
+          member_id: insuranceMemberId,
+          group_number: info.insuranceGroupNumber || null,
+          subscriber_name: info.subscriberName || info.patientName || null,
+          subscriber_dob: info.subscriberDob || info.patientDob || null,
+          relationship: info.relationshipToSubscriber || 'self',
+        }
+
+        console.log('[Vapi] Auto-triggering insurance verification:', JSON.stringify({
+          company: insuranceCompany,
+          memberId: insuranceMemberId,
+          patient: info.patientName,
+        }))
+
+        const verifyRes = await fetch(`${baseUrl}/api/insurance/verify-internal`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-internal-secret': webhookSecret || '',
+          },
+          body: JSON.stringify(verifyPayload),
+        })
+
+        if (verifyRes.ok) {
+          const verifyResult = await verifyRes.json()
+          console.log(`[Vapi] Insurance verification result: ${verifyResult.status}, MH covered: ${verifyResult.mental_health_covered}`)
+        } else {
+          const verifyError = await verifyRes.text()
+          console.error('[Vapi] Insurance verification failed:', verifyRes.status, verifyError)
+        }
+      } catch (err) {
+        console.error('[Vapi] Insurance auto-verify error:', err)
+      }
+    }
+
+    // 8. Create appointment record if one was scheduled during the call
   if (info.appointmentScheduled && info.appointmentTime) {
     try {
       const appointmentPatientId = existingPatient?.id || newPatient?.id
@@ -964,6 +1020,87 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
   return 'Thank you for answering those questions. That information will help the therapist prepare for your first session.'
 }
 
+
+// ---- Insurance Collection Handler ----
+
+async function handleCollectInsurance(params: any, practiceId: string | null): Promise<string> {
+  const {
+    patientName, insuranceCompany, memberId, groupNumber,
+    dateOfBirth, isSubscriber, subscriberName
+  } = params
+
+  if (!practiceId) {
+    return 'I\'ve noted your insurance information. The practice team will verify your benefits and follow up.'
+  }
+
+  try {
+    // Parse date of birth to YYYY-MM-DD
+    let dobFormatted: string | null = null
+    if (dateOfBirth) {
+      const parsed = new Date(dateOfBirth)
+      if (!isNaN(parsed.getTime())) {
+        dobFormatted = parsed.toISOString().split('T')[0]
+      }
+    }
+
+    // Find existing patient by name in this practice
+    const nameParts = (patientName || '').trim().split(/\s+/).filter(Boolean)
+    let patientId: string | null = null
+
+    if (nameParts.length > 0) {
+      const { data: found } = await supabaseAdmin
+        .from('patients')
+        .select('id')
+        .eq('practice_id', practiceId)
+        .ilike('first_name', nameParts[0])
+        .limit(1)
+        .maybeSingle()
+      if (found) patientId = found.id
+    }
+
+    // Save to insurance_records
+    const { data: record, error: insertError } = await supabaseAdmin
+      .from('insurance_records')
+      .insert({
+        practice_id: practiceId,
+        patient_id: patientId,
+        patient_name: patientName,
+        patient_dob: dobFormatted,
+        insurance_company: insuranceCompany,
+        member_id: memberId,
+        group_number: groupNumber || null,
+        subscriber_name: isSubscriber === false ? (subscriberName || null) : patientName,
+        subscriber_dob: dobFormatted,
+        relationship_to_subscriber: isSubscriber === false ? 'dependent' : 'self',
+      })
+      .select('id')
+      .single()
+
+    if (insertError) {
+      console.error('[Vapi] Failed to save insurance info:', insertError.message)
+    } else {
+      console.log(`[Vapi] Insurance info saved: ${insuranceCompany} member ${memberId} (record ${record?.id})`)
+    }
+
+    // Also update the patient record with insurance provider
+    if (patientId) {
+      await supabaseAdmin
+        .from('patients')
+        .update({
+          insurance: insuranceCompany,
+          insurance_provider: insuranceCompany,
+          date_of_birth: dobFormatted,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', patientId)
+    }
+  } catch (err) {
+    console.error('[Vapi] Insurance collection error:', err)
+  }
+
+  return 'I\'ve recorded your insurance information. We\'ll verify your benefits before your first appointment so there are no surprises.'
+}
+
 // ---- Helpers ----
 
 function buildTools(serverUrl: string) {
@@ -1036,6 +1173,29 @@ function buildTools(serverUrl: string) {
             gad2Score: { type: 'number', description: 'GAD-2 anxiety score (0-6)' },
           },
           required: ['phq2Score', 'gad2Score'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    // Insurance info collection tool
+    {
+      type: 'function',
+      function: {
+        name: 'collectInsuranceInfo',
+        description: 'Save insurance details when a patient provides their insurance information for verification',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Patient full name' },
+            insuranceCompany: { type: 'string', description: 'Insurance company name (e.g., Blue Cross, Aetna, OHP)' },
+            memberId: { type: 'string', description: 'Insurance member ID or subscriber ID from their card' },
+            groupNumber: { type: 'string', description: 'Group number from their insurance card' },
+            dateOfBirth: { type: 'string', description: 'Patient date of birth (any format)' },
+            isSubscriber: { type: 'boolean', description: 'true if patient is the primary subscriber, false if dependent' },
+            subscriberName: { type: 'string', description: 'Name of primary subscriber if patient is a dependent' },
+          },
+          required: ['patientName', 'insuranceCompany', 'memberId'],
         },
       },
       async: false,
