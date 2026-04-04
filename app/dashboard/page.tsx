@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
+import OnboardingChecklist from "@/components/OnboardingChecklist";
 
 const supabase = createClient();
 
@@ -231,6 +232,7 @@ export default function DashboardHome() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
+          <OnboardingChecklist />
         {/* Stats grid */}
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {[
