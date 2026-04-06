@@ -1,4 +1,5 @@
 'use client'
+
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
@@ -6,6 +7,7 @@ import {
   Building2, User, Mail, Lock, MapPin, Stethoscope, Heart,
   Calendar, MessageSquare, Wifi
 } from 'lucide-react'
+import { createClient } from '@/lib/supabase-browser'
 
 const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie']
 
@@ -76,6 +78,8 @@ export default function SignupPage() {
     timezone: 'America/Los_Angeles',
     telehealth: true,
     accepting_new_patients: true,
+    tos_accepted: false,
+    baa_acknowledged: false,
   })
 
   const [specialties, setSpecialties] = useState<string[]>([])
@@ -101,9 +105,12 @@ export default function SignupPage() {
     }
     if (s === 2) {
       if (!form.email.trim()) { setError('Email is required'); return false }
+      if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setError('Enter a valid email address'); return false }
       if (!form.password) { setError('Password is required'); return false }
       if (form.password.length < 8) { setError('Password must be at least 8 characters'); return false }
       if (form.password !== form.confirm_password) { setError('Passwords do not match'); return false }
+      if (!form.tos_accepted) { setError('Please accept the Terms of Service to continue'); return false }
+      if (!form.baa_acknowledged) { setError('Please acknowledge the Business Associate Agreement to continue'); return false }
     }
     return true
   }
@@ -136,6 +143,7 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          email: form.email.trim().toLowerCase(),
           greeting: form.greeting || defaultGreeting,
           specialties,
           insurance_accepted: insurance,
@@ -143,7 +151,29 @@ export default function SignupPage() {
         }),
       })
       const data = await res.json()
-      if (data.error) { setError(data.error); setLoading(false); return }
+      if (!res.ok || data.error) {
+        setError(data.error || 'Signup failed. Please try again.')
+        setLoading(false)
+        return
+      }
+
+      // ----- Sign the user in client-side so the dashboard loads with a real session.
+      // Without this, middleware would bounce them to /login because no auth cookie
+      // was ever set by the admin createUser call in /api/signup.
+      try {
+        const supabase = createClient()
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: form.email.trim().toLowerCase(),
+          password: form.password,
+        })
+        if (signInError) {
+          console.error('Auto sign-in failed:', signInError)
+          // Fall through – show success screen with an explicit "Sign in" CTA.
+        }
+      } catch (e) {
+        console.error('Auto sign-in threw:', e)
+      }
+
       setStep(4) // success
     } catch {
       setError('Signup failed. Please try again.')
@@ -180,10 +210,10 @@ export default function SignupPage() {
             {form.ai_name} is being set up for <strong className="text-white">{form.practice_name}</strong>.
           </p>
           <p className="text-slate-500 text-sm mb-8">
-            Head to your dashboard to connect your calendar, customize settings, and go live.
+            Next: connect your calendar, claim your Harbor phone number, and run a test call — all from your dashboard.
           </p>
           <button
-            onClick={() => router.push('/dashboard')}
+            onClick={() => router.push('/dashboard?welcome=1')}
             className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-6 rounded-lg transition-colors"
           >
             Go to Dashboard
@@ -444,6 +474,37 @@ export default function SignupPage() {
                   placeholder="Re-enter your password"
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors" />
               </div>
+
+              {/* Legal consents */}
+              <div className="space-y-3 pt-2">
+                <label className="flex items-start gap-3 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.tos_accepted}
+                    onChange={(e) => u('tos_accepted', e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
+                  />
+                  <span>
+                    I agree to the{' '}
+                    <a href="/terms" target="_blank" className="text-teal-400 hover:text-teal-300 underline">Terms of Service</a>{' '}
+                    and{' '}
+                    <a href="/privacy-policy" target="_blank" className="text-teal-400 hover:text-teal-300 underline">Privacy Policy</a>.
+                  </span>
+                </label>
+                <label className="flex items-start gap-3 text-xs text-slate-300 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.baa_acknowledged}
+                    onChange={(e) => u('baa_acknowledged', e.target.checked)}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
+                  />
+                  <span>
+                    I acknowledge that Harbor processes Protected Health Information (PHI) and I agree to
+                    execute Harbor's Business Associate Agreement (BAA) before going live with real patients.
+                  </span>
+                </label>
+              </div>
+
               <div className="flex gap-3 mt-2">
                 <button onClick={back}
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
