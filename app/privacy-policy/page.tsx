@@ -2,7 +2,7 @@
 import type { Metadata } from "next";
 export const metadata: Metadata = {
   title: "Privacy Policy | Harbor Receptionist",
-  description: "Harbor Receptionist privacy policy — how we collect, use, and protect your information.",
+  description: "Harbor Receptionist privacy policy â how we collect, use, and protect your information.",
 };
 export default function PrivacyPolicyPage() {
   return (
@@ -33,10 +33,14 @@ export default function PrivacyPolicyPage() {
       </section>
       <section className="mb-8">
         <h2 className="text-xl font-semibold mb-3 text-[#021E26]">3. SMS Messaging</h2>
-        <p className="mb-3">When you provide your phone number to schedule an appointment, you consent to receive SMS appointment confirmations and reminders. Standard message and data rates may apply.</p>
-        <p className="mb-3">You may opt out at any time by replying <strong>STOP</strong> to any message. Reply <strong>HELP</strong> for assistance.</p>
-        <p>Your phone number is used solely for appointment communication and is not shared with third parties.</p>
-      </section>
+            <p className="mb-3">Harbor Receptionist provides SMS appointment confirmations, reminders, intake form delivery links, and waitlist notifications to patients of independent therapy practices that subscribe to the Harbor platform.</p>
+            <p className="mb-3"><strong>Opt-in.</strong> You opt in to receive SMS messages by providing your mobile phone number to a participating therapy practice when you schedule an appointment, complete an intake form, or speak with the practice\u2019s AI receptionist. By doing so you consent to receive recurring transactional SMS messages from that practice via Harbor Receptionist.</p>
+            <p className="mb-3"><strong>Message frequency.</strong> Message frequency varies based on your appointment schedule, typically 1\u20136 messages per appointment cycle.</p>
+            <p className="mb-3"><strong>Cost.</strong> Standard message and data rates may apply.</p>
+            <p className="mb-3"><strong>Opt-out.</strong> You may opt out at any time by replying <strong>STOP</strong> to any message. Reply <strong>HELP</strong> for assistance, or contact support@harborreceptionist.com.</p>
+            <p className="mb-3"><strong>Mobile information sharing.</strong> No mobile information will be shared with third parties or affiliates for marketing or promotional purposes. Information sharing to subcontractors that support customer service or security is permitted. All other categories exclude text messaging originator opt-in data and consent; this information will not be shared with any third parties.</p>
+            <p>Your phone number is used solely for appointment-related communication between you and your therapy practice and is not sold, rented, or shared for advertising.</p>
+         </section>
       <section className="mb-8">
         <h2 className="text-xl font-semibold mb-3 text-[#021E26]">4. HIPAA Compliance</h2>
         <p>Harbor operates as a Business Associate under HIPAA and implements appropriate administrative, physical, and technical safeguards to protect Protected Health Information (PHI). We do not use or disclose PHI except as permitted by law.</p>
