@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import twilio from 'twilio'
 import crypto from 'crypto'
+import { sendEmail, buildIntakeEmail } from '@/lib/email'
 
 // POST /api/intake/send
 // Called by the webhook after a new patient call, or manually from dashboard
@@ -204,59 +205,32 @@ async function sendIntakeSMS(
   })
 }
 
-// -- Email delivery via Resend --
+// -- Email delivery via Resend (uses shared @/lib/email helpers) --
 async function sendIntakeEmail(
   email: string,
   firstName: string,
   practiceName: string,
   intakeUrl: string
 ) {
-  const resendKey = process.env.RESEND_API_KEY
-  if (!resendKey) {
+  if (!process.env.RESEND_API_KEY) {
     throw new Error('Resend API key not configured')
   }
 
-  const fromEmail = (process.env.RESEND_FROM_EMAIL || 'intake@harborreceptionist.com').replace(/.*<(.+)>.*/, '$1')
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${resendKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: `${practiceName} <${fromEmail}>`,
-      to: email,
-      subject: `Your intake forms from ${practiceName}`,
-      html: `
-        <div style="font-family: -apple-system, sans-serif; max-width: 520px; margin: 0 auto; padding: 24px;">
-          <h2 style="color: #1a1a2e; margin-bottom: 8px;">Welcome, ${firstName}!</h2>
-          <p style="color: #4b5563; line-height: 1.6;">
-            Thanks for calling ${practiceName}. To get you started, please complete your new patient intake forms using the link below.
-          </p>
-          <div style="text-align: center; margin: 28px 0;">
-            <a href="${intakeUrl}"
-               style="background: #4f8a6e; color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-weight: 500; font-size: 16px; display: inline-block;">
-              Complete Intake Forms
-            </a>
-          </div>
-          <p style="color: #6b7280; font-size: 14px; line-height: 1.5;">
-            The forms include a brief health questionnaire, your contact and insurance details, and consent forms. It usually takes about 10-15 minutes.
-          </p>
-          <p style="color: #9ca3af; font-size: 13px; margin-top: 24px;">
-            This link is valid for 7 days. If you have any questions, call ${practiceName} directly.
-          </p>
-          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 24px 0;" />
-          <p style="color: #9ca3af; font-size: 12px;">
-            Sent by Harbor AI on behalf of ${practiceName}
-          </p>
-        </div>
-      `,
-    }),
+  const { subject, html, from } = buildIntakeEmail({
+    practiceName,
+    patientName: firstName,
+    intakeUrl,
   })
 
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}))
-    throw new Error(`Resend API error: ${response.status} ${JSON.stringify(errorData)}`)
+  // Send from the practice's display name @ Support inbox
+  const ok = await sendEmail({
+    to: email,
+    subject,
+    html,
+    from: `${practiceName} <${from}>`,
+  })
+
+  if (!ok) {
+    throw new Error('Resend send failed (see server logs)')
   }
 }
