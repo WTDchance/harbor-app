@@ -8,7 +8,7 @@ export default function LandingPage() {
         <span className="text-2xl font-bold text-teal-600">Harbor</span>
         <div className="flex items-center gap-4">
           <Link href="/login" className="text-sm text-gray-600 hover:text-gray-900">Log in</Link>
-          <Link href="/onboard" className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-700 transition-colors">Get Started</Link>
+          <Link href="/signup" className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-teal-700 transition-colors">Get Started</Link>
         </div>
       </nav>
 
@@ -17,15 +17,15 @@ export default function LandingPage() {
         <div className="max-w-4xl mx-auto">
           <div className="inline-flex items-center gap-2 bg-teal-500/30 text-teal-100 text-sm px-4 py-1.5 rounded-full mb-6">
             <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-            AI receptionist â live 24/7
+            AI receptionist – live 24/7
           </div>
           <h1 className="text-5xl font-bold mb-6 leading-tight">Your practice never<br />misses a call again</h1>
-          <p className="text-xl text-teal-100 mb-10 max-w-2xl mx-auto">Harbor gives every therapy practice a warm, intelligent AI receptionist who answers calls, screens new patients, and sends you a full summary â so you can focus on your clients.</p>
+          <p className="text-xl text-teal-100 mb-10 max-w-2xl mx-auto">Harbor gives every therapy practice a warm, intelligent AI receptionist who answers calls, screens new patients, and sends you a full summary – so you can focus on your clients.</p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link href="/onboard" className="bg-white text-teal-700 px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-50 transition-colors">Get Started Free â</Link>
+            <Link href="/signup" className="bg-white text-teal-700 px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-50 transition-colors">Get Started Free →</Link>
             <a href="#how-it-works" className="border border-teal-400 text-white px-8 py-3.5 rounded-xl font-semibold text-lg hover:bg-teal-700 transition-colors">See How It Works</a>
           </div>
-          <p className="text-teal-300 mt-6 text-sm">$197/month founding (reg. $397) Â· 20 spots Â· Setup in 5 minutes</p>
+          <p className="text-teal-300 mt-6 text-sm">$197/month founding (reg. $397) · 20 spots · Setup in 5 minutes</p>
         </div>
       </section>
 
@@ -34,7 +34,7 @@ export default function LandingPage() {
         <div className="max-w-4xl mx-auto">
           <p className="text-center text-sm text-gray-400 mb-6">Built alongside real therapy practices</p>
           <div className="flex flex-wrap justify-center gap-8 text-gray-300 font-semibold text-sm">
-              <span className="text-gray-400 font-semibold">Hope & Harmony Counseling</span>
+            <span className="text-gray-400 font-semibold">Hope & Harmony Counseling</span>
           </div>
         </div>
       </section>
@@ -47,7 +47,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
               { stat: "67%", text: "of callers don't leave voicemails when they reach one" },
-              { stat: "1st", text: "practice to answer gets the new patient â not the best fit" },
+              { stat: "1st", text: "practice to answer gets the new patient – not the best fit" },
               { stat: "24/7", text: "people seek help outside business hours, and you miss them" },
             ].map(({ stat, text }) => (
               <div key={stat} className="bg-white rounded-2xl p-6 border border-gray-200 text-center">
@@ -69,8 +69,8 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             {[
               { step: "01", title: "We personalize your AI", desc: "Tell us your specialties, hours, insurance, and location. We build a custom AI receptionist tuned to your practice." },
-              { step: "02", title: "Ellie answers every call", desc: "Warm, calm, and professional â Ellie greets callers, answers questions, collects intake info, and screens new patients." },
-              { step: "03", title: "You get a full summary", desc: "After every call: caller details, AI summary, PHQ-2/GAD-2 scores, appointment request, and full transcript â all in your dashboard within seconds." },
+              { step: "02", title: "Ellie answers every call", desc: "Warm, calm, and professional – Ellie greets callers, answers questions, collects intake info, and screens new patients." },
+              { step: "03", title: "You get a full summary", desc: "After every call: caller details, AI summary, PHQ-2/GAD-2 scores, appointment request, and full transcript – all in your dashboard within seconds." },
             ].map(({ step, title, desc }) => (
               <div key={step} className="relative">
                 <div className="text-5xl font-bold text-teal-100 mb-4">{step}</div>
@@ -91,12 +91,12 @@ export default function LandingPage() {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {[
-              { icon: "ð¨", title: "Crisis Detection", desc: "Ellie recognizes warning signs in real time, provides 988 resources, and immediately texts you â no other platform does this." },
-              { icon: "ð§ ", title: "Mental Health Screening", desc: "PHQ-2 and GAD-2 scores captured live on every call. Full PHQ-9 and GAD-7 intake assessments sent automatically for deeper clinical outcomes tracking." },
-              { icon: "ð±", title: "Smart Waitlist Filling", desc: "When an appointment cancels, Ellie texts the next patient automatically. They have 10 minutes to claim the slot." },
-              { icon: "ð§", title: "Post-Call Summaries", desc: "Every call generates a full transcript, AI summary, and action items delivered to your inbox." },
-              { icon: "âï¸", title: "Real-Time Updates", desc: "Change your hours, specialties, or availability in your settings dashboard â Ellie updates instantly." },
-              { icon: "ð", title: "Privacy-Conscious Design", desc: "Built with HIPAA-conscious architecture. Your patient data stays yours." },
+              { icon: "🚨", title: "Crisis Detection", desc: "Ellie recognizes warning signs in real time, provides 988 resources, and immediately texts you – no other platform does this." },
+              { icon: "🧠 ", title: "Mental Health Screening", desc: "PHQ-2 and GAD-2 scores captured live on every call. Full PHQ-9 and GAD-7 intake assessments sent automatically for deeper clinical outcomes tracking." },
+              { icon: "📱", title: "Smart Waitlist Filling", desc: "When an appointment cancels, Ellie texts the next patient automatically. They have 10 minutes to claim the slot." },
+              { icon: "📋", title: "Post-Call Summaries", desc: "Every call generates a full transcript, AI summary, and action items delivered to your inbox." },
+              { icon: "⚙️", title: "Real-Time Updates", desc: "Change your hours, specialties, or availability in your settings dashboard – Ellie updates instantly." },
+              { icon: "🔒", title: "Privacy-Conscious Design", desc: "Built with HIPAA-conscious architecture. Your patient data stays yours." },
             ].map(({ icon, title, desc }) => (
               <div key={title} className="bg-white rounded-2xl p-5 border border-gray-200">
                 <div className="text-3xl mb-3">{icon}</div>
@@ -111,12 +111,12 @@ export default function LandingPage() {
       {/* Testimonial */}
       <section className="px-6 py-20">
         <div className="max-w-2xl mx-auto text-center">
-          <div className="text-4xl mb-6">ð¬</div>
+          <div className="text-4xl mb-6">💬</div>
           <blockquote className="text-xl text-gray-700 italic mb-6">
-            "I used to miss 3â4 calls a week. Now Ellie handles everything â she even screens new patients with mental health questions before I meet them. It's like having a full-time receptionist for a fraction of the cost."
+            "I used to miss 3–4 calls a week. Now Ellie handles everything – she even screens new patients with mental health questions before I meet them. It's like having a full-time receptionist for a fraction of the cost."
           </blockquote>
           <div className="font-semibold text-gray-900">Trace Wonser, PhD</div>
-          <div className="text-sm text-gray-500">Licensed Psychologist Â· Private Practice</div>
+          <div className="text-sm text-gray-500">Licensed Psychologist · Private Practice</div>
         </div>
       </section>
 
@@ -129,9 +129,9 @@ export default function LandingPage() {
           {/* Founding Practice Banner */}
           <div className="bg-orange-50 border border-orange-200 rounded-2xl p-4 mb-8">
             <p className="text-orange-700 font-semibold text-sm">
-              ð Founding Practice Offer â First 20 practices only
+              🎯 Founding Practice Offer – First 20 practices only
             </p>
-            <p className="text-orange-600 text-sm mt-1">Lock in $197/mo forever â only 20 spots available. Price never increases, even as we add features.</p>
+            <p className="text-orange-600 text-sm mt-1">Lock in $197/mo forever – only 20 spots available. Price never increases, even as we add features.</p>
           </div>
 
           {/* Pricing Card */}
@@ -148,16 +148,16 @@ export default function LandingPage() {
             <p className="text-gray-500 mb-8">Locked in forever for founding practices</p>
 
             <ul className="text-left space-y-3 mb-10 max-w-sm mx-auto">
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> AI receptionist answers every call, 24/7</li>
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> Appointment booking &amp; calendar sync</li>
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> Automated SMS reminders</li>
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> Bulk patient messaging</li>
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> Insurance eligibility tracking</li>
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> Full patient dashboard</li>
-              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">â</span> 30-day money-back guarantee</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> AI receptionist answers every call, 24/7</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> Appointment booking & calendar sync</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> Automated SMS reminders</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> Bulk patient messaging</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> Insurance eligibility tracking</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> Full patient dashboard</li>
+              <li className="flex items-center gap-3 text-gray-700"><span className="text-teal-500 font-bold text-lg">✓</span> 30-day money-back guarantee</li>
             </ul>
 
-            <a href="/onboard" className="block w-full text-center bg-teal-600 hover:bg-teal-700 text-white font-bold py-4 rounded-xl text-lg transition-colors">
+            <a href="/signup" className="block w-full text-center bg-teal-600 hover:bg-teal-700 text-white font-bold py-4 rounded-xl text-lg transition-colors">
               Claim Your Founding Practice Spot
             </a>
             <p className="text-gray-400 text-sm mt-3">No contracts. Cancel anytime. Regular price $397/mo after founding spots fill.</p>
@@ -173,7 +173,7 @@ export default function LandingPage() {
             {[
               { q: "How long does setup take?", a: "Under 5 minutes. Fill out your practice details, and Ellie is live before you finish your coffee." },
               { q: "Will patients know they're talking to an AI?", a: "Yes. Ellie is warm and human-sounding, but she's transparent that she's an AI assistant. Most patients appreciate the quick response." },
-              { q: "What happens during a crisis call?", a: "Ellie provides the 988 Suicide & Crisis Lifeline, encourages the caller to seek immediate help, and sends you an urgent SMS alert â all in real time." },
+              { q: "What happens during a crisis call?", a: "Ellie provides the 988 Suicide & Crisis Lifeline, encourages the caller to seek immediate help, and sends you an urgent SMS alert – all in real time." },
               { q: "Can I customize what Ellie says?", a: "Yes. Your settings dashboard lets you update hours, specialties, location, and more. Every change syncs to Ellie instantly." },
               { q: "Is this HIPAA compliant?", a: "Harbor is built with HIPAA-conscious practices. We recommend consulting your own compliance counsel and establishing a BAA as appropriate for your practice." },
             ].map(({ q, a }) => (
@@ -196,11 +196,11 @@ export default function LandingPage() {
             </div>
             <div className="flex gap-6 text-sm text-gray-500">
               <Link href="/login" className="hover:text-gray-900">Log in</Link>
-              <Link href="/onboard" className="hover:text-gray-900">Get Started</Link>
+              <Link href="/signup" className="hover:text-gray-900">Get Started</Link>
             </div>
           </div>
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-xs text-gray-400">Â© 2026 Harbor AI. All rights reserved.</p>
+            <p className="text-xs text-gray-400">© 2026 Harbor AI. All rights reserved.</p>
             <div className="flex gap-4 text-xs text-gray-500">
               <Link href="/privacy-policy" className="hover:text-gray-900">Privacy Policy</Link>
               <Link href="/sms" className="hover:text-gray-900">SMS Terms</Link>
