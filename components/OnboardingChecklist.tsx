@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase-browser';
 
@@ -37,8 +37,8 @@ type OnboardingData = {
 export default function OnboardingChecklist() {
   const [data, setData] = useState<OnboardingData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [dismissing, setDismissing] = useState(false);
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const autoDismissedRef = useRef(false);
 
   useEffect(() => {
     authFetch('/api/onboarding/status')
@@ -47,18 +47,29 @@ export default function OnboardingChecklist() {
       .catch(() => setLoading(false));
   }, []);
 
-  async function handleDismiss() {
-    setDismissing(true);
-    try {
-      await authFetch('/api/onboarding/dismiss', { method: 'POST' });
-      setData(prev => prev ? { ...prev, dismissed: true } : null);
-    } catch {
-      setDismissing(false);
-    }
-  }
+  // Auto-dismiss when every step is complete (fire-and-forget)
+  useEffect(() => {
+    if (!data || data.dismissed) return;
+    if (data.totalCount === 0) return;
+    if (data.completedCount < data.totalCount) return;
+    if (autoDismissedRef.current) return;
+    autoDismissedRef.current = true;
+
+    // Give the user a moment to see the celebration before hiding
+    const t = setTimeout(() => {
+      authFetch('/api/onboarding/dismiss', { method: 'POST' })
+        .catch(() => {/* non-fatal */})
+        .finally(() => {
+          setData(prev => prev ? { ...prev, dismissed: true } : null);
+        });
+    }, 4000);
+
+    return () => clearTimeout(t);
+  }, [data]);
 
   if (loading || !data || data.dismissed) return null;
 
+  const allDone = data.totalCount > 0 && data.completedCount === data.totalCount;
   const progress = data.totalCount > 0
     ? Math.round((data.completedCount / data.totalCount) * 100)
     : 0;
@@ -76,13 +87,6 @@ export default function OnboardingChecklist() {
               Complete these steps to get your AI receptionist up and running
             </p>
           </div>
-          <button
-            onClick={handleDismiss}
-            disabled={dismissing}
-            className="text-teal-200 hover:text-white text-xs font-medium transition-colors"
-          >
-            {dismissing ? '...' : 'Dismiss'}
-          </button>
         </div>
         <div className="mt-3 bg-teal-400/30 rounded-full h-2">
           <div
@@ -157,7 +161,7 @@ export default function OnboardingChecklist() {
                         <p className="font-medium text-gray-700">
                           From your office phone:
                         </p>
-                        <p>1. Dial *72 (or your carrier&apos;s forwarding code)</p>
+                        <p>1. Dial *72 (or your carrier's forwarding code)</p>
                         <p>2. Enter your Harbor number: {data.practicePhone || '(541) 539-4890'}</p>
                         <p>3. Wait for confirmation tone</p>
                         <p className="text-gray-400 pt-1 border-t border-gray-100">
@@ -178,7 +182,7 @@ export default function OnboardingChecklist() {
 
               {step.action && !step.completed && (
                 <Link href={step.action} className="text-xs text-teal-600 hover:text-teal-700 font-medium shrink-0 mt-0.5">
-                  Set up &rarr;
+                  Set up →
                 </Link>
               )}
 
@@ -190,14 +194,14 @@ export default function OnboardingChecklist() {
         ))}
       </div>
 
-      {data.completedCount === data.totalCount && (
+      {allDone && (
         <div className="px-5 py-4 bg-teal-50 text-center border-t border-teal-100">
           <p className="text-sm font-medium text-teal-700">
-            You&apos;re all set! Your AI receptionist is ready.
+            You're all set! Your AI receptionist is ready.
           </p>
-          <button onClick={handleDismiss} className="text-xs text-teal-600 mt-1 hover:text-teal-700 font-medium">
-            Hide this guide
-          </button>
+          <p className="text-xs text-teal-600 mt-1">
+            This guide will hide automatically in a moment.
+          </p>
         </div>
       )}
     </div>
