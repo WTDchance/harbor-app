@@ -1,5 +1,5 @@
 // app/api/onboarding/status/route.ts
-// Harbor â Onboarding checklist status
+// Harbor – Onboarding checklist status
 // Returns step-by-step onboarding progress for a practice
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -52,7 +52,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Check each onboarding step in parallel
-  const [callsRes, calendarRes, intakeRes] = await Promise.all([
+  const [callsRes, calendarRes, intakeDocsRes] = await Promise.all([
     supabase
       .from('call_logs')
       .select('id', { count: 'exact', head: true })
@@ -62,20 +62,20 @@ export async function GET(req: NextRequest) {
       .select('id', { count: 'exact', head: true })
       .eq('practice_id', practiceId),
     supabase
-      .from('intake_forms')
+      .from('intake_documents')
       .select('id', { count: 'exact', head: true })
       .eq('practice_id', practiceId)
-      .eq('status', 'completed'),
+      .eq('active', true),
   ]);
 
   const steps = [
     {
-      id: 'test_call',
-      title: 'Make a test call',
+      id: 'upload_intake_docs',
+      title: 'Upload your intake documents',
       description:
-        'Call your Harbor number to hear your AI receptionist in action',
-      completed: (callsRes.count ?? 0) > 0,
-      action: null,
+        'Add your HIPAA notice, consent forms, and other paperwork patients should sign',
+      completed: (intakeDocsRes.count ?? 0) > 0,
+      action: '/dashboard/intake/documents',
     },
     {
       id: 'connect_calendar',
@@ -85,18 +85,19 @@ export async function GET(req: NextRequest) {
       action: '/dashboard/settings',
     },
     {
-      id: 'review_intake',
-      title: 'Review intake forms',
-      description: 'Check how patient intake paperwork is collected',
-      completed: (intakeRes.count ?? 0) > 0,
-      action: '/dashboard/intake',
-    },
-    {
       id: 'setup_forwarding',
       title: 'Set up call forwarding',
       description:
         "Forward your office phone to Harbor when you're unavailable",
-      completed: false, // Manual step â always shown until dismissed
+      completed: false, // Manual step – always shown until all others complete
+      action: null,
+    },
+    {
+      id: 'test_call',
+      title: 'Make a test call',
+      description:
+        'Call your Harbor number to hear your AI receptionist in action',
+      completed: (callsRes.count ?? 0) > 0,
       action: null,
     },
   ];
