@@ -9,6 +9,7 @@
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
+import IntakeProgress from "@/components/IntakeProgress";
 
 const supabase = createClient();
 
@@ -802,6 +803,9 @@ export default function PatientDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Intake Packet Progress (new) */}
+      <IntakeProgress patientId={patient.id} />
 
       {/* Intake Forms Section */}
       <div className="bg-white border rounded-lg p-5 shadow-sm">
