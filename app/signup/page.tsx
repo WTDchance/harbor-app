@@ -1,15 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   Check, ArrowRight, ArrowLeft, Phone, Shield, Clock, Star,
   Building2, User, Mail, Lock, MapPin, Stethoscope, Heart,
-  Calendar, MessageSquare, Wifi, FileText
+  Calendar, MessageSquare, Wifi, CreditCard,
 } from 'lucide-react'
-import { createClient } from '@/lib/supabase-browser'
 
-const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie', 'Intake Forms']
+const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie']
 
 const SPECIALTIES = [
   'Individual Therapy', 'Couples Therapy', 'Family Therapy',
@@ -40,12 +39,7 @@ const DAY_LABELS: Record<string, string> = {
   friday: 'Fri', saturday: 'Sat', sunday: 'Sun',
 }
 
-interface HoursDay {
-  enabled: boolean
-  open: string
-  close: string
-}
-
+interface HoursDay { enabled: boolean; open: string; close: string }
 type HoursMap = Record<string, HoursDay>
 
 const DEFAULT_HOURS: HoursMap = {
@@ -58,39 +52,24 @@ const DEFAULT_HOURS: HoursMap = {
   sunday: { enabled: false, open: '09:00', close: '13:00' },
 }
 
-// Starter intake form templates — must match slugs in /api/intake/documents/templates
-const INTAKE_TEMPLATES = [
-  {
-    slug: 'hipaa-notice',
-    name: 'HIPAA Notice of Privacy Practices',
-    blurb: 'Standard privacy notice required by federal law.',
-    recommended: true,
-  },
-  {
-    slug: 'informed-consent',
-    name: 'Informed Consent for Therapy',
-    blurb: 'Explains the nature of therapy, risks, and confidentiality.',
-    recommended: true,
-  },
-  {
-    slug: 'telehealth-consent',
-    name: 'Telehealth Consent',
-    blurb: 'For practices offering video or phone sessions.',
-    recommended: false,
-  },
-  {
-    slug: 'cancellation-policy',
-    name: 'Cancellation Policy',
-    blurb: '24-hour cancellation policy with optional fee.',
-    recommended: true,
-  },
-]
+interface FoundingInfo {
+  remaining: number
+  cap: number
+  is_founding_available: boolean
+  price_cents: number
+  regular_price_cents: number
+}
+
+function formatPrice(cents: number): string {
+  return `$${(cents / 100).toFixed(0)}`
+}
 
 export default function SignupPage() {
   const router = useRouter()
   const [step, setStep] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [founding, setFounding] = useState<FoundingInfo | null>(null)
 
   const [form, setForm] = useState({
     practice_name: '',
@@ -108,30 +87,27 @@ export default function SignupPage() {
     accepting_new_patients: true,
     tos_accepted: false,
     baa_acknowledged: false,
+    sms_consent: false,
   })
-
   const [specialties, setSpecialties] = useState<string[]>([])
   const [insurance, setInsurance] = useState<string[]>([])
   const [hours, setHours] = useState<HoursMap>(DEFAULT_HOURS)
 
-  // Step 4: intake template selection — default to recommended templates
-  const [selectedTemplates, setSelectedTemplates] = useState<string[]>(
-    INTAKE_TEMPLATES.filter((t) => t.recommended).map((t) => t.slug)
-  )
-  const [adoptingTemplates, setAdoptingTemplates] = useState(false)
-  const [templatesAdopted, setTemplatesAdopted] = useState(false)
+  useEffect(() => {
+    fetch('/api/signup/founding-count')
+      .then((r) => r.json())
+      .then((d) => setFounding(d))
+      .catch(() => {})
+  }, [])
 
   const u = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
-
   const toggleChip = (arr: string[], setArr: (v: string[]) => void, val: string) => {
     setArr(arr.includes(val) ? arr.filter((x) => x !== val) : [...arr, val])
   }
-
   const updateHours = (day: string, field: keyof HoursDay, value: any) => {
     setHours((prev) => ({ ...prev, [day]: { ...prev[day], [field]: value } }))
   }
 
-  // Validation per step
   const validateStep = (s: number): boolean => {
     setError('')
     if (s === 0) {
@@ -150,20 +126,17 @@ export default function SignupPage() {
     return true
   }
 
-  const next = () => {
-    if (validateStep(step)) setStep(step + 1)
-  }
+  const next = () => { if (validateStep(step)) setStep(step + 1) }
   const back = () => { setError(''); setStep(step - 1) }
 
-  // Step 3 → step 4: create account, sign in, advance to intake step
   const submit = async () => {
     if (!validateStep(3)) return
     setLoading(true)
     setError('')
 
-    const defaultGreeting = `Thank you for calling ${form.practice_name}. This is ${form.ai_name}, the AI receptionist for ${form.provider_name}. How can I help you today?`
+    const defaultGreeting =
+      `Thank you for calling ${form.practice_name}. This is ${form.ai_name}, the AI receptionist for ${form.provider_name}. How can I help you today?`
 
-    // Build hours_json
     const hours_json: Record<string, any> = {}
     for (const day of DAYS) {
       hours_json[day] = {
@@ -192,69 +165,19 @@ export default function SignupPage() {
         setLoading(false)
         return
       }
-
-      // Sign the user in client-side so the dashboard loads with a real session.
-      // Without this, middleware would bounce them to /login because no auth cookie
-      // was ever set by the admin createUser call in /api/signup.
-      try {
-        const supabase = createClient()
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: form.email.trim().toLowerCase(),
-          password: form.password,
-        })
-        if (signInError) {
-          console.error('Auto sign-in failed:', signInError)
-          // Fall through – they'll be asked to sign in from the success screen.
-        }
-      } catch (e) {
-        console.error('Auto sign-in threw:', e)
+      if (!data.checkout_url) {
+        setError('Unable to create checkout session. Please try again.')
+        setLoading(false)
+        return
       }
-
-      setStep(4) // intake forms step
-      setLoading(false)
+      // Redirect to Stripe Checkout — card-upfront, charge-now flow.
+      window.location.href = data.checkout_url
     } catch {
       setError('Signup failed. Please try again.')
       setLoading(false)
     }
   }
 
-  // Step 4 → step 5: adopt selected templates and advance to success
-  const adoptTemplatesAndFinish = async () => {
-    setError('')
-    if (selectedTemplates.length === 0) {
-      // User chose nothing — treat as skip
-      setStep(5)
-      return
-    }
-    setAdoptingTemplates(true)
-    try {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
-      const res = await fetch('/api/intake/documents/templates', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${session?.access_token ?? ''}`,
-        },
-        body: JSON.stringify({ slugs: selectedTemplates }),
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        setError(data.error || 'Could not add templates. You can still upload them from the dashboard.')
-        setAdoptingTemplates(false)
-        return
-      }
-      setTemplatesAdopted(true)
-      setStep(5)
-    } catch (e) {
-      console.error('Template adoption failed:', e)
-      setError('Could not add templates. You can still upload them from the dashboard.')
-    } finally {
-      setAdoptingTemplates(false)
-    }
-  }
-
-  // ---------- Chip component ----------
   const Chip = ({ label, selected, onClick }: { label: string; selected: boolean; onClick: () => void }) => (
     <button
       type="button"
@@ -270,44 +193,12 @@ export default function SignupPage() {
     </button>
   )
 
-  // ---------- Success screen ----------
-  if (step === 5) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div className="max-w-md w-full text-center">
-          <div className="w-20 h-20 bg-teal-500 rounded-full flex items-center justify-center mx-auto mb-6">
-            <Check className="w-10 h-10 text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-white mb-3">Welcome to Harbor!</h1>
-          <p className="text-slate-400 mb-2">
-            {form.ai_name} is being set up for <strong className="text-white">{form.practice_name}</strong>.
-          </p>
-          {templatesAdopted && (
-            <p className="text-teal-400 text-sm mb-2">
-              ✓ Starter intake forms added — you can edit them anytime.
-            </p>
-          )}
-          <p className="text-slate-500 text-sm mb-8">
-            Next: connect your calendar, claim your Harbor phone number, and run a test call — all from your dashboard.
-          </p>
-          <button
-            onClick={() => router.push('/dashboard?welcome=1')}
-            className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-6 rounded-lg transition-colors"
-          >
-            Go to Dashboard
-          </button>
-          <p className="text-slate-600 text-xs mt-6">
-            Your 14-day free trial has started. No credit card required.
-          </p>
-        </div>
-      </div>
-    )
-  }
+  const priceCents = founding?.price_cents ?? 19700
+  const isFounding = !!founding?.is_founding_available
+  const remaining = founding?.remaining ?? 20
 
-  // ---------- Main form ----------
   return (
     <div className="min-h-screen bg-slate-900">
-      {/* Header bar */}
       <div className="border-b border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
@@ -319,24 +210,37 @@ export default function SignupPage() {
           <div className="flex items-center gap-6 text-sm text-slate-400">
             <span className="flex items-center gap-1"><Shield className="w-3 h-3" /> HIPAA Ready</span>
             <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 5 min setup</span>
-            <span className="flex items-center gap-1"><Star className="w-3 h-3" /> 14-day free trial</span>
+            <span className="flex items-center gap-1"><CreditCard className="w-3 h-3" /> Card required</span>
           </div>
         </div>
       </div>
 
+      {founding && (
+        <div className={`${isFounding ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-300'} border-y`}>
+          <div className="max-w-xl mx-auto px-4 py-2.5 text-center text-xs sm:text-sm">
+            {isFounding ? (
+              <>
+                <Star className="w-3.5 h-3.5 inline mr-1" />
+                <strong>Founding Practice Offer</strong> — {remaining} of {founding.cap} spots left · Lock in{' '}
+                <strong>{formatPrice(founding.price_cents)}/mo</strong>{' '}
+                <span className="line-through text-slate-500">{formatPrice(founding.regular_price_cents)}</span>{' '}
+                forever
+              </>
+            ) : (
+              <>Founding spots are gone. Regular pricing: <strong>{formatPrice(founding.regular_price_cents)}/mo</strong></>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="max-w-xl mx-auto px-4 py-10">
-        {/* Step indicator */}
         <div className="mb-10">
           <div className="flex items-center justify-between mb-2">
             {STEPS.map((s, i) => (
               <div key={s} className="flex items-center">
                 <div
                   className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
-                    i < step
-                      ? 'bg-teal-500 text-white'
-                      : i === step
-                      ? 'bg-teal-500 text-white'
-                      : 'bg-slate-700 text-slate-400'
+                    i <= step ? 'bg-teal-500 text-white' : 'bg-slate-700 text-slate-400'
                   }`}
                 >
                   {i < step ? <Check className="w-4 h-4" /> : i + 1}
@@ -348,13 +252,10 @@ export default function SignupPage() {
             ))}
           </div>
           <div className="flex justify-between text-xs text-slate-500 mt-1">
-            {STEPS.map((s) => (
-              <span key={s} className="max-w-[70px] text-center">{s}</span>
-            ))}
+            {STEPS.map((s) => <span key={s} className="max-w-[70px] text-center">{s}</span>)}
           </div>
         </div>
 
-        {/* Form card */}
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-8">
           <h2 className="text-2xl font-bold text-white mb-1">{STEPS[step]}</h2>
           <p className="text-slate-400 mb-6 text-sm">
@@ -362,7 +263,6 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
-            {step === 4 && "Pick the consent forms patients should sign during intake. You can edit or replace them anytime from your dashboard."}
           </p>
 
           {error && (
@@ -371,7 +271,6 @@ export default function SignupPage() {
             </div>
           )}
 
-          {/* ========== STEP 0: Practice basics ========== */}
           {step === 0 && (
             <div className="space-y-4">
               <div>
@@ -414,6 +313,9 @@ export default function SignupPage() {
                     className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors" />
                 </div>
               </div>
+              <p className="text-xs text-slate-500 mt-2">
+                We'll buy your Harbor phone number in this area after checkout.
+              </p>
               <button onClick={next}
                 className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 mt-2">
                 Continue <ArrowRight className="w-5 h-5" />
@@ -421,10 +323,8 @@ export default function SignupPage() {
             </div>
           )}
 
-          {/* ========== STEP 1: Services & Hours ========== */}
           {step === 1 && (
             <div className="space-y-6">
-              {/* Specialties */}
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
                   <Stethoscope className="w-4 h-4 inline mr-1" />Specialties
@@ -438,7 +338,6 @@ export default function SignupPage() {
                 </div>
               </div>
 
-              {/* Insurance */}
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
                   <Shield className="w-4 h-4 inline mr-1" />Insurance Accepted
@@ -452,7 +351,6 @@ export default function SignupPage() {
                 </div>
               </div>
 
-              {/* Telehealth + Accepting */}
               <div className="flex gap-6">
                 <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
                   <input type="checkbox" checked={form.telehealth}
@@ -468,7 +366,6 @@ export default function SignupPage() {
                 </label>
               </div>
 
-              {/* Timezone */}
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1.5">
                   <Clock className="w-4 h-4 inline mr-1" />Timezone
@@ -479,7 +376,6 @@ export default function SignupPage() {
                 </select>
               </div>
 
-              {/* Office hours grid */}
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
                   <Calendar className="w-4 h-4 inline mr-1" />Office Hours
@@ -526,7 +422,6 @@ export default function SignupPage() {
             </div>
           )}
 
-          {/* ========== STEP 2: Account ========== */}
           {step === 2 && (
             <div className="space-y-4">
               <div>
@@ -554,15 +449,11 @@ export default function SignupPage() {
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors" />
               </div>
 
-              {/* Legal consents */}
               <div className="space-y-3 pt-2">
                 <label className="flex items-start gap-3 text-xs text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.tos_accepted}
+                  <input type="checkbox" checked={form.tos_accepted}
                     onChange={(e) => u('tos_accepted', e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
-                  />
+                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
                   <span>
                     I agree to the{' '}
                     <a href="/terms" target="_blank" className="text-teal-400 hover:text-teal-300 underline">Terms of Service</a>{' '}
@@ -571,12 +462,9 @@ export default function SignupPage() {
                   </span>
                 </label>
                 <label className="flex items-start gap-3 text-xs text-slate-300 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={form.baa_acknowledged}
+                  <input type="checkbox" checked={form.baa_acknowledged}
                     onChange={(e) => u('baa_acknowledged', e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
-                  />
+                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
                   <span>
                     I acknowledge that Harbor processes Protected Health Information (PHI) and I agree to
                     execute Harbor's Business Associate Agreement (BAA) before going live with real patients.
@@ -597,7 +485,6 @@ export default function SignupPage() {
             </div>
           )}
 
-          {/* ========== STEP 3: Customize Ellie ========== */}
           {step === 3 && (
             <div className="space-y-5">
               <div>
@@ -610,24 +497,24 @@ export default function SignupPage() {
                 <p className="text-xs text-slate-500 mt-1">This is how your AI receptionist will introduce herself.</p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                  Greeting Script
-                </label>
+                <label className="block text-sm font-medium text-slate-300 mb-1.5">Greeting Script</label>
                 <textarea value={form.greeting} onChange={(e) => u('greeting', e.target.value)} rows={4}
                   placeholder={`Thank you for calling ${form.practice_name || 'your practice'}. This is ${form.ai_name || 'Ellie'}, the AI receptionist for ${form.provider_name || 'your provider'}. How can I help you today?`}
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors resize-none" />
                 <p className="text-xs text-slate-500 mt-1">Leave blank to use the default greeting shown above.</p>
               </div>
 
-              {/* Calendar note */}
               <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-4">
                 <div className="flex items-start gap-3">
-                  <Calendar className="w-5 h-5 text-teal-400 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-slate-200">Connect your calendar after signup</p>
+                  <CreditCard className="w-5 h-5 text-teal-400 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-slate-200">
+                      You'll be charged <strong className="text-teal-300">{formatPrice(priceCents)}/mo</strong>
+                      {isFounding && <span className="text-amber-300"> — Founding Practice rate locked forever</span>}
+                    </p>
                     <p className="text-xs text-slate-400 mt-1">
-                      You can connect Google Calendar or Apple Calendar from your dashboard settings.
-                      This lets {form.ai_name || 'Ellie'} check availability and book appointments in real time.
+                      Payment is processed securely by Stripe. You can cancel anytime from your dashboard.
+                      30-day money-back guarantee.
                     </p>
                   </div>
                 </div>
@@ -640,93 +527,8 @@ export default function SignupPage() {
                 </button>
                 <button onClick={submit} disabled={loading}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Setting up...' : 'Continue'}
+                  {loading ? 'Redirecting to checkout…' : `Continue to Checkout`}
                   {!loading && <ArrowRight className="w-5 h-5" />}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* ========== STEP 4: Intake Forms ========== */}
-          {step === 4 && (
-            <div className="space-y-5">
-              <div className="bg-slate-700/40 border border-slate-600 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <FileText className="w-5 h-5 text-teal-400 mt-0.5 flex-shrink-0" />
-                  <div>
-                    <p className="text-sm font-medium text-slate-200">Starter intake forms</p>
-                    <p className="text-xs text-slate-400 mt-1">
-                      We'll add these as editable templates to your practice. You can review,
-                      customize, or replace them with your own PDFs anytime from
-                      <span className="text-teal-300"> Dashboard → Intake → Documents</span>.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                {INTAKE_TEMPLATES.map((tpl) => {
-                  const checked = selectedTemplates.includes(tpl.slug)
-                  return (
-                    <label
-                      key={tpl.slug}
-                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
-                        checked
-                          ? 'bg-teal-500/10 border-teal-500'
-                          : 'bg-slate-700/30 border-slate-600 hover:border-slate-500'
-                      }`}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() =>
-                          setSelectedTemplates((prev) =>
-                            prev.includes(tpl.slug)
-                              ? prev.filter((s) => s !== tpl.slug)
-                              : [...prev, tpl.slug]
-                          )
-                        }
-                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="text-sm font-medium text-slate-100">{tpl.name}</p>
-                          {tpl.recommended && (
-                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 font-semibold uppercase tracking-wide">
-                              Recommended
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs text-slate-400 mt-0.5">{tpl.blurb}</p>
-                      </div>
-                    </label>
-                  )
-                })}
-              </div>
-
-              <p className="text-xs text-slate-500">
-                Got your own forms? You can upload PDFs from your dashboard after signup.
-                These templates are a generic starting point — please review them with your attorney before going live.
-              </p>
-
-              <div className="flex gap-3 mt-2">
-                <button
-                  onClick={() => setStep(5)}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors"
-                >
-                  Skip for now
-                </button>
-                <button
-                  onClick={adoptTemplatesAndFinish}
-                  disabled={adoptingTemplates}
-                  className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2"
-                >
-                  {adoptingTemplates
-                    ? 'Adding...'
-                    : selectedTemplates.length > 0
-                    ? `Add ${selectedTemplates.length} & Finish`
-                    : 'Finish'}
-                  {!adoptingTemplates && <ArrowRight className="w-5 h-5" />}
                 </button>
               </div>
             </div>
