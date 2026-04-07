@@ -4,11 +4,21 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import clsx from 'clsx'
-import { LayoutDashboard, Users, PlusCircle, LogOut, Activity, BarChart3, ArrowLeftRight } from 'lucide-react'
+import {
+  LayoutDashboard,
+  Users,
+  PlusCircle,
+  LogOut,
+  Activity,
+  BarChart3,
+  ArrowLeftRight,
+  UserPlus,
+} from 'lucide-react'
 
 const navItems = [
   { href: '/admin', label: 'Overview', icon: LayoutDashboard, exact: true },
   { href: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
+  { href: '/admin/signups', label: 'Signups', icon: UserPlus },
   { href: '/admin/practices', label: 'All Practices', icon: Users },
   { href: '/admin/provision', label: 'Add Therapist', icon: PlusCircle },
   { href: '/admin/activity', label: 'Activity Feed', icon: Activity },
@@ -38,6 +48,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             </div>
           </div>
         </div>
+
         <nav className="flex-1 px-4 py-6">
           <ul className="space-y-1">
             {navItems.map(({ href, label, icon: Icon, exact }) => {
@@ -61,6 +72,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             })}
           </ul>
         </nav>
+
         <div className="p-4 border-t border-slate-700 space-y-1">
           <Link
             href="/dashboard"
@@ -79,6 +91,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </button>
         </div>
       </aside>
+
       <main className="flex-1 overflow-auto">
         <div className="p-8">{children}</div>
       </main>
