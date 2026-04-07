@@ -5,11 +5,11 @@ import { useRouter } from 'next/navigation'
 import {
   Check, ArrowRight, ArrowLeft, Phone, Shield, Clock, Star,
   Building2, User, Mail, Lock, MapPin, Stethoscope, Heart,
-  Calendar, MessageSquare, Wifi
+  Calendar, MessageSquare, Wifi, FileText
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase-browser'
 
-const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie']
+const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie', 'Intake Forms']
 
 const SPECIALTIES = [
   'Individual Therapy', 'Couples Therapy', 'Family Therapy',
@@ -58,6 +58,34 @@ const DEFAULT_HOURS: HoursMap = {
   sunday: { enabled: false, open: '09:00', close: '13:00' },
 }
 
+// Starter intake form templates — must match slugs in /api/intake/documents/templates
+const INTAKE_TEMPLATES = [
+  {
+    slug: 'hipaa-notice',
+    name: 'HIPAA Notice of Privacy Practices',
+    blurb: 'Standard privacy notice required by federal law.',
+    recommended: true,
+  },
+  {
+    slug: 'informed-consent',
+    name: 'Informed Consent for Therapy',
+    blurb: 'Explains the nature of therapy, risks, and confidentiality.',
+    recommended: true,
+  },
+  {
+    slug: 'telehealth-consent',
+    name: 'Telehealth Consent',
+    blurb: 'For practices offering video or phone sessions.',
+    recommended: false,
+  },
+  {
+    slug: 'cancellation-policy',
+    name: 'Cancellation Policy',
+    blurb: '24-hour cancellation policy with optional fee.',
+    recommended: true,
+  },
+]
+
 export default function SignupPage() {
   const router = useRouter()
   const [step, setStep] = useState(0)
@@ -85,6 +113,13 @@ export default function SignupPage() {
   const [specialties, setSpecialties] = useState<string[]>([])
   const [insurance, setInsurance] = useState<string[]>([])
   const [hours, setHours] = useState<HoursMap>(DEFAULT_HOURS)
+
+  // Step 4: intake template selection — default to recommended templates
+  const [selectedTemplates, setSelectedTemplates] = useState<string[]>(
+    INTAKE_TEMPLATES.filter((t) => t.recommended).map((t) => t.slug)
+  )
+  const [adoptingTemplates, setAdoptingTemplates] = useState(false)
+  const [templatesAdopted, setTemplatesAdopted] = useState(false)
 
   const u = (k: string, v: any) => setForm((f) => ({ ...f, [k]: v }))
 
@@ -120,6 +155,7 @@ export default function SignupPage() {
   }
   const back = () => { setError(''); setStep(step - 1) }
 
+  // Step 3 → step 4: create account, sign in, advance to intake step
   const submit = async () => {
     if (!validateStep(3)) return
     setLoading(true)
@@ -157,7 +193,7 @@ export default function SignupPage() {
         return
       }
 
-      // ----- Sign the user in client-side so the dashboard loads with a real session.
+      // Sign the user in client-side so the dashboard loads with a real session.
       // Without this, middleware would bounce them to /login because no auth cookie
       // was ever set by the admin createUser call in /api/signup.
       try {
@@ -168,16 +204,53 @@ export default function SignupPage() {
         })
         if (signInError) {
           console.error('Auto sign-in failed:', signInError)
-          // Fall through – show success screen with an explicit "Sign in" CTA.
+          // Fall through – they'll be asked to sign in from the success screen.
         }
       } catch (e) {
         console.error('Auto sign-in threw:', e)
       }
 
-      setStep(4) // success
+      setStep(4) // intake forms step
+      setLoading(false)
     } catch {
       setError('Signup failed. Please try again.')
       setLoading(false)
+    }
+  }
+
+  // Step 4 → step 5: adopt selected templates and advance to success
+  const adoptTemplatesAndFinish = async () => {
+    setError('')
+    if (selectedTemplates.length === 0) {
+      // User chose nothing — treat as skip
+      setStep(5)
+      return
+    }
+    setAdoptingTemplates(true)
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+      const res = await fetch('/api/intake/documents/templates', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session?.access_token ?? ''}`,
+        },
+        body: JSON.stringify({ slugs: selectedTemplates }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        setError(data.error || 'Could not add templates. You can still upload them from the dashboard.')
+        setAdoptingTemplates(false)
+        return
+      }
+      setTemplatesAdopted(true)
+      setStep(5)
+    } catch (e) {
+      console.error('Template adoption failed:', e)
+      setError('Could not add templates. You can still upload them from the dashboard.')
+    } finally {
+      setAdoptingTemplates(false)
     }
   }
 
@@ -198,7 +271,7 @@ export default function SignupPage() {
   )
 
   // ---------- Success screen ----------
-  if (step === 4) {
+  if (step === 5) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="max-w-md w-full text-center">
@@ -209,6 +282,11 @@ export default function SignupPage() {
           <p className="text-slate-400 mb-2">
             {form.ai_name} is being set up for <strong className="text-white">{form.practice_name}</strong>.
           </p>
+          {templatesAdopted && (
+            <p className="text-teal-400 text-sm mb-2">
+              ✓ Starter intake forms added — you can edit them anytime.
+            </p>
+          )}
           <p className="text-slate-500 text-sm mb-8">
             Next: connect your calendar, claim your Harbor phone number, and run a test call — all from your dashboard.
           </p>
@@ -264,14 +342,14 @@ export default function SignupPage() {
                   {i < step ? <Check className="w-4 h-4" /> : i + 1}
                 </div>
                 {i < STEPS.length - 1 && (
-                  <div className={`h-0.5 w-16 sm:w-24 mx-1 sm:mx-2 transition-colors ${i < step ? 'bg-teal-500' : 'bg-slate-700'}`} />
+                  <div className={`h-0.5 w-12 sm:w-16 mx-1 sm:mx-2 transition-colors ${i < step ? 'bg-teal-500' : 'bg-slate-700'}`} />
                 )}
               </div>
             ))}
           </div>
           <div className="flex justify-between text-xs text-slate-500 mt-1">
             {STEPS.map((s) => (
-              <span key={s} className="max-w-[80px] text-center">{s}</span>
+              <span key={s} className="max-w-[70px] text-center">{s}</span>
             ))}
           </div>
         </div>
@@ -284,6 +362,7 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
+            {step === 4 && "Pick the consent forms patients should sign during intake. You can edit or replace them anytime from your dashboard."}
           </p>
 
           {error && (
@@ -561,8 +640,93 @@ export default function SignupPage() {
                 </button>
                 <button onClick={submit} disabled={loading}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Setting up...' : 'Launch Harbor'}
+                  {loading ? 'Setting up...' : 'Continue'}
                   {!loading && <ArrowRight className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ========== STEP 4: Intake Forms ========== */}
+          {step === 4 && (
+            <div className="space-y-5">
+              <div className="bg-slate-700/40 border border-slate-600 rounded-lg p-4">
+                <div className="flex items-start gap-3">
+                  <FileText className="w-5 h-5 text-teal-400 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">Starter intake forms</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      We'll add these as editable templates to your practice. You can review,
+                      customize, or replace them with your own PDFs anytime from
+                      <span className="text-teal-300"> Dashboard → Intake → Documents</span>.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {INTAKE_TEMPLATES.map((tpl) => {
+                  const checked = selectedTemplates.includes(tpl.slug)
+                  return (
+                    <label
+                      key={tpl.slug}
+                      className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                        checked
+                          ? 'bg-teal-500/10 border-teal-500'
+                          : 'bg-slate-700/30 border-slate-600 hover:border-slate-500'
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setSelectedTemplates((prev) =>
+                            prev.includes(tpl.slug)
+                              ? prev.filter((s) => s !== tpl.slug)
+                              : [...prev, tpl.slug]
+                          )
+                        }
+                        className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium text-slate-100">{tpl.name}</p>
+                          {tpl.recommended && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500/20 text-teal-300 font-semibold uppercase tracking-wide">
+                              Recommended
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-400 mt-0.5">{tpl.blurb}</p>
+                      </div>
+                    </label>
+                  )
+                })}
+              </div>
+
+              <p className="text-xs text-slate-500">
+                Got your own forms? You can upload PDFs from your dashboard after signup.
+                These templates are a generic starting point — please review them with your attorney before going live.
+              </p>
+
+              <div className="flex gap-3 mt-2">
+                <button
+                  onClick={() => setStep(5)}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors"
+                >
+                  Skip for now
+                </button>
+                <button
+                  onClick={adoptTemplatesAndFinish}
+                  disabled={adoptingTemplates}
+                  className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2"
+                >
+                  {adoptingTemplates
+                    ? 'Adding...'
+                    : selectedTemplates.length > 0
+                    ? `Add ${selectedTemplates.length} & Finish`
+                    : 'Finish'}
+                  {!adoptingTemplates && <ArrowRight className="w-5 h-5" />}
                 </button>
               </div>
             </div>
