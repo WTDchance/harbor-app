@@ -316,17 +316,6 @@ export default function SettingsPage() {
         )}
       </div>
 
-      {/* Call Forwarding */}
-      <div className="bg-white rounded-xl border border-gray-200 mb-6">
-        <div className="p-5 flex items-center justify-between gap-4">
-          <div className="min-w-0">
-            <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Call Forwarding</h2>
-            <p className="text-xs text-gray-500 mt-1">Decide when Ellie answers and when calls go to your cell.</p>
-          </div>
-          <a href="/dashboard/settings/call-forwarding" className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap">Configure</a>
-        </div>
-      </div>
-
       {/* Integrations */}
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-5 border-b border-gray-100">
