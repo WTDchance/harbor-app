@@ -88,6 +88,7 @@ export default function SignupPage() {
     tos_accepted: false,
     baa_acknowledged: false,
     sms_consent: false,
+    promo_code: '',
   })
   const [specialties, setSpecialties] = useState<string[]>([])
   const [insurance, setInsurance] = useState<string[]>([])
@@ -504,7 +505,23 @@ export default function SignupPage() {
                 <p className="text-xs text-slate-500 mt-1">Leave blank to use the default greeting shown above.</p>
               </div>
 
-              <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-4">
+              <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                Promo Code <span className="text-slate-500 font-normal">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={form.promo_code}
+                onChange={(e) => u('promo_code', e.target.value.toUpperCase())}
+                placeholder="Have a code? Enter it here"
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors uppercase"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                If you have a special access code, enter it here. Otherwise, leave blank.
+              </p>
+            </div>
+
+          <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-4">
                 <div className="flex items-start gap-3">
                   <CreditCard className="w-5 h-5 text-teal-400 mt-0.5 flex-shrink-0" />
                   <div className="text-sm">

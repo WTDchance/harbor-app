@@ -4,7 +4,6 @@
 // happens in the Stripe webhook once `checkout.session.completed` fires.
 //
 // This is the "card upfront, charge now" flow — no trial period.
-
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { stripe } from '@/lib/stripe'
@@ -14,6 +13,11 @@ const FOUNDING_CAP = Number(process.env.FOUNDING_MEMBER_CAP || '20')
 const STRIPE_PRICE_ID_FOUNDING = process.env.STRIPE_PRICE_ID_FOUNDING || ''
 const STRIPE_PRICE_ID_REGULAR = process.env.STRIPE_PRICE_ID_REGULAR || process.env.STRIPE_PRICE_ID || ''
 
+// Comp code: free forever, locked to a single email server-side.
+// Provisioned in Stripe via /api/admin/create-mom-promo (one-time).
+const MOM_PROMO_CODE = 'MOM-FREE'
+const MOM_LOCKED_EMAIL = 'dr.tracewonser@gmail.com'
+
 async function countFoundingMembers(): Promise<number> {
   const { count } = await supabaseAdmin
     .from('practices')
@@ -21,6 +25,34 @@ async function countFoundingMembers(): Promise<number> {
     .eq('founding_member', true)
     .in('status', ['active', 'trial'])
   return count || 0
+}
+
+async function signupsEnabled(): Promise<boolean> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'signups_enabled')
+      .maybeSingle()
+    if (!data) return true // default open if setting missing
+    const v = data.value
+    return v === true || v === 'true' || v === 1
+  } catch (e) {
+    console.error('[signup] failed to read signups_enabled, defaulting to enabled:', e)
+    return true
+  }
+}
+
+// Resolves a Stripe promotion code object by its human-readable code.
+// Returns null if not found, expired, inactive, or fully redeemed.
+async function resolveActivePromotionCode(code: string) {
+  if (!stripe) return null
+  const list = await stripe.promotionCodes.list({ code, limit: 1, active: true })
+  const pc = list.data[0]
+  if (!pc) return null
+  if (pc.expires_at && pc.expires_at * 1000 < Date.now()) return null
+  if (pc.max_redemptions != null && pc.times_redeemed >= pc.max_redemptions) return null
+  return pc
 }
 
 export async function POST(req: NextRequest) {
@@ -35,6 +67,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Stripe price IDs not configured on the server.' },
         { status: 500 }
+      )
+    }
+
+    // --- 0. Kill switch check ---
+    if (!(await signupsEnabled())) {
+      return NextResponse.json(
+        {
+          error:
+            'We are temporarily not accepting new signups while we finish onboarding our founding practices. Please check back soon or email hello@harborreceptionist.com to get on the waitlist.',
+          code: 'signups_paused',
+        },
+        { status: 503 }
       )
     }
 
@@ -58,6 +102,7 @@ export async function POST(req: NextRequest) {
       tos_accepted,
       baa_acknowledged,
       sms_consent,
+      promo_code,
     } = body
 
     // --- Basic validation ---
@@ -75,12 +120,45 @@ export async function POST(req: NextRequest) {
     }
 
     const normalizedEmail = String(email).trim().toLowerCase()
+    const normalizedPromo = typeof promo_code === 'string' ? promo_code.trim().toUpperCase() : ''
+
+    // --- Promo code validation (server-side, before any DB writes) ---
+    // Currently the only supported code is MOM-FREE, which is locked to a
+    // specific email. Any other non-empty code is rejected here so we don't
+    // create dangling auth users / practice rows for an invalid promo.
+    let resolvedPromo: Awaited<ReturnType<typeof resolveActivePromotionCode>> = null
+    let isCompedSignup = false
+    if (normalizedPromo) {
+      if (normalizedPromo !== MOM_PROMO_CODE) {
+        return NextResponse.json(
+          { error: 'That promo code is not valid.' },
+          { status: 400 }
+        )
+      }
+      if (normalizedEmail !== MOM_LOCKED_EMAIL) {
+        return NextResponse.json(
+          { error: 'This promo code is not valid for that email address.' },
+          { status: 400 }
+        )
+      }
+      resolvedPromo = await resolveActivePromotionCode(MOM_PROMO_CODE)
+      if (!resolvedPromo) {
+        return NextResponse.json(
+          {
+            error:
+              'This promo code has already been used or is no longer available. Contact support if you think this is a mistake.',
+          },
+          { status: 400 }
+        )
+      }
+      isCompedSignup = true
+    }
+
     const aiName = ai_name || 'Ellie'
     const ellieGreeting =
       greeting ||
       `Thank you for calling ${practice_name}. This is ${aiName}, the AI receptionist for ${provider_name}. How can I help you today?`
     const location = [city, state].filter(Boolean).join(', ') || null
-
     const finalHoursJson = hours_json || {
       monday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
       tuesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
@@ -92,18 +170,14 @@ export async function POST(req: NextRequest) {
     }
 
     // --- 1. Founding member check ---
+    // Comped signups don't burn a founding spot — we still set founding_member
+    // false so the 20-spot landing-page counter stays accurate for paying users.
     const foundingUsed = await countFoundingMembers()
-    const isFounding = foundingUsed < FOUNDING_CAP
+    const isFounding = !isCompedSignup && foundingUsed < FOUNDING_CAP
     const priceId =
-      isFounding && STRIPE_PRICE_ID_FOUNDING
-        ? STRIPE_PRICE_ID_FOUNDING
-        : STRIPE_PRICE_ID_REGULAR
-
+      isFounding && STRIPE_PRICE_ID_FOUNDING ? STRIPE_PRICE_ID_FOUNDING : STRIPE_PRICE_ID_REGULAR
     if (!priceId) {
-      return NextResponse.json(
-        { error: 'No price configured for this tier.' },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'No price configured for this tier.' }, { status: 500 })
     }
 
     // --- 2. Create auth user ---
@@ -112,7 +186,6 @@ export async function POST(req: NextRequest) {
       password,
       email_confirm: true,
     })
-
     if (authError || !authData.user) {
       const msg = authError?.message || 'Failed to create account'
       if (
@@ -146,8 +219,9 @@ export async function POST(req: NextRequest) {
         notification_email: normalizedEmail,
         billing_email: normalizedEmail,
         status: 'pending_payment',
-        subscription_status: 'unpaid',
+        subscription_status: isCompedSignup ? 'comped' : 'unpaid',
         founding_member: isFounding,
+        comped: isCompedSignup,
         reminders_enabled: true,
         intake_enabled: true,
         emotional_support_enabled: true,
@@ -192,6 +266,7 @@ export async function POST(req: NextRequest) {
         practice_name,
         provider_name,
         founding_member: String(isFounding),
+        comped: String(isCompedSignup),
       },
     })
 
@@ -201,7 +276,11 @@ export async function POST(req: NextRequest) {
       .eq('id', practice.id)
 
     // --- 6. Create Stripe Checkout Session (charge-now subscription) ---
-    const session = await stripe.checkout.sessions.create({
+    // For comped signups: pre-attach the MOM-FREE promo code so the resolved
+    // amount is $0, and tell Stripe not to collect a card unless required.
+    // For everyone else: same as before (allow_promotion_codes lets users
+    // type other promo codes at the Stripe-hosted checkout).
+    const sessionParams: any = {
       customer: customer.id,
       mode: 'subscription',
       payment_method_types: ['card'],
@@ -209,24 +288,35 @@ export async function POST(req: NextRequest) {
       // No trial — card-upfront, charge-now flow
       success_url: `${APP_URL}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${APP_URL}/signup?cancelled=1&practice_id=${practice.id}`,
-      allow_promotion_codes: true,
       billing_address_collection: 'required',
       subscription_data: {
         metadata: {
           practice_id: practice.id,
           practice_name,
           founding_member: String(isFounding),
+          comped: String(isCompedSignup),
         },
       },
       metadata: {
         practice_id: practice.id,
         auth_user_id: userId,
         founding_member: String(isFounding),
+        comped: String(isCompedSignup),
         practice_state: state || '',
         practice_city: city || '',
         sms_consent: sms_consent ? 'true' : 'false',
+        promo_code: isCompedSignup ? MOM_PROMO_CODE : '',
       },
-    })
+    }
+
+    if (isCompedSignup && resolvedPromo) {
+      sessionParams.discounts = [{ promotion_code: resolvedPromo.id }]
+      sessionParams.payment_method_collection = 'if_required'
+    } else {
+      sessionParams.allow_promotion_codes = true
+    }
+
+    const session = await stripe.checkout.sessions.create(sessionParams)
 
     // Persist the session id so the success page + webhook can reconcile.
     await supabaseAdmin
@@ -235,13 +325,15 @@ export async function POST(req: NextRequest) {
       .eq('id', practice.id)
 
     console.log(
-      `Signup created: ${practice_name} (${practice.id}) — pending payment via ${session.id}`
+      `Signup created: ${practice_name} (${practice.id}) — pending payment via ${session.id}` +
+        (isCompedSignup ? ' [COMPED via MOM-FREE]' : '')
     )
 
     return NextResponse.json({
       success: true,
       practice_id: practice.id,
       founding_member: isFounding,
+      comped: isCompedSignup,
       checkout_url: session.url,
       session_id: session.id,
     })
