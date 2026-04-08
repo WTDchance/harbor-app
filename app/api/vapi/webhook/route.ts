@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
     const message = body.message || body
 
     // Verify webhook secret if configured
-    const secret = request.nextUrl.searchParams.get('secret')
-    if (process.env.VAPI_WEBHOOK_SECRET && secret !== process.env.VAPI_WEBHOOK_SECRET) {
+    const secret = request.headers.get('x-vapi-secret') || request.nextUrl.searchParams.get('secret')
+    if (!process.env.VAPI_WEBHOOK_SECRET || secret !== process.env.VAPI_WEBHOOK_SECRET) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
