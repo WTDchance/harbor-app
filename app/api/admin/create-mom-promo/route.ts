@@ -13,7 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
-import { createClient } from '@/lib/supabase'
+import { createClient } from '@/lib/supabase-server'
 
 const COUPON_ID = 'mom_free_forever'
 const PROMO_CODE = 'MOM-FREE'
