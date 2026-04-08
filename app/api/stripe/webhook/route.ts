@@ -1,49 +1,38 @@
-// Stripe webhook handler
-// Handles subscription events: created, updated, deleted
+// Stripe webhook handler — expanded to handle checkout.session.completed,
+// which triggers the full Twilio + Vapi provisioning pipeline for new
+// practices on the card-upfront signup flow.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { verifyWebhookSignature } from '@/lib/stripe'
+import { purchaseTwilioNumber, releaseTwilioNumber } from '@/lib/twilio-provision'
+import { createVapiAssistant, linkVapiPhoneNumber, deleteVapiAssistant } from '@/lib/vapi-provision'
+import { sendWelcomeEmail } from '@/lib/email-welcome'
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || ''
 
-/**
- * POST /api/stripe/webhook
- * Handles Stripe webhook events
- * Events we care about:
- * - customer.subscription.created
- * - customer.subscription.updated
- * - customer.subscription.deleted
- */
 export async function POST(request: NextRequest) {
   try {
     const signature = request.headers.get('stripe-signature')
     if (!signature) {
       console.warn('⚠️ No Stripe signature header')
-      return NextResponse.json(
-        { error: 'No signature' },
-        { status: 400 }
-      )
+      return NextResponse.json({ error: 'No signature' }, { status: 400 })
     }
 
-    // Get raw body as string for signature verification
     const body = await request.text()
-
-    // Verify webhook signature
     const event = verifyWebhookSignature(body, signature, webhookSecret)
-
     if (!event) {
       console.warn('❌ Invalid Stripe signature')
-      return NextResponse.json(
-        { error: 'Invalid signature' },
-        { status: 403 }
-      )
+      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 })
     }
 
     console.log(`💳 Stripe webhook: ${event.type}`)
 
-    // Handle different event types
     switch (event.type) {
+      case 'checkout.session.completed':
+        await handleCheckoutCompleted(event.data.object as any)
+        break
+
       case 'customer.subscription.created':
         await handleSubscriptionCreated(event.data.object as any)
         break
@@ -68,36 +57,154 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ received: true })
   } catch (error) {
     console.error('❌ Stripe webhook error:', error)
-    return NextResponse.json(
-      { error: 'Webhook processing failed' },
-      { status: 500 }
-    )
+    return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 })
   }
 }
 
 /**
- * Handle subscription created event
- * Update practice with subscription ID and active status
+ * checkout.session.completed — first successful payment for a new practice.
+ * This is where we actually provision the Twilio number and the Vapi
+ * assistant. Runs once per signup.
  */
+async function handleCheckoutCompleted(session: any) {
+  const sessionId = session.id as string
+  const customerId = session.customer as string
+  const subscriptionId = session.subscription as string | null
+  const metadata = session.metadata || {}
+  const practiceId = metadata.practice_id as string | undefined
+
+  if (!practiceId) {
+    console.warn(`⚠️ checkout.session.completed without practice_id metadata (${sessionId})`)
+    return
+  }
+
+  // --- 1. Load the practice ---
+  const { data: practice, error: loadErr } = await supabaseAdmin
+    .from('practices')
+    .select('*')
+    .eq('id', practiceId)
+    .single()
+
+  if (loadErr || !practice) {
+    console.error(`❌ Could not load practice ${practiceId} for checkout completion:`, loadErr)
+    return
+  }
+
+  // Idempotency: if already provisioned, don't run again.
+  if (practice.status === 'active' && practice.phone_number && practice.vapi_assistant_id) {
+    console.log(`✓ Practice ${practiceId} already provisioned — skipping`)
+    return
+  }
+
+  let twilioNumberSid: string | null = null
+  let twilioNumber: string | null = null
+  let vapiAssistantId: string | null = null
+  let vapiPhoneNumberId: string | null = null
+
+  try {
+    // --- 2. Purchase Twilio number ---
+    console.log(`📞 Purchasing Twilio number for ${practice.name} (state: ${practice.state})`)
+    const purchased = await purchaseTwilioNumber({
+      state: practice.state,
+      friendlyName: `Harbor — ${practice.name}`,
+    })
+    twilioNumberSid = purchased.sid
+    twilioNumber = purchased.phoneNumber
+    console.log(`✓ Twilio number purchased: ${twilioNumber} (${twilioNumberSid})`)
+
+    // --- 3. Create Vapi assistant ---
+    console.log(`🤖 Creating Vapi assistant for ${practice.name}`)
+    vapiAssistantId = await createVapiAssistant({
+      id: practice.id,
+      name: practice.name,
+      providerName: practice.provider_name,
+      aiName: practice.ai_name || 'Ellie',
+      greeting: practice.greeting,
+      specialties: practice.specialties,
+      insuranceAccepted: practice.insurance_accepted,
+      location: practice.location,
+      telehealth: practice.telehealth,
+      timezone: practice.timezone,
+    })
+    console.log(`✓ Vapi assistant created: ${vapiAssistantId}`)
+
+    // --- 4. Link Twilio number to Vapi assistant ---
+    console.log(`🔗 Linking Twilio number ${twilioNumber} to Vapi assistant ${vapiAssistantId}`)
+    vapiPhoneNumberId = await linkVapiPhoneNumber({
+      assistantId: vapiAssistantId,
+      twilioPhoneNumber: twilioNumber,
+      practiceName: practice.name,
+    })
+    console.log(`✓ Vapi phone number linked: ${vapiPhoneNumberId}`)
+
+    // --- 5. Mark practice active + store provisioning metadata ---
+    await supabaseAdmin
+      .from('practices')
+      .update({
+        status: 'active',
+        subscription_status: 'active',
+        phone_number: twilioNumber,
+        twilio_phone_sid: twilioNumberSid,
+        vapi_assistant_id: vapiAssistantId,
+        vapi_phone_number_id: vapiPhoneNumberId,
+        stripe_subscription_id: subscriptionId,
+        provisioned_at: new Date().toISOString(),
+      })
+      .eq('id', practiceId)
+
+    console.log(`✅ Practice ${practiceId} fully provisioned`)
+
+    // --- 6. Send welcome email ---
+    await sendWelcomeEmail({
+      to: practice.notification_email || practice.billing_email,
+      practiceName: practice.name,
+      aiName: practice.ai_name || 'Ellie',
+      phoneNumber: twilioNumber,
+      foundingMember: !!practice.founding_member,
+    })
+  } catch (err) {
+    console.error(`❌ Provisioning failed for practice ${practiceId}:`, err)
+
+    // Rollback best-effort — we want to avoid leaving orphaned resources,
+    // but we do NOT delete the practice itself so the user can retry or
+    // support can intervene.
+    if (twilioNumberSid) {
+      console.log(`↩︎ Releasing Twilio number ${twilioNumberSid}`)
+      await releaseTwilioNumber(twilioNumberSid)
+    }
+    if (vapiAssistantId) {
+      console.log(`↩︎ Deleting Vapi assistant ${vapiAssistantId}`)
+      await deleteVapiAssistant(vapiAssistantId)
+    }
+
+    await supabaseAdmin
+      .from('practices')
+      .update({
+        status: 'provisioning_failed',
+        subscription_status: 'active', // they paid, so sub is active
+        stripe_subscription_id: subscriptionId,
+      })
+      .eq('id', practiceId)
+  }
+}
+
 async function handleSubscriptionCreated(subscription: any) {
   try {
     const customerId = subscription.customer
     const subscriptionId = subscription.id
     const status = subscription.status
 
-    // Find practice by Stripe customer ID
-    const { data: practice, error } = await supabaseAdmin
+    const { data: practice } = await supabaseAdmin
       .from('practices')
       .select('id')
       .eq('stripe_customer_id', customerId)
       .single()
 
-    if (error || !practice) {
+    if (!practice) {
       console.warn('Could not find practice for subscription')
       return
     }
 
-    // Update practice with subscription ID and status
     await supabaseAdmin
       .from('practices')
       .update({
@@ -113,10 +220,6 @@ async function handleSubscriptionCreated(subscription: any) {
   }
 }
 
-/**
- * Handle subscription updated event
- * Could indicate plan change or cancellation
- */
 async function handleSubscriptionUpdated(subscription: any) {
   try {
     const customerId = subscription.customer
@@ -130,13 +233,11 @@ async function handleSubscriptionUpdated(subscription: any) {
       .single()
 
     if (practice) {
-      // Map Stripe status to Harbor subscription status
       let newStatus = 'active'
       if (status === 'trialing') newStatus = 'trialing'
       if (status === 'past_due') newStatus = 'past_due'
       if (status === 'cancelled' || status === 'incomplete_expired') newStatus = 'cancelled'
 
-      // Update practice status
       await supabaseAdmin
         .from('practices')
         .update({
@@ -145,17 +246,13 @@ async function handleSubscriptionUpdated(subscription: any) {
         })
         .eq('id', practice.id)
 
-      console.log(`✓ Subscription updated: ${subscriptionId}, status: ${status} -> ${newStatus}`)
+      console.log(`✓ Subscription updated: ${subscriptionId}, ${status} -> ${newStatus}`)
     }
   } catch (error) {
     console.error('Error in handleSubscriptionUpdated:', error)
   }
 }
 
-/**
- * Handle subscription deleted event
- * Practice cancelled their subscription
- */
 async function handleSubscriptionDeleted(subscription: any) {
   try {
     const customerId = subscription.customer
@@ -168,7 +265,6 @@ async function handleSubscriptionDeleted(subscription: any) {
       .single()
 
     if (practice) {
-      // Update practice status to cancelled
       await supabaseAdmin
         .from('practices')
         .update({
@@ -177,34 +273,26 @@ async function handleSubscriptionDeleted(subscription: any) {
         })
         .eq('id', practice.id)
 
-      console.log(`⚠️ Subscription cancelled: ${subscriptionId} for practice ${practice.id}`)
+      console.log(`⚠️ Subscription cancelled: ${subscriptionId} for ${practice.id}`)
     }
   } catch (error) {
     console.error('Error in handleSubscriptionDeleted:', error)
   }
 }
 
-/**
- * Handle successful payment
- */
 async function handlePaymentSucceeded(invoice: any) {
   try {
     console.log(`✓ Payment succeeded: ${invoice.id}`)
-    // Could send receipt email here
   } catch (error) {
     console.error('Error in handlePaymentSucceeded:', error)
   }
 }
 
-/**
- * Handle failed payment
- */
 async function handlePaymentFailed(invoice: any) {
   try {
     const customerId = invoice.customer
     const subscriptionId = invoice.subscription
 
-    // Find practice by customer ID
     const { data: practice } = await supabaseAdmin
       .from('practices')
       .select('id')
@@ -212,7 +300,6 @@ async function handlePaymentFailed(invoice: any) {
       .single()
 
     if (practice && subscriptionId) {
-      // Update subscription status to past_due
       await supabaseAdmin
         .from('practices')
         .update({
@@ -221,7 +308,7 @@ async function handlePaymentFailed(invoice: any) {
         })
         .eq('id', practice.id)
 
-      console.log(`⚠️ Payment failed for invoice ${invoice.id}, marked subscription as past_due`)
+      console.log(`⚠️ Payment failed for invoice ${invoice.id}, marked past_due`)
     }
   } catch (error) {
     console.error('Error in handlePaymentFailed:', error)
