@@ -12,7 +12,8 @@ import { stripe } from '@/lib/stripe'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
 const FOUNDING_CAP = Number(process.env.FOUNDING_MEMBER_CAP || '20')
 const STRIPE_PRICE_ID_FOUNDING = process.env.STRIPE_PRICE_ID_FOUNDING || ''
-const STRIPE_PRICE_ID_REGULAR = process.env.STRIPE_PRICE_ID_REGULAR || process.env.STRIPE_PRICE_ID || ''
+const STRIPE_PRICE_ID_REGULAR =
+  process.env.STRIPE_PRICE_ID_REGULAR || process.env.STRIPE_PRICE_ID || ''
 
 async function countFoundingMembers(): Promise<number> {
   const { count } = await supabaseAdmin
@@ -21,6 +22,22 @@ async function countFoundingMembers(): Promise<number> {
     .eq('founding_member', true)
     .in('status', ['active', 'trial'])
   return count || 0
+}
+
+async function signupsEnabled(): Promise<boolean> {
+  try {
+    const { data } = await supabaseAdmin
+      .from('app_settings')
+      .select('value')
+      .eq('key', 'signups_enabled')
+      .maybeSingle()
+    if (!data) return true // default open if setting missing
+    const v = data.value
+    return v === true || v === 'true' || v === 1
+  } catch (e) {
+    console.error('[signup] failed to read signups_enabled, defaulting to enabled:', e)
+    return true
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -35,6 +52,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(
         { error: 'Stripe price IDs not configured on the server.' },
         { status: 500 }
+      )
+    }
+
+    // --- 0. Kill switch check ---
+    if (!(await signupsEnabled())) {
+      return NextResponse.json(
+        {
+          error:
+            'We are temporarily not accepting new signups while we finish onboarding our founding practices. Please check back soon or email hello@harborreceptionist.com to get on the waitlist.',
+          code: 'signups_paused',
+        },
+        { status: 503 }
       )
     }
 
@@ -95,15 +124,10 @@ export async function POST(req: NextRequest) {
     const foundingUsed = await countFoundingMembers()
     const isFounding = foundingUsed < FOUNDING_CAP
     const priceId =
-      isFounding && STRIPE_PRICE_ID_FOUNDING
-        ? STRIPE_PRICE_ID_FOUNDING
-        : STRIPE_PRICE_ID_REGULAR
+      isFounding && STRIPE_PRICE_ID_FOUNDING ? STRIPE_PRICE_ID_FOUNDING : STRIPE_PRICE_ID_REGULAR
 
     if (!priceId) {
-      return NextResponse.json(
-        { error: 'No price configured for this tier.' },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'No price configured for this tier.' }, { status: 500 })
     }
 
     // --- 2. Create auth user ---
@@ -126,6 +150,7 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json({ error: msg }, { status: 500 })
     }
+
     const userId = authData.user.id
 
     // --- 3. Create practice row (pending_payment) ---
@@ -179,6 +204,7 @@ export async function POST(req: NextRequest) {
       practice_id: practice.id,
       role: 'owner',
     })
+
     if (userError) {
       console.error('User record creation failed (non-fatal):', userError)
     }
@@ -250,3 +276,4 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message || 'Signup failed' }, { status: 500 })
   }
 }
+
