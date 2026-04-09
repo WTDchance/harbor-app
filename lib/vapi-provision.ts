@@ -132,7 +132,7 @@ export async function linkVapiPhoneNumber(opts: {
       twilioAccountSid: accountSid,
       twilioAuthToken: authToken,
       assistantId: opts.assistantId,
-      name: `${opts.practiceName} - ${opts.twilioPhoneNumber}`,
+      name: `${opts.practiceName}`.substring(0, 40),
     }),
   })
 
