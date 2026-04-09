@@ -1,3 +1,119 @@
+import { createClient } from '@/lib/supabase-server';
+import { redirect } from 'next/navigation';
+import ResolveButton from './resolve-button';
+
+export const dynamic = 'force-dynamic';
+
+type HarborEvent = {
+  id: string;
+  event_type: string;
+  severity: string;
+  payload: any;
+  created_at: string;
+  resolved_at: string | null;
+};
+
+const SEV_DOT: Record<string, string> = {
+  critical: 'bg-red-500',
+  error: 'bg-orange-500',
+  warn: 'bg-yellow-500',
+  info: 'bg-green-500',
+};
+
+const SEV_LABEL: Record<string, string> = {
+  critical: 'CRITICAL',
+  error: 'ERROR',
+  warn: 'WARN',
+  info: 'INFO',
+};
+
+export default async function HealthPage() {
+  const supabase = await createClient();
+
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect('/login');
+
+  const { data: userRow } = await supabase
+    .from('users')
+    .select('practice_id')
+    .eq('id', user.id)
+    .single();
+
+  if (!userRow?.practice_id) {
+    return <div className="p-8">No practice associated with your account.</div>;
+  }
+
+  const { data: events, error } = await supabase
+    .from('harbor_events')
+    .select('id, event_type, severity, payload, created_at, resolved_at')
+    .eq('practice_id', userRow.practice_id)
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  if (error) {
+    return <div className="p-8">Error loading events: {error.message}</div>;
+  }
+
+  const rows = (events || []) as HarborEvent[];
+  const unresolved = rows.filter(r => !r.resolved_at && r.severity !== 'info');
+  const recent = rows;
+
+  return (
+    <div className="p-8 max-w-5xl mx-auto">
+      <h1 className="text-2xl font-bold mb-2">System Health</h1>
+      <p className="text-sm opacity-70 mb-6">
+        Recent events from the Harbor event log. Unresolved warnings and errors require attention.
+      </p>
+
+      <div className="mb-8">
+        <h2 className="text-lg font-semibold mb-3">
+          Unresolved ({unresolved.length})
+        </h2>
+        {unresolved.length === 0 ? (
+          <div className="text-sm opacity-60 border border-current/10 rounded p-4">
+            All clear. No unresolved warnings or errors.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {unresolved.map(ev => (
+              <div key={ev.id} className="border border-current/10 rounded p-3 flex items-start gap-3">
+                <span className={`inline-block w-2 h-2 rounded-full mt-2 ${SEV_DOT[ev.severity] || 'bg-gray-400'}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 text-sm">
+                    <span className="font-mono font-semibold">{SEV_LABEL[ev.severity] || ev.severity}</span>
+                    <span className="opacity-70">{ev.event_type}</span>
+                    <span className="opacity-50 text-xs">{new Date(ev.created_at).toLocaleString()}</span>
+                  </div>
+                  {ev.payload && (
+                    <pre className="text-xs opacity-70 mt-1 overflow-x-auto">
+                      {JSON.stringify(ev.payload, null, 2)}
+                    </pre>
+                  )}
+                </div>
+                <ResolveButton eventId={ev.id} />
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h2 className="text-lg font-semibold mb-3">Recent activity ({recent.length})</h2>
+        <div className="space-y-1">
+          {recent.map(ev => (
+            <div key={ev.id} className="flex items-center gap-3 text-sm border-b border-current/5 py-2">
+              <span className={`inline-block w-2 h-2 rounded-full ${SEV_DOT[ev.severity] || 'bg-gray-400'}`} />
+              <span className="font-mono opacity-80 w-20">{SEV_LABEL[ev.severity] || ev.severity}</span>
+              <span className="flex-1 truncate">{ev.event_type}</span>
+              <span className="opacity-50 text-xs">{new Date(ev.created_at).toLocaleString()}</span>
+              {ev.resolved_at && <span className="text-xs opacity-50">resolved</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 /**
  * Practice-owner health page.
  *
