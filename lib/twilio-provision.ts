@@ -30,16 +30,34 @@ export interface PurchasedNumber {
 
 /**
  * Purchase a Twilio local number for a new practice.
- * Tries to match the practice's state; falls back to any available US local
- * number if nothing in-state is available.
+ * If specificNumber is provided, tries to purchase that exact number first.
+ * Otherwise tries to match the practice's state; falls back to any available
+ * US local number if nothing in-state is available.
  */
 export async function purchaseTwilioNumber(opts: {
   state?: string | null
   areaCode?: string | null
   friendlyName?: string
+  specificNumber?: string
 }): Promise<PurchasedNumber> {
   if (!client) {
     throw new Error('Twilio client not configured - cannot purchase number')
+  }
+
+  // If a specific number was selected during signup, try to purchase it directly
+  if (opts.specificNumber) {
+    try {
+      const purchased = await client.incomingPhoneNumbers.create({
+        phoneNumber: opts.specificNumber,
+        friendlyName: opts.friendlyName || `Harbor - ${opts.specificNumber}`,
+        voiceUrl: 'https://api.vapi.ai/twilio/inbound_call',
+        voiceMethod: 'POST',
+      })
+      return { phoneNumber: purchased.phoneNumber, sid: purchased.sid }
+    } catch (error) {
+      console.error(`Failed to purchase specific number ${opts.specificNumber}:`, error)
+      // Fall through to standard search logic below
+    }
   }
 
   const areaCode =
@@ -72,7 +90,7 @@ export async function purchaseTwilioNumber(opts: {
   const target = available[0].phoneNumber
 
   // 2. Purchase it. Point voiceUrl at Vapi so inbound calls route to the
-  //    assistant immediately; SMS can be wired up later.
+  // assistant immediately; SMS can be wired up later.
   const purchased = await client.incomingPhoneNumbers.create({
     phoneNumber: target,
     friendlyName: opts.friendlyName || `Harbor - ${target}`,
