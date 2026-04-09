@@ -7,7 +7,7 @@ const VAPI_WEBHOOK_SECRET = process.env.VAPI_WEBHOOK_SECRET || ''
 const VAPI_BASE_URL = 'https://api.vapi.ai'
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
 
-// ElevenLabs "Bella" - warm female voice, Harbor default.
+// 11labs "Bella" - warm female voice, Harbor default.h
 const DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL'
 
 export interface PracticeContext {
@@ -75,7 +75,7 @@ export async function createVapiAssistant(p: PracticeContext): Promise<string> {
         temperature: 0.7,
       },
       voice: {
-        provider: 'elevenlabs',
+        provider: '11labs',
         voiceId: DEFAULT_VOICE_ID,
         model: 'eleven_turbo_v2_5',
         stability: 0.5,
