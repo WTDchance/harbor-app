@@ -109,12 +109,30 @@ export default function DashboardHome() {
   const [greetingName, setGreetingName] = useState<string>("");
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user?.email) {
-        const name = session.user.email.split("@")[0];
-        setGreetingName(name.charAt(0).toUpperCase() + name.slice(1));
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        const { data: userRecord } = await supabase
+          .from("users")
+          .select("practice_id")
+          .eq("id", user.id)
+          .single();
+        if (userRecord?.practice_id) {
+          const { data: practice } = await supabase
+            .from("practices")
+            .select("provider_name")
+            .eq("id", userRecord.practice_id)
+            .single();
+          if (practice?.provider_name) {
+            const firstName = practice.provider_name.split(" ")[0];
+            setGreetingName(firstName);
+          } else if (user.email) {
+            const fallback = user.email.split("@")[0];
+            setGreetingName(fallback.charAt(0).toUpperCase() + fallback.slice(1));
+          }
+        }
       }
-    });
+    })();
 
     loadStats();
   }, []);
