@@ -77,6 +77,8 @@ export default function SignupPage() {
     phone: '',
     city: '',
     state: '',
+    first_name: '',
+    last_name: '',
     email: '',
     password: '',
     confirm_password: '',
@@ -148,7 +150,9 @@ export default function SignupPage() {
       if (!form.provider_name.trim()) { setError('Provider name is required'); return false }
     }
     if (s === 2) {
-      if (!form.email.trim()) { setError('Email is required'); return false }
+      if (!form.first_name.trim()) { setError('First name is required'); return false }
+    if (!form.last_name.trim()) { setError('Last name is required'); return false }
+    if (!form.email.trim()) { setError('Email is required'); return false }
       if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setError('Enter a valid email address'); return false }
       if (!form.password) { setError('Password is required'); return false }
       if (form.password.length < 8) { setError('Password must be at least 8 characters'); return false }
@@ -188,7 +192,9 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          email: form.email.trim().toLowerCase(),
+          first_name: form.first_name.trim(),
+      last_name: form.last_name.trim(),
+      email: form.email.trim().toLowerCase(),
           greeting: form.greeting || defaultGreeting,
           specialties,
           insurance_accepted: insurance,
@@ -432,7 +438,23 @@ export default function SignupPage() {
           {step === 2 && (
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                <div className="grid grid-cols-2 gap-4">
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  First Name *
+                  <input type="text" value={form.first_name} onChange={(e) => u('first_name', e.target.value)}
+                    className="mt-1 w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    placeholder="Jane"
+                  />
+                </label>
+                <label className="block text-sm font-medium text-slate-300 mb-1">
+                  Last Name *
+                  <input type="text" value={form.last_name} onChange={(e) => u('last_name', e.target.value)}
+                    className="mt-1 w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+                    placeholder="Smith"
+                  />
+                </label>
+              </div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">
                   <Mail className="w-4 h-4 inline mr-1" />Email Address *
                 </label>
                 <input type="email" value={form.email} onChange={(e) => u('email', e.target.value)}
