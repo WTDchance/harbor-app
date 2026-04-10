@@ -85,6 +85,8 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const {
       practice_name,
+      first_name,
+      last_name,
       provider_name,
       phone,
       city,
@@ -252,6 +254,8 @@ export async function POST(req: NextRequest) {
     const { error: userError } = await supabaseAdmin.from('users').insert({
       id: userId,
       email: normalizedEmail,
+      first_name: first_name || '',
+      last_name: last_name || '',
       practice_id: practice.id,
       role: 'owner',
     })
