@@ -45,17 +45,17 @@ export default function CrisisPage() {
     const fetchAlerts = async () => {
       // Get the logged-in user's practice
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
+      if (!user) { setLoading(false); return }
 
-      // Find their practice
-      const { data: practice } = await supabase
-        .from('practices')
-        .select('id')
-        .eq('notification_email', user.email)
+      // Find their practice via user record
+      const { data: userData } = await supabase
+        .from('users')
+        .select('practice_id')
+        .eq('id', user.id)
         .single()
 
-      const practiceId = practice?.id
-      if (!practiceId) return
+      const practiceId = userData?.practice_id
+      if (!practiceId) { setLoading(false); return }
 
       // Get crisis alerts
       let query = supabase
