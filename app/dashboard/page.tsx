@@ -114,18 +114,22 @@ export default function DashboardHome() {
       if (user) {
         const { data: userRecord } = await supabase
           .from("users")
-          .select("practice_id")
+          .select("practice_id, full_name")
           .eq("id", user.id)
           .single();
-        if (userRecord?.practice_id) {
-          const { data: practice } = await supabase
-            .from("practices")
-            .select("provider_name")
-            .eq("id", userRecord.practice_id)
-            .single();
-          if (practice?.provider_name) {
-            const firstName = practice.provider_name.split(" ")[0];
+        if (userRecord?.full_name) {
+            const firstName = userRecord.full_name.split(" ")[0];
             setGreetingName(firstName);
+          } else if (userRecord?.practice_id) {
+            const { data: practice } = await supabase
+              .from("practices")
+              .select("provider_name")
+              .eq("id", userRecord.practice_id)
+              .single();
+            if (practice?.provider_name) {
+              const firstName = practice.provider_name.split(" ")[0];
+              setGreetingName(firstName);
+            }
           } else if (user.email) {
             const fallback = user.email.split("@")[0];
             setGreetingName(fallback.charAt(0).toUpperCase() + fallback.slice(1));
