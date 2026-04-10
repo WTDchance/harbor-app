@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { PhoneNumberPicker } from '@/components/PhoneNumberPicker'
 import { useRouter } from 'next/navigation'
 import {
   Check, ArrowRight, ArrowLeft, Phone, Shield, Clock, Star,
@@ -9,7 +8,7 @@ import {
   Calendar, MessageSquare, Wifi, CreditCard,
 } from 'lucide-react'
 
-const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie', 'Choose Your Number']
+const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie']
 
 const SPECIALTIES = [
   'Individual Therapy', 'Couples Therapy', 'Family Therapy',
@@ -94,7 +93,6 @@ export default function SignupPage() {
   const [specialties, setSpecialties] = useState<string[]>([])
   const [insurance, setInsurance] = useState<string[]>([])
   const [hours, setHours] = useState<HoursMap>(DEFAULT_HOURS)
-  const [selectedPhoneNumber, setSelectedPhoneNumber] = useState<string | null>(null)
 
   useEffect(() => {
     fetch('/api/signup/founding-count')
@@ -160,7 +158,6 @@ export default function SignupPage() {
           specialties,
           insurance_accepted: insurance,
           hours_json,
-        selected_phone_number: selectedPhoneNumber || null,
         }),
       })
       const data = await res.json()
@@ -267,7 +264,6 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
-              step === 4 && "Choose your practice phone number."
           </p>
 
           {error && (
@@ -546,9 +542,9 @@ export default function SignupPage() {
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
                   <ArrowLeft className="w-5 h-5" /> Back
                 </button>
-                <button onClick={() => setStep(4)} disabled={loading}
+                <button onClick={submit} disabled={loading}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Redirecting to checkoutâ¦' : `Choose Your Number`}
+                  {loading ? 'Redirecting to checkoutâ¦' : `Continue to Checkout`}
                   {!loading && <ArrowRight className="w-5 h-5" />}
                 </button>
               </div>
@@ -557,41 +553,6 @@ export default function SignupPage() {
         </div>
 
         <p className="text-center text-slate-500 text-sm mt-6">
-
-          {step === 4 && (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-2xl font-bold text-white">Choose Your Phone Number</h2>
-                <p className="mt-2 text-slate-400">
-                  Select your practice&apos;s phone number. Patients will use this number to reach Ellie.
-                </p>
-              </div>
-
-              <PhoneNumberPicker
-                city={formData.city || ''}
-                state={formData.state || ''}
-                onSelect={setSelectedPhoneNumber}
-                selectedNumber={selectedPhoneNumber}
-              />
-
-              <div className="p-4 bg-teal-900/30 border border-teal-700 rounded-lg">
-                <p className="text-sm text-teal-300">
-                  Tip: Choose a number with a local area code so patients feel comfortable calling.
-                </p>
-              </div>
-
-              <div className="flex gap-3 mt-2">
-                <button onClick={() => setStep(3)}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  <ArrowLeft className="w-5 h-5" /> Back
-                </button>
-                <button onClick={submit} disabled={loading || !selectedPhoneNumber}
-                  className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Redirecting to checkout...' : 'Continue to Checkout'} <ArrowRight className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          )}
           Already have an account?{' '}
           <a href="/login" className="text-teal-400 hover:text-teal-300">Sign in</a>
         </p>
