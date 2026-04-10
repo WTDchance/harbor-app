@@ -134,7 +134,6 @@ export default function DashboardHome() {
             setGreetingName(fallback.charAt(0).toUpperCase() + fallback.slice(1));
           }
         }
-      }
     })();
 
     loadStats();
