@@ -68,6 +68,48 @@ function SeverityBadge({ label, score, severity }: { label: string; score: numbe
   );
 }
 
+type SortOption = "name-asc" | "name-desc" | "newest" | "oldest" | "last-seen";
+
+const SORT_LABELS: Record<SortOption, string> = {
+  "name-asc": "Name A–Z",
+  "name-desc": "Name Z–A",
+  "newest": "Newest First",
+  "oldest": "Oldest First",
+  "last-seen": "Last Seen",
+};
+
+function sortPatients(list: Patient[], sort: SortOption): Patient[] {
+  return [...list].sort((a, b) => {
+    switch (sort) {
+      case "name-asc": {
+        const na = (a.patient_name || "").toLowerCase();
+        const nb = (b.patient_name || "").toLowerCase();
+        if (!a.patient_name) return 1;
+        if (!b.patient_name) return -1;
+        return na.localeCompare(nb);
+      }
+      case "name-desc": {
+        const na = (a.patient_name || "").toLowerCase();
+        const nb = (b.patient_name || "").toLowerCase();
+        if (!a.patient_name) return 1;
+        if (!b.patient_name) return -1;
+        return nb.localeCompare(na);
+      }
+      case "newest":
+        return (b.created_at || "").localeCompare(a.created_at || "");
+      case "oldest":
+        return (a.created_at || "").localeCompare(b.created_at || "");
+      case "last-seen":
+      default: {
+        if (!a.last_seen && !b.last_seen) return 0;
+        if (!a.last_seen) return 1;
+        if (!b.last_seen) return -1;
+        return b.last_seen.localeCompare(a.last_seen);
+      }
+    }
+  });
+}
+
 export default function PatientsPage() {
   const router = useRouter();
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -75,6 +117,7 @@ export default function PatientsPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [sortBy, setSortBy] = useState<SortOption>("name-asc");
 
   // Debounce search
   useEffect(() => {
@@ -128,15 +171,26 @@ export default function PatientsPage() {
         </div>
       </div>
 
-      {/* Search */}
-      <div className="mb-4">
+      {/* Search + Sort */}
+      <div className="flex gap-3 mb-4">
         <input
           type="text"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by name, email, or phone..."
-          className="w-full border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+          className="flex-1 border rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
         />
+        <select
+          value={sortBy}
+          onChange={(e) => setSortBy(e.target.value as SortOption)}
+          className="border rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+        >
+          {Object.entries(SORT_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Patients list */}
@@ -152,7 +206,7 @@ export default function PatientsPage() {
         </div>
       ) : (
         <div className="bg-white border rounded-lg shadow-sm divide-y">
-          {patients.map((patient) => (
+          {sortPatients(patients, sortBy).map((patient) => (
             <div
               key={patient.key}
               onClick={() => router.push(`/dashboard/patients/${patient.key}`)}
