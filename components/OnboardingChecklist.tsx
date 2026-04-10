@@ -42,12 +42,13 @@ export default function OnboardingChecklist() {
 
   useEffect(() => {
     authFetch('/api/onboarding/status')
-      .then(res => res.ok ? res.json() : null)
-      .then(d => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
+      .then((res) => res.json())
+      .then((d) => setData(d))
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }, []);
 
-  // Auto-dismiss when every step is complete (fire-and-forget)
+  // Auto-dismiss when all steps complete
   useEffect(() => {
     if (!data || data.dismissed) return;
     if (data.totalCount === 0) return;
@@ -74,65 +75,56 @@ export default function OnboardingChecklist() {
     ? Math.round((data.completedCount / data.totalCount) * 100)
     : 0;
 
+  // Contextual CTA text per step type
+  const ctaText = (stepId: string) => {
+    switch (stepId) {
+      case 'test_call': return 'View calls →';
+      case 'connect_calendar': return 'Connect →';
+      case 'upload_intake_docs': return 'Upload →';
+      default: return 'Set up →';
+    }
+  };
+
   return (
     <div className="bg-white rounded-xl border border-teal-200 shadow-sm overflow-hidden">
       {/* Header */}
-      <div className="bg-gradient-to-r from-teal-500 to-teal-600 px-5 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-white font-semibold text-base">
-              Welcome to Harbor!
-            </h2>
-            <p className="text-teal-100 text-sm mt-0.5">
-              Complete these steps to get your AI receptionist up and running
-            </p>
-          </div>
-        </div>
-        <div className="mt-3 bg-teal-400/30 rounded-full h-2">
+      <div className="bg-teal-600 px-5 py-4 text-white">
+        <p className="font-semibold text-sm">Welcome to Harbor!</p>
+        <p className="text-xs text-teal-100 mt-0.5">
+          Complete these steps to get your AI receptionist up and running
+        </p>
+        <div className="mt-2 h-1.5 bg-teal-800 rounded-full overflow-hidden">
           <div
-            className="bg-white rounded-full h-2 transition-all duration-500"
+            className="h-full bg-white rounded-full transition-all duration-500"
             style={{ width: `${progress}%` }}
           />
         </div>
-        <p className="text-teal-100 text-xs mt-1.5">
+        <p className="text-xs text-teal-200 mt-1">
           {data.completedCount} of {data.totalCount} complete
         </p>
       </div>
 
       {/* Steps */}
-      <div className="divide-y divide-gray-50">
+      <div className="divide-y divide-gray-100">
         {data.steps.map((step) => (
           <div key={step.id} className="px-5 py-3.5">
             <div className="flex items-start gap-3">
-              {/* Completion circle */}
-              <div
-                className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 mt-0.5 transition-colors ${
-                  step.completed
-                    ? 'bg-teal-500 border-teal-500'
-                    : 'border-gray-300'
-                }`}
-              >
+              {/* Checkbox */}
+              <div className={`mt-0.5 w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                step.completed
+                  ? 'bg-teal-500 border-teal-500'
+                  : 'border-gray-300'
+              }`}>
                 {step.completed && (
-                  <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
-                    <path
-                      d="M2.5 6l2.5 2.5 4.5-5"
-                      stroke="white"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
+                  <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
                   </svg>
                 )}
               </div>
 
+              {/* Content */}
               <div className="flex-1 min-w-0">
-                <p
-                  className={`text-sm font-medium ${
-                    step.completed
-                      ? 'text-gray-400 line-through'
-                      : 'text-gray-900'
-                  }`}
-                >
+                <p className={`text-sm font-medium ${step.completed ? 'text-gray-400 line-through' : 'text-gray-900'}`}>
                   {step.title}
                 </p>
                 <p className="text-xs text-gray-400 mt-0.5">
@@ -164,15 +156,13 @@ export default function OnboardingChecklist() {
                         <p>1. Dial *72 (or your carrier's forwarding code)</p>
                         <p>2. Enter your Harbor number: {data.practicePhone || '(541) 539-4890'}</p>
                         <p>3. Wait for confirmation tone</p>
-                        <p className="text-gray-400 pt-1 border-t border-gray-100">
-                          To disable forwarding: dial *73
-                        </p>
+                        <p className="text-gray-400 mt-1">To disable forwarding: dial *73</p>
                       </div>
                     )}
                   </>
                 )}
 
-                {/* Test call info */}
+                {/* Test call phone number */}
                 {step.id === 'test_call' && !step.completed && (
                   <p className="text-xs text-teal-600 mt-1.5 font-medium">
                     Call {data.practicePhone || '(541) 539-4890'} to try it out
@@ -180,9 +170,10 @@ export default function OnboardingChecklist() {
                 )}
               </div>
 
+              {/* Action link */}
               {step.action && !step.completed && (
                 <Link href={step.action} className="text-xs text-teal-600 hover:text-teal-700 font-medium shrink-0 mt-0.5">
-                  Set up →
+                  {ctaText(step.id)}
                 </Link>
               )}
 
