@@ -8,6 +8,11 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
 import OnboardingChecklist from "@/components/OnboardingChecklist";
+function stripMd(s: string): string {
+  if (!s) return s;
+  return s.replace(/\*\*/g, '').replace(/\*/g, '').replace(/^- /gm, '').trim();
+}
+
 
 const supabase = createClient();
 
@@ -361,7 +366,7 @@ export default function DashboardHome() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
               <h2 className="text-sm font-semibold text-gray-900">Today's Schedule</h2>
               <Link href="/dashboard/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                View all ->
+                View all →
               </Link>
             </div>
             <div className="divide-y divide-gray-50">
@@ -408,7 +413,7 @@ export default function DashboardHome() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
               <h2 className="text-sm font-semibold text-gray-900">Recent Intakes</h2>
               <Link href="/dashboard/intake" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-                View all ->
+                View all →
               </Link>
             </div>
             <div className="divide-y divide-gray-50">
@@ -464,7 +469,7 @@ export default function DashboardHome() {
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
             <h2 className="text-sm font-semibold text-gray-900">Recent Calls</h2>
             <Link href="/dashboard/calls" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
-              View all ->
+              View all →
             </Link>
           </div>
           <div className="divide-y divide-gray-50">
@@ -493,13 +498,13 @@ export default function DashboardHome() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-gray-900 truncate">{call.patient_phone}</p>
+                      <p className="text-sm font-medium text-gray-900 truncate">{call.patient_name || call.patient_phone}</p>
                       {call.crisis_detected && (
                         <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 font-semibold">Crisis</span>
                       )}
                     </div>
                     <p className="text-xs text-gray-400 truncate">
-                      {call.summary || `${Math.floor(call.duration_seconds / 60)}m ${call.duration_seconds % 60}s call`}
+                      {stripMd(call.summary) || `${Math.floor(call.duration_seconds / 60)}m ${call.duration_seconds % 60}s call`}
                     </p>
                   </div>
                   <span className="text-xs text-gray-400 shrink-0">{timeAgo(call.created_at)}</span>
