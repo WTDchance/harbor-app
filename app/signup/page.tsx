@@ -267,7 +267,7 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
-                  step === 4 && "Choose your practice phone number."
+                  {step === 4 && "Choose your practice phone number."}
           </p>
 
           {error && (
@@ -565,8 +565,8 @@ export default function SignupPage() {
               </div>
 
               <PhoneNumberPicker
-                city={formData.city || ''}
-                state={formData.state || ''}
+                city={form.city || ''}
+                state={form.state || ''}
                 onSelect={setSelectedPhoneNumber}
                 selectedNumber={selectedPhoneNumber}
               />
