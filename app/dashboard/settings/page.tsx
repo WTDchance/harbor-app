@@ -374,65 +374,54 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Calendar Subscription */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-1">Calendar Subscription</h2>
-        <p className="text-sm text-gray-500 mb-4">
-          Subscribe to your appointments in Apple Calendar, Google Calendar, or Outlook.
-        </p>
+                {/* Calendar Subscription */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Calendar Subscription</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Sync your Harbor appointments to your personal calendar app.
+            </p>
 
-        {calLoading ? (
-          <div className="text-sm text-gray-400">Loading...</div>
-        ) : !calToken ? (
-          <button
-            onClick={generateCalToken}
-            disabled={calGenerating}
-            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
-          >
-            {calGenerating ? 'Generating...' : 'Generate Calendar Link'}
-          </button>
-        ) : (
-          <div className="space-y-3">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                readOnly
-                value={calFeedUrl || ''}
-                className="flex-1 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 text-gray-700 focus:outline-none"
-              />
+            {calLoading ? (
+              <div className="text-sm text-gray-400">Loading...</div>
+            ) : !calToken ? (
               <button
-                onClick={copyCalUrl}
-                className="px-3 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors whitespace-nowrap"
+                onClick={generateCalToken}
+                disabled={calGenerating}
+                className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
               >
-                {calCopied ? '\u2713 Copied!' : 'Copy Link'}
+                {calGenerating ? 'Generating...' : 'Generate Calendar Link'}
               </button>
-            </div>
-            <a
-              href={(calFeedUrl || '').replace('https://', 'webcal://')}
-              className="inline-flex items-center gap-1.5 text-sm text-teal-600 hover:text-teal-700 font-medium"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-              Open in Apple Calendar
-            </a>
-            <div className="text-xs text-gray-500 space-y-1">
-              <p><strong>Apple Calendar:</strong> File &rarr; New Calendar Subscription &rarr; paste URL</p>
-              <p><strong>Google Calendar:</strong> Other calendars &rarr; From URL &rarr; paste URL</p>
-              <p><strong>Outlook:</strong> Add calendar &rarr; From internet &rarr; paste URL</p>
-            </div>
-            <button
-              onClick={regenerateCalToken}
-              disabled={calGenerating}
-              className="text-xs text-red-500 hover:text-red-700 underline disabled:opacity-50"
-            >
-              {calGenerating ? 'Regenerating...' : 'Regenerate Link (breaks existing subscriptions)'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Integrations */}
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-3">
+                  <a
+                    href={(calFeedUrl || '').replace('https://', 'webcal://')}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Open in Apple Calendar
+                  </a>
+                  <button
+                    onClick={copyCalUrl}
+                    className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    {calCopied ? '\u2713 Copied!' : 'Copy Link'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400">
+                  Works with Apple Calendar, Google Calendar, and Outlook.
+                </p>
+                <button
+                  onClick={regenerateCalToken}
+                  className="text-xs text-red-400 hover:text-red-600"
+                >
+                  Regenerate Link (breaks existing subscriptions)
+                </button>
+              </div>
+            )}
+          </div>  {/* Integrations */}
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-5 border-b border-gray-100">
           <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Calendar Integrations</h2>
