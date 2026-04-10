@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation'
 import {
   Check, ArrowRight, ArrowLeft, Phone, Shield, Clock, Star,
   Building2, User, Mail, Lock, MapPin, Stethoscope, Heart,
-  Calendar, MessageSquare, Wifi, CreditCard, Search,
+  Calendar, MessageSquare, Wifi, CreditCard,
 } from 'lucide-react'
 
-const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie', 'Choose Your Number']
+const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie']
 
 const SPECIALTIES = [
   'Individual Therapy', 'Couples Therapy', 'Family Therapy',
@@ -77,8 +77,6 @@ export default function SignupPage() {
     phone: '',
     city: '',
     state: '',
-    first_name: '',
-    last_name: '',
     email: '',
     password: '',
     confirm_password: '',
@@ -96,12 +94,6 @@ export default function SignupPage() {
   const [insurance, setInsurance] = useState<string[]>([])
   const [hours, setHours] = useState<HoursMap>(DEFAULT_HOURS)
 
-  // Phone picker state
-  const [areaCode, setAreaCode] = useState('')
-  const [availableNumbers, setAvailableNumbers] = useState<Array<{ phoneNumber: string; friendlyName: string; locality: string; region: string }>>([])
-  const [selectedNumber, setSelectedNumber] = useState('')
-  const [searchingNumbers, setSearchingNumbers] = useState(false)
-
   useEffect(() => {
     fetch('/api/signup/founding-count')
       .then((r) => r.json())
@@ -117,32 +109,6 @@ export default function SignupPage() {
     setHours((prev) => ({ ...prev, [day]: { ...prev[day], [field]: value } }))
   }
 
-  const searchNumbers = async () => {
-    if (!areaCode || areaCode.length !== 3) {
-      setError('Please enter a valid 3-digit area code')
-      return
-    }
-    setSearchingNumbers(true)
-    setError('')
-    try {
-      const res = await fetch(`/api/twilio/available-numbers?areaCode=${areaCode}`)
-      const data = await res.json()
-      if (!res.ok) {
-        setError(data.error || 'Failed to search for numbers')
-        setAvailableNumbers([])
-      } else {
-        setAvailableNumbers(data.numbers || [])
-        if ((data.numbers || []).length === 0) {
-          setError('No numbers found for that area code. Try a different one.')
-        }
-      }
-    } catch {
-      setError('Failed to search for numbers. Please try again.')
-    } finally {
-      setSearchingNumbers(false)
-    }
-  }
-
   const validateStep = (s: number): boolean => {
     setError('')
     if (s === 0) {
@@ -150,18 +116,13 @@ export default function SignupPage() {
       if (!form.provider_name.trim()) { setError('Provider name is required'); return false }
     }
     if (s === 2) {
-      if (!form.first_name.trim()) { setError('First name is required'); return false }
-    if (!form.last_name.trim()) { setError('Last name is required'); return false }
-    if (!form.email.trim()) { setError('Email is required'); return false }
+      if (!form.email.trim()) { setError('Email is required'); return false }
       if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setError('Enter a valid email address'); return false }
       if (!form.password) { setError('Password is required'); return false }
       if (form.password.length < 8) { setError('Password must be at least 8 characters'); return false }
       if (form.password !== form.confirm_password) { setError('Passwords do not match'); return false }
       if (!form.tos_accepted) { setError('Please accept the Terms of Service to continue'); return false }
       if (!form.baa_acknowledged) { setError('Please acknowledge the Business Associate Agreement to continue'); return false }
-    }
-    if (s === 4) {
-      if (!selectedNumber) { setError('Please select a phone number for your practice'); return false }
     }
     return true
   }
@@ -170,7 +131,7 @@ export default function SignupPage() {
   const back = () => { setError(''); setStep(step - 1) }
 
   const submit = async () => {
-    if (!validateStep(4)) return
+    if (!validateStep(3)) return
     setLoading(true)
     setError('')
 
@@ -192,14 +153,11 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
-          first_name: form.first_name.trim(),
-      last_name: form.last_name.trim(),
-      email: form.email.trim().toLowerCase(),
+          email: form.email.trim().toLowerCase(),
           greeting: form.greeting || defaultGreeting,
           specialties,
           insurance_accepted: insurance,
           hours_json,
-          selected_phone_number: selectedNumber,
         }),
       })
       const data = await res.json()
@@ -213,7 +171,7 @@ export default function SignupPage() {
         setLoading(false)
         return
       }
-      // Redirect to Stripe Checkout
+      // Redirect to Stripe Checkout â card-upfront, charge-now flow.
       window.location.href = data.checkout_url
     } catch {
       setError('Signup failed. Please try again.')
@@ -258,31 +216,45 @@ export default function SignupPage() {
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto px-4 py-8">
-        {isFounding && (
-          <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 mb-6 flex items-center gap-3">
-            <Star className="w-5 h-5 text-amber-400 flex-shrink-0" />
-            <div>
-              <p className="text-amber-200 font-medium text-sm">Founding Member Pricing</p>
-              <p className="text-amber-300/70 text-xs">{remaining} of {founding?.cap ?? 20} spots remaining at {formatPrice(priceCents)}/mo (regular {formatPrice(founding?.regular_price_cents ?? 39700)}/mo)</p>
-            </div>
+      {founding && (
+        <div className={`${isFounding ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-slate-800 border-slate-700 text-slate-300'} border-y`}>
+          <div className="max-w-xl mx-auto px-4 py-2.5 text-center text-xs sm:text-sm">
+            {isFounding ? (
+              <>
+                <Star className="w-3.5 h-3.5 inline mr-1" />
+                <strong>Founding Practice Offer</strong> â {remaining} of {founding.cap} spots left Â· Lock in{' '}
+                <strong>{formatPrice(founding.price_cents)}/mo</strong>{' '}
+                <span className="line-through text-slate-500">{formatPrice(founding.regular_price_cents)}</span>{' '}
+                forever
+              </>
+            ) : (
+              <>Founding spots are gone. Regular pricing: <strong>{formatPrice(founding.regular_price_cents)}/mo</strong></>
+            )}
           </div>
-        )}
-
-        <div className="flex justify-center gap-2 mb-8">
-          {STEPS.map((s, i) => (
-            <div key={s} className="flex items-center">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-                i < step ? 'bg-teal-500 text-white' : i === step ? 'bg-teal-500/20 text-teal-400 border border-teal-500' : 'bg-slate-800 text-slate-500'
-              }`}>
-                {i < step ? <Check className="w-4 h-4" /> : i + 1}
-              </div>
-              {i < STEPS.length - 1 && <div className={`w-8 h-0.5 mx-1 ${i < step ? 'bg-teal-500' : 'bg-slate-700'}`} />}
-            </div>
-          ))}
         </div>
-        <div className="flex justify-center gap-1 mb-6">
-          {STEPS.map((s) => <span key={s} className="max-w-[70px] text-center">{s}</span>)}
+      )}
+
+      <div className="max-w-xl mx-auto px-4 py-10">
+        <div className="mb-10">
+          <div className="flex items-center justify-between mb-2">
+            {STEPS.map((s, i) => (
+              <div key={s} className="flex items-center">
+                <div
+                  className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold transition-colors ${
+                    i <= step ? 'bg-teal-500 text-white' : 'bg-slate-700 text-slate-400'
+                  }`}
+                >
+                  {i < step ? <Check className="w-4 h-4" /> : i + 1}
+                </div>
+                {i < STEPS.length - 1 && (
+                  <div className={`h-0.5 w-12 sm:w-16 mx-1 sm:mx-2 transition-colors ${i < step ? 'bg-teal-500' : 'bg-slate-700'}`} />
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="flex justify-between text-xs text-slate-500 mt-1">
+            {STEPS.map((s) => <span key={s} className="max-w-[70px] text-center">{s}</span>)}
+          </div>
         </div>
 
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-8">
@@ -292,7 +264,6 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
-            {step === 4 && "Choose a dedicated phone number for your AI receptionist."}
           </p>
 
           {error && (
@@ -338,39 +309,18 @@ export default function SignupPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-300 mb-1.5">State</label>
-                  <input type="text" value={form.state} onChange={(e) => u('state', e.target.value)}
-                    placeholder="OR"
+                  <input type="text" value={form.state} onChange={(e) => u('state', e.target.value.toUpperCase())}
+                    placeholder="OR" maxLength={2}
                     className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors" />
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                  <Calendar className="w-4 h-4 inline mr-1" />Timezone
-                </label>
-                <select value={form.timezone} onChange={(e) => u('timezone', e.target.value)}
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-teal-500 transition-colors">
-                  {TIMEZONES.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
-                </select>
-              </div>
-              <div className="flex gap-6">
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                  <input type="checkbox" checked={form.telehealth} onChange={(e) => u('telehealth', e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
-                  <Wifi className="w-4 h-4" /> Offers telehealth
-                </label>
-                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                  <input type="checkbox" checked={form.accepting_new_patients} onChange={(e) => u('accepting_new_patients', e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
-                  <Heart className="w-4 h-4" /> Accepting new patients
-                </label>
-              </div>
-
-              <div className="flex justify-end mt-2">
-                <button onClick={next}
-                  className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  Continue <ArrowRight className="w-5 h-5" />
-                </button>
-              </div>
+              <p className="text-xs text-slate-500 mt-2">
+                We'll buy your Harbor phone number in this area after checkout.
+              </p>
+              <button onClick={next}
+                className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2 mt-2">
+                Continue <ArrowRight className="w-5 h-5" />
+              </button>
             </div>
           )}
 
@@ -380,42 +330,80 @@ export default function SignupPage() {
                 <label className="block text-sm font-medium text-slate-300 mb-2">
                   <Stethoscope className="w-4 h-4 inline mr-1" />Specialties
                 </label>
-                <p className="text-xs text-slate-500 mb-2">Select all that apply. Your receptionist will reference these.</p>
+                <p className="text-xs text-slate-500 mb-2">Select all that apply</p>
                 <div className="flex flex-wrap gap-2">
                   {SPECIALTIES.map((s) => (
-                    <Chip key={s} label={s} selected={specialties.includes(s)} onClick={() => toggleChip(specialties, setSpecialties, s)} />
+                    <Chip key={s} label={s} selected={specialties.includes(s)}
+                      onClick={() => toggleChip(specialties, setSpecialties, s)} />
                   ))}
                 </div>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-300 mb-2">Insurance Accepted</label>
-                <p className="text-xs text-slate-500 mb-2">Select the insurance plans you accept.</p>
-                <div className="flex flex-wrap gap-2">
-                  {INSURANCE_OPTIONS.map((ins) => (
-                    <Chip key={ins} label={ins} selected={insurance.includes(ins)} onClick={() => toggleChip(insurance, setInsurance, ins)} />
-                  ))}
-                </div>
-              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-2">
-                  <Clock className="w-4 h-4 inline mr-1" />Office Hours
+                  <Shield className="w-4 h-4 inline mr-1" />Insurance Accepted
+                </label>
+                <p className="text-xs text-slate-500 mb-2">Select all that apply</p>
+                <div className="flex flex-wrap gap-2">
+                  {INSURANCE_OPTIONS.map((ins) => (
+                    <Chip key={ins} label={ins} selected={insurance.includes(ins)}
+                      onClick={() => toggleChip(insurance, setInsurance, ins)} />
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex gap-6">
+                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={form.telehealth}
+                    onChange={(e) => u('telehealth', e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
+                  <Wifi className="w-4 h-4" /> Telehealth available
+                </label>
+                <label className="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={form.accepting_new_patients}
+                    onChange={(e) => u('accepting_new_patients', e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
+                  <Heart className="w-4 h-4" /> Accepting new patients
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                  <Clock className="w-4 h-4 inline mr-1" />Timezone
+                </label>
+                <select value={form.timezone} onChange={(e) => u('timezone', e.target.value)}
+                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white focus:outline-none focus:border-teal-500 transition-colors">
+                  {TIMEZONES.map((tz) => <option key={tz.value} value={tz.value}>{tz.label}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  <Calendar className="w-4 h-4 inline mr-1" />Office Hours
                 </label>
                 <div className="space-y-2">
                   {DAYS.map((day) => (
                     <div key={day} className="flex items-center gap-3">
-                      <label className="flex items-center gap-2 w-20">
-                        <input type="checkbox" checked={hours[day].enabled} onChange={(e) => updateHours(day, 'enabled', e.target.checked)}
+                      <label className="flex items-center gap-2 w-20 cursor-pointer">
+                        <input type="checkbox" checked={hours[day].enabled}
+                          onChange={(e) => updateHours(day, 'enabled', e.target.checked)}
                           className="w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
-                        <span className="text-sm text-slate-300">{DAY_LABELS[day]}</span>
+                        <span className={`text-sm font-medium ${hours[day].enabled ? 'text-slate-200' : 'text-slate-500'}`}>
+                          {DAY_LABELS[day]}
+                        </span>
                       </label>
-                      {hours[day].enabled && (
-                        <>
-                          <input type="time" value={hours[day].open} onChange={(e) => updateHours(day, 'open', e.target.value)}
-                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white" />
-                          <span className="text-slate-500">to</span>
-                          <input type="time" value={hours[day].close} onChange={(e) => updateHours(day, 'close', e.target.value)}
-                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1 text-sm text-white" />
-                        </>
+                      {hours[day].enabled ? (
+                        <div className="flex items-center gap-2">
+                          <input type="time" value={hours[day].open}
+                            onChange={(e) => updateHours(day, 'open', e.target.value)}
+                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-teal-500" />
+                          <span className="text-slate-500 text-sm">to</span>
+                          <input type="time" value={hours[day].close}
+                            onChange={(e) => updateHours(day, 'close', e.target.value)}
+                            className="bg-slate-700 border border-slate-600 rounded px-2 py-1.5 text-sm text-white focus:outline-none focus:border-teal-500" />
+                        </div>
+                      ) : (
+                        <span className="text-slate-500 text-sm">Closed</span>
                       )}
                     </div>
                   ))}
@@ -438,23 +426,7 @@ export default function SignupPage() {
           {step === 2 && (
             <div className="space-y-4">
               <div>
-                <div className="grid grid-cols-2 gap-4">
-                <label className="block text-sm font-medium text-slate-300 mb-1">
-                  First Name *
-                  <input type="text" value={form.first_name} onChange={(e) => u('first_name', e.target.value)}
-                    className="mt-1 w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                    placeholder="Jane"
-                  />
-                </label>
-                <label className="block text-sm font-medium text-slate-300 mb-1">
-                  Last Name *
-                  <input type="text" value={form.last_name} onChange={(e) => u('last_name', e.target.value)}
-                    className="mt-1 w-full px-4 py-3 bg-slate-700/50 border border-slate-600 rounded-xl text-white focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                    placeholder="Smith"
-                  />
-                </label>
-              </div>
-              <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                <label className="block text-sm font-medium text-slate-300 mb-1.5">
                   <Mail className="w-4 h-4 inline mr-1" />Email Address *
                 </label>
                 <input type="email" value={form.email} onChange={(e) => u('email', e.target.value)}
@@ -496,14 +468,8 @@ export default function SignupPage() {
                     className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
                   <span>
                     I acknowledge that Harbor processes Protected Health Information (PHI) and I agree to
-                    execute Harbor&apos;s Business Associate Agreement (BAA) before going live with patients.
+                    execute Harbor's Business Associate Agreement (BAA) before going live with real patients.
                   </span>
-                </label>
-                <label className="flex items-start gap-3 text-xs text-slate-300 cursor-pointer">
-                  <input type="checkbox" checked={form.sms_consent}
-                    onChange={(e) => u('sms_consent', e.target.checked)}
-                    className="mt-0.5 w-4 h-4 rounded border-slate-600 bg-slate-700 text-teal-500 focus:ring-teal-500" />
-                  <span>I consent to receive SMS messages from Harbor for appointment reminders and practice notifications.</span>
                 </label>
               </div>
 
@@ -540,117 +506,29 @@ export default function SignupPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                  Promo Code <span className="text-slate-500 font-normal">(optional)</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.promo_code}
-                  onChange={(e) => u('promo_code', e.target.value.toUpperCase())}
-                  placeholder="Have a code? Enter it here"
-                  className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors uppercase"
-                />
-                <p className="text-xs text-slate-500 mt-1">
-                  If you have a special access code, enter it here. Otherwise, leave blank.
-                </p>
-              </div>
-
-              <div className="flex gap-3 mt-2">
-                <button onClick={back}
-                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  <ArrowLeft className="w-5 h-5" /> Back
-                </button>
-                <button onClick={next}
-                  className="flex-1 bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  Continue <ArrowRight className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {step === 4 && (
-            <div className="space-y-5">
-              <p className="text-sm text-slate-400">
-                Search for an available phone number by area code. This will be the number patients call to reach {form.ai_name || 'your AI receptionist'}.
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">
+                Promo Code <span className="text-slate-500 font-normal">(optional)</span>
+              </label>
+              <input
+                type="text"
+                value={form.promo_code}
+                onChange={(e) => u('promo_code', e.target.value.toUpperCase())}
+                placeholder="Have a code? Enter it here"
+                className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors uppercase"
+              />
+              <p className="text-xs text-slate-500 mt-1">
+                If you have a special access code, enter it here. Otherwise, leave blank.
               </p>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium text-slate-300 mb-1.5">
-                    <Search className="w-4 h-4 inline mr-1" />Area Code
-                  </label>
-                  <input
-                    type="text"
-                    value={areaCode}
-                    onChange={(e) => setAreaCode(e.target.value.replace(/\D/g, '').slice(0, 3))}
-                    placeholder="541"
-                    maxLength={3}
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
-                  />
-                </div>
-                <div className="flex items-end">
-                  <button
-                    onClick={searchNumbers}
-                    disabled={searchingNumbers || areaCode.length !== 3}
-                    className="bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center gap-2"
-                  >
-                    {searchingNumbers ? 'Searching...' : 'Search'}
-                    {!searchingNumbers && <Search className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
+            </div>
 
-              {availableNumbers.length > 0 && (
-                <div>
-                  <label className="block text-sm font-medium text-slate-300 mb-2">
-                    Available Numbers ({availableNumbers.length})
-                  </label>
-                  <div className="space-y-2 max-h-64 overflow-y-auto">
-                    {availableNumbers.map((num) => (
-                      <button
-                        key={num.phoneNumber}
-                        type="button"
-                        onClick={() => setSelectedNumber(num.phoneNumber)}
-                        className={`w-full text-left px-4 py-3 rounded-lg border transition-all ${
-                          selectedNumber === num.phoneNumber
-                            ? 'bg-teal-500/20 border-teal-500 text-white'
-                            : 'bg-slate-700 border-slate-600 text-slate-300 hover:border-teal-500'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <span className="font-mono font-medium">{num.friendlyName}</span>
-                            {num.locality && (
-                              <span className="text-sm text-slate-400 ml-2">{num.locality}, {num.region}</span>
-                            )}
-                          </div>
-                          {selectedNumber === num.phoneNumber && (
-                            <Check className="w-5 h-5 text-teal-400" />
-                          )}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {selectedNumber && (
-                <div className="bg-teal-500/10 border border-teal-500/30 rounded-lg px-4 py-3">
-                  <p className="text-sm text-teal-300">
-                    <Phone className="w-4 h-4 inline mr-1" />
-                    Selected: <span className="font-mono font-bold">{selectedNumber}</span>
-                  </p>
-                  <p className="text-xs text-teal-400/70 mt-1">This number will be purchased and assigned to your practice after checkout.</p>
-                </div>
-              )}
-
-              <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-4">
+          <div className="bg-slate-700/50 border border-slate-600 rounded-lg p-4">
                 <div className="flex items-start gap-3">
                   <CreditCard className="w-5 h-5 text-teal-400 mt-0.5 flex-shrink-0" />
                   <div className="text-sm">
                     <p className="font-medium text-slate-200">
-                      You&apos;ll be charged <strong className="text-teal-300">{formatPrice(priceCents)}</strong>/mo
+                      You'll be charged <strong className="text-teal-300">{formatPrice(priceCents)}/mo</strong>
+                      {isFounding && <span className="text-amber-300"> â Founding Practice rate locked forever</span>}
                     </p>
-                    {isFounding && <span className="text-amber-300"> Founding Practice rate locked forever</span>}
                     <p className="text-xs text-slate-400 mt-1">
                       Payment is processed securely by Stripe. You can cancel anytime from your dashboard.
                       30-day money-back guarantee.
@@ -666,7 +544,7 @@ export default function SignupPage() {
                 </button>
                 <button onClick={submit} disabled={loading}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Redirecting to checkout\u2026' : 'Continue to Checkout'}
+                  {loading ? 'Redirecting to checkoutâ¦' : `Continue to Checkout`}
                   {!loading && <ArrowRight className="w-5 h-5" />}
                 </button>
               </div>
