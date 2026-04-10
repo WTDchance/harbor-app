@@ -1,7 +1,7 @@
 'use client'
 
-import {
-import { PhoneNumberPicker } from '@/components/PhoneNumberPicker' useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
+import { PhoneNumberPicker } from '@/components/PhoneNumberPicker'
 import { useRouter } from 'next/navigation'
 import {
   Check, ArrowRight, ArrowLeft, Phone, Shield, Clock, Star,
