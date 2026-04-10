@@ -345,7 +345,7 @@ export default function SettingsPage() {
               placeholder="Aetna, Blue Cross, Cigna, United, Private Pay"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
-            <p className="text-xs text-gray-400 mt-1">Comma-separated â your AI receptionist will mention these to callers who ask</p>
+            <p className="text-xs text-gray-400 mt-1">Comma-separated — your AI receptionist will mention these to callers who ask</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Call Summary Notification Emails</label>
@@ -356,7 +356,7 @@ export default function SettingsPage() {
               placeholder="therapist@email.com, owner@email.com, admin@email.com"
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
-            <p className="text-xs text-gray-400 mt-1">Comma-separated â everyone listed gets an email after each call</p>
+            <p className="text-xs text-gray-400 mt-1">Comma-separated — everyone listed gets an email after each call</p>
           </div>
         </div>
         <div className="p-5 border-t border-gray-100 flex items-center justify-between">
