@@ -114,12 +114,11 @@ export default function DashboardHome() {
       if (user) {
         const { data: userRecord } = await supabase
           .from("users")
-          .select("practice_id, full_name")
+          .select("practice_id, first_name")
           .eq("id", user.id)
           .single();
-        if (userRecord?.full_name) {
-            const firstName = userRecord.full_name.split(" ")[0];
-            setGreetingName(firstName);
+        if (userRecord?.first_name) {
+            setGreetingName(userRecord.first_name);
           } else if (userRecord?.practice_id) {
             const { data: practice } = await supabase
               .from("practices")
