@@ -1,8 +1,8 @@
-// MIGRATION REQUIRED: ALTER TABLE practices ADD COLUMN IF NOT EXISTS calendar_token TEXT UNIQUE;
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
+import crypto from 'crypto'
 
 async function getPracticeId(): Promise<string | null> {
   const cookieStore = await cookies()
@@ -21,11 +21,11 @@ async function getPracticeId(): Promise<string | null> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data } = await supabaseAdmin
-    .from('practices')
-    .select('id')
-    .eq('notification_email', user.email)
+    .from('users')
+    .select('practice_id')
+    .eq('id', user.id)
     .single()
-  return data?.id ?? null
+  return data?.practice_id ?? null
 }
 
 function buildFeedUrl(token: string): string {
@@ -33,7 +33,7 @@ function buildFeedUrl(token: string): string {
   return `${appUrl}/api/calendar/feed?token=${token}`
 }
 
-// GET — return current token + feed URL
+// GET - return current token + feed URL
 export async function GET() {
   const practiceId = await getPracticeId()
   if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -51,7 +51,7 @@ export async function GET() {
   })
 }
 
-// POST — generate token if not set
+// POST - generate token if not set
 export async function POST() {
   const practiceId = await getPracticeId()
   if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -70,24 +70,15 @@ export async function POST() {
   }
 
   const token = crypto.randomUUID()
-  await supabaseAdmin
+  const { error } = await supabaseAdmin
     .from('practices')
     .update({ calendar_token: token })
     .eq('id', practiceId)
 
-  return NextResponse.json({ token, feedUrl: buildFeedUrl(token) })
-}
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-// DELETE — regenerate token (invalidates old subscriptions)
-export async function DELETE() {
-  const practiceId = await getPracticeId()
-  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const token = crypto.randomUUID()
-  await supabaseAdmin
-    .from('practices')
-    .update({ calendar_token: token })
-    .eq('id', practiceId)
-
-  return NextResponse.json({ token, feedUrl: buildFeedUrl(token) })
+  return NextResponse.json({
+    token,
+    feedUrl: buildFeedUrl(token),
+  })
 }
