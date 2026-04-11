@@ -211,6 +211,9 @@ export default function IntakeDetailPage() {
   const [submission, setSubmission] = useState<SubmissionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [resending, setResending] = useState(false);
+  const [resendSuccess, setResendSuccess] = useState<string | null>(null);
+  const [resendError, setResendError] = useState<string | null>(null);
   const [showSignature, setShowSignature] = useState(false);
 
   useEffect(() => {
@@ -233,6 +236,33 @@ export default function IntakeDetailPage() {
     })();
   }, [id, router]);
 
+  const handleResend = async (method: 'sms' | 'email' | 'both') => {
+    if (!submission) return;
+    setResending(true);
+    setResendSuccess(null);
+    setResendError(null);
+    try {
+      const res = await fetch('/api/intake/resend', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          intake_form_id: submission.id,
+          delivery_method: method,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to resend');
+      const methods: string[] = [];
+      if (data.sms_sent) methods.push('SMS');
+      if (data.email_sent) methods.push('email');
+      setResendSuccess('Intake forms resent via ' + methods.join(' and ') + '!');
+    } catch (err: any) {
+      setResendError(err.message || 'Failed to resend intake forms');
+    } finally {
+      setResending(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -250,6 +280,52 @@ export default function IntakeDetailPage() {
             Back to Intake
           </button>
         </div>
+
+        {resendSuccess && (
+          <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
+            {resendSuccess}
+          </div>
+        )}
+        {resendError && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+            {resendError}
+          </div>
+        )}
+
+        {submission?.status !== 'completed' && (submission?.patient_phone || submission?.patient_email) && (
+          <div className="mb-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+            <h3 className="text-sm font-medium text-gray-700 mb-2">Resend Intake Forms</h3>
+            <div className="flex gap-2 flex-wrap">
+              {submission?.patient_phone && (
+                <button
+                  onClick={() => handleResend('sms')}
+                  disabled={resending}
+                  className="px-3 py-1.5 bg-teal-600 text-white text-sm rounded hover:bg-teal-700 disabled:opacity-50"
+                >
+                  {resending ? 'Sending...' : 'Resend via SMS'}
+                </button>
+              )}
+              {submission?.patient_email && (
+                <button
+                  onClick={() => handleResend('email')}
+                  disabled={resending}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {resending ? 'Sending...' : 'Resend via Email'}
+                </button>
+              )}
+              {submission?.patient_phone && submission?.patient_email && (
+                <button
+                  onClick={() => handleResend('both')}
+                  disabled={resending}
+                  className="px-3 py-1.5 bg-purple-600 text-white text-sm rounded hover:bg-purple-700 disabled:opacity-50"
+                >
+                  {resending ? 'Sending...' : 'Resend Both'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
