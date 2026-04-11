@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     }))
 
     return NextResponse.json({ events })
-  } catch (err) {feat: add Apple CalDAV events support
+  } catch (err) {
     console.error('[calendar/events GET]', err)
     return NextResponse.json({ error: 'Failed to fetch calendar events' }, { status: 500 })
   }
