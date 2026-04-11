@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
-import crypto from 'crypto'
+import { NextRequest, NextResponse } from 'next/server'
 
 async function getPracticeId(): Promise<string | null> {
   const cookieStore = await cookies()
@@ -14,71 +13,76 @@ async function getPracticeId(): Promise<string | null> {
         getAll: () => cookieStore.getAll(),
         setAll: (s) => {
           try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
-        },
-      },
+        }
+      }
     }
   )
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabaseAdmin
-    .from('users')
-    .select('practice_id')
-    .eq('id', user.id)
-    .single()
-  return data?.practice_id ?? null
+  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
+  return data?.practice_id || null
 }
 
-function buildFeedUrl(token: string): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  return `${appUrl}/api/calendar/feed?token=${token}`
-}
+export async function GET(req: NextRequest) {
+  try {
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-// GET - return current token + feed URL
-export async function GET() {
-  const practiceId = await getPracticeId()
-  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { data: practice, error } = await supabaseAdmin
+      .from('practices')
+      .select('calendar_token')
+      .eq('id', practiceId)
+      .single()
 
-  const { data } = await supabaseAdmin
-    .from('practices')
-    .select('calendar_token')
-    .eq('id', practiceId)
-    .single()
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
 
-  const token = data?.calendar_token ?? null
-  return NextResponse.json({
-    token,
-    feedUrl: token ? buildFeedUrl(token) : null,
-  })
-}
+    if (!practice?.calendar_token) {
+      return NextResponse.json({ token: null })
+    }
 
-// POST - generate token if not set
-export async function POST() {
-  const practiceId = await getPracticeId()
-  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { data: existing } = await supabaseAdmin
-    .from('practices')
-    .select('calendar_token')
-    .eq('id', practiceId)
-    .single()
-
-  if (existing?.calendar_token) {
     return NextResponse.json({
-      token: existing.calendar_token,
-      feedUrl: buildFeedUrl(existing.calendar_token),
+      token: practice.calendar_token,
+      feedUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/feed?token=${practice.calendar_token}`
     })
+  } catch (err) {
+    console.error('[calendar/token GET]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+}
 
-  const token = crypto.randomUUID()
-  const { error } = await supabaseAdmin
-    .from('practices')
-    .update({ calendar_token: token })
-    .eq('id', practiceId)
+export async function POST(req: NextRequest) {
+  try {
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    const newToken = Array.from({ length: 32 }, () =>
+      Math.floor(Math.random() * 16).toString(16)
+    ).join('')
 
-  return NextResponse.json({
-    token,
-    feedUrl: buildFeedUrl(token),
-  })
+    const { error } = await supabaseAdmin
+      .from('practices')
+      .update({
+        calendar_token: newToken,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', practiceId)
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({
+      token: newToken,
+      feedUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/feed?token=${newToken}`
+    })
+  } catch (err) {
+    console.error('[calendar/token POST]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
 }
