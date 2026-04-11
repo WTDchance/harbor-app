@@ -1,4 +1,4 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin } from '@/lib/supabase'x
 import { NextRequest, NextResponse } from 'next/server'
 
 interface GoogleTokenResponse {
