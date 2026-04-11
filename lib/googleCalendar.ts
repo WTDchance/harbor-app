@@ -1,141 +1,184 @@
-import { supabaseAdmin } from '@/lib/supabase'
+import { supabaseAdmin } from './supabase'
 
-interface CalendarToken {
-    access_token: string
-    refresh_token: string
-    expiry_date: number
-    token_type: string
+export interface CalendarToken {
+  access_token: string
+  refresh_token?: string
+  expiry_date?: string
+  token_type: string
+}
+
+export interface GoogleCalendarEvent {
+  id: string
+  summary: string
+  description?: string
+  start: { dateTime?: string; date?: string }
+  end: { dateTime?: string; date?: string }
+  location?: string
+}
+
+export interface NormalizedEvent {
+  id: string
+  title: string
+  description?: string
+  start: string
+  end: string
+  location?: string
+}
+
+/**
+ * Refreshes an expired Google Calendar access token
+ * Updates the database with new token and expiry time
+ */
+export async function refreshAccessToken(
+  refreshToken: string,
+  practiceId: string
+): Promise<CalendarToken | null> {
+  try {
+    const clientId = process.env.GOOGLE_CLIENT_ID
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+
+    if (!clientId || !clientSecret) {
+      console.error('[refreshAccessToken] Google credentials not configured')
+      return null
+    }
+
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token'
+      })
+    })
+
+    if (!response.ok) {
+      console.error('[refreshAccessToken] Token refresh failed:', await response.text())
+      return null
+    }
+
+    const data = await response.json()
+    const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString()
+
+    // Update the stored token in the database
+    const { error } = await supabaseAdmin
+      .from('calendar_connections')
+      .update({
+        access_token: data.access_token,
+        token_expires_at: expiresAt,
+        updated_at: new Date().toISOString()
+      })
+      .eq('practice_id', practiceId)
+      .eq('provider', 'google')
+
+    if (error) {
+      console.error('[refreshAccessToken] Database update failed:', error)
+      return null
+    }
+
+    return {
+      access_token: data.access_token,
+      refresh_token: refreshToken,
+      expiry_date: expiresAt,
+      token_type: data.token_type || 'Bearer'
+    }
+  } catch (err) {
+    console.error('[refreshAccessToken]', err)
+    return null
   }
+}
 
-async function refreshAccessToken(token: CalendarToken, practiceId: string): Promise<string> {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-                  client_id: process.env.GOOGLE_CLIENT_ID!,
-                  client_secret: process.env.GOOGLE_CLIENT_SECRET!,
-                  refresh_token: token.refresh_token,
-                  grant_type: 'refresh_token',
-                }),
-        })
-    const data = await res.json()
-    const newToken = {
-          ...token,
-          access_token: data.access_token,
-          expiry_date: Date.now() + (data.expires_in * 1000),
+/**
+ * Fetches calendar events from Google Calendar API within a time range
+ * Handles token expiration and refresh automatically
+ */
+export async function getCalendarEvents(
+  accessToken: string,
+  practiceId: string,
+  timeMin: Date = new Date(),
+  timeMax: Date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+): Promise<NormalizedEvent[]> {
+  try {
+    const timeMinISO = timeMin.toISOString()
+    const timeMaxISO = timeMax.toISOString()
+
+    const response = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMinISO)}&timeMax=${encodeURIComponent(timeMaxISO)}&showDeleted=false&singleEvents=true&orderBy=startTime&maxResults=250`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
         }
-    await supabaseAdmin.from('practices').update({ google_calendar_token: newToken }).eq('id', practiceId)
-    return data.access_token
-  }
+      }
+    )
 
-async function getAccessToken(practiceId: string): Promise<string | null> {
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('google_calendar_token')
-      .eq('id', practiceId)
+    if (!response.ok) {
+      if (response.status === 401) {
+        console.warn('[getCalendarEvents] Token expired for practice:', practiceId)
+        throw new Error('Token expired')
+      }
+      throw new Error(`Google Calendar API error: ${response.statusText}`)
+    }
+
+    const data = await response.json()
+
+    const events: NormalizedEvent[] = (data.items || []).map((event: GoogleCalendarEvent) => ({
+      id: event.id,
+      title: event.summary || 'Untitled',
+      description: event.description,
+      start: event.start.dateTime || event.start.date || '',
+      end: event.end.dateTime || event.end.date || '',
+      location: event.location
+    }))
+
+    return events
+  } catch (err) {
+    console.error('[getCalendarEvents]', err)
+    throw err
+  }
+}
+
+/**
+ * Checks if a token needs refresh based on expiry time
+ */
+export function isTokenExpired(expiryDate?: string): boolean {
+  if (!expiryDate) return false
+  return new Date(expiryDate).getTime() < Date.now()
+}
+
+/**
+ * Gets a valid access token, refreshing if necessary
+ */
+export async function getValidAccessToken(
+  practiceId: string
+): Promise<string | null> {
+  try {
+    const { data: connection, error } = await supabaseAdmin
+      .from('calendar_connections')
+      .select('access_token, refresh_token, token_expires_at')
+      .eq('practice_id', practiceId)
+      .eq('provider', 'google')
       .single()
 
-    if (!practice?.google_calendar_token) return null
+    if (error || !connection) {
+      console.error('[getValidAccessToken] Connection not found:', error)
+      return null
+    }
 
-    const token = practice.google_calendar_token as CalendarToken
-    if (Date.now() >= token.expiry_date - 60000) {
-          return refreshAccessToken(token, practiceId)
-        }
-    return token.access_token
+    if (isTokenExpired(connection.token_expires_at)) {
+      if (!connection.refresh_token) {
+        console.error('[getValidAccessToken] Token expired and no refresh token available')
+        return null
+      }
+
+      const refreshed = await refreshAccessToken(connection.refresh_token, practiceId)
+      return refreshed?.access_token || null
+    }
+
+    return connection.access_token
+  } catch (err) {
+    console.error('[getValidAccessToken]', err)
+    return null
   }
-
-export async function getCalendarEvents(
-    practiceId: string,
-    calendarId: string = 'primary',
-    timeMin: string,
-    timeMax: string
-  ): Promise<any[]> {
-    const accessToken = await getAccessToken(practiceId)
-    if (!accessToken) return []
-
-    const params = new URLSearchParams({
-          timeMin,
-          timeMax,
-          singleEvents: 'true',
-          orderBy: 'startTime',
-        })
-
-    const res = await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events?${params}`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        )
-
-    if (!res.ok) return []
-    const data = await res.json()
-    return data.items || []
-  }
-
-export async function createCalendarEvent(
-    practiceId: string,
-    calendarId: string = 'primary',
-    event: {
-          summary: string
-          description?: string
-          start: string
-          end: string
-          attendeeEmail?: string
-        }
-  ): Promise<any | null> {
-    const accessToken = await getAccessToken(practiceId)
-    if (!accessToken) return null
-
-    const eventBody: any = {
-          summary: event.summary,
-          description: event.description || '',
-          start: { dateTime: event.start, timeZone: 'America/New_York' },
-          end: { dateTime: event.end, timeZone: 'America/New_York' },
-        }
-
-    if (event.attendeeEmail) {
-          eventBody.attendees = [{ email: event.attendeeEmail }]
-        }
-
-    const res = await fetch(
-          `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
-          {
-                  method: 'POST',
-                  headers: {
-                            Authorization: `Bearer ${accessToken}`,
-                            'Content-Type': 'application/json',
-                          },
-                  body: JSON.stringify(eventBody),
-                }
-        )
-
-    if (!res.ok) {
-          console.error('Failed to create calendar event:', await res.text())
-          return null
-        }
-    return res.json()
-  }
-
-export async function checkAvailability(
-    practiceId: string,
-    calendarId: string = 'primary',
-    start: string,
-    end: string
-  ): Promise<boolean> {
-    const events = await getCalendarEvents(practiceId, calendarId, start, end)
-    return events.length === 0
-  }
-
-export async function getUpcomingEvents(
-    practiceId: string,
-    calendarId: string = 'primary',
-    days: number = 7
-  ): Promise<any[]> {
-    const now = new Date()
-    const future = new Date()
-    future.setDate(future.getDate() + days)
-    return getCalendarEvents(
-          practiceId,
-          calendarId,
-          now.toISOString(),
-          future.toISOString()
-        )
-  }
+}
