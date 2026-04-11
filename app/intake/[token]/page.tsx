@@ -203,7 +203,8 @@ export default function IntakePage() {
     first_name: '', last_name: '', date_of_birth: '', phone: '', email: '',
     address: '', city: '', state: '', zip: '',
     emergency_contact_name: '', emergency_contact_phone: '', emergency_contact_relationship: '',
-    preferred_pronouns: '', referral_source: ''
+    preferred_pronouns: '', referral_source: '',
+    sms_consent: false
   })
 
   const [insurance, setInsurance] = useState<InsuranceInfo>({
@@ -484,7 +485,27 @@ export default function IntakePage() {
                 </div>
               </div>
 
-              <div>
+              
+          {/* SMS Consent */}
+          <div className="mt-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={demographics.sms_consent}
+                onChange={e => setDemographics(d => ({ ...d, sms_consent: e.target.checked }))}
+                className="mt-1 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+              />
+              <span className="text-sm text-gray-700">
+                I agree to receive appointment-related SMS messages from this practice via Harbor Receptionist.
+                Message frequency varies based on your scheduled appointments. Message and data rates may apply.
+                Reply <strong>STOP</strong> to opt out at any time. Reply <strong>HELP</strong> for help.
+                View our <a href="/privacy-policy" target="_blank" className="text-teal-600 underline">Privacy Policy</a> and{' '}
+                <a href="/sms" target="_blank" className="text-teal-600 underline">SMS Terms</a>.
+              </span>
+            </label>
+          </div>
+
+<div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">How did you hear about us?</label>
                 <select value={demographics.referral_source} onChange={e => updateDemographics('referral_source', e.target.value)}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 bg-white">
