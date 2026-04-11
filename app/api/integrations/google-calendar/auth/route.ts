@@ -1,88 +1,65 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { supabaseAdmin } from '@/lib/supabase'
 import { NextRequest, NextResponse } from 'next/server'
 
-// GET /api/integrations/google-calendar/auth
-// Generates the Google OAuth consent URL and redirects the user.
-// After consent, Google sends the user to /callback with a ?code=.
+async function getPracticeId(): Promise<string | null> {
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (s) => {
+          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
+        }
+      }
+    }
+  )
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
+  return data?.practice_id || null
+}
 
 export async function GET(req: NextRequest) {
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll: () => cookieStore.getAll(),
-          setAll: (s) => {
-            try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
-          },
-        },
-      }
-    )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
       return NextResponse.redirect(new URL('/login', req.url))
     }
 
-    // Find the practice for this user
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
+    const clientId = process.env.GOOGLE_CLIENT_ID
+    const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/google-calendar/callback`
 
-    if (!practice) {
-      return NextResponse.redirect(
-        new URL('/dashboard/settings?error=no_practice', req.url)
+    if (!clientId) {
+      return NextResponse.json(
+        { error: 'Google Calendar not configured' },
+        { status: 500 }
       )
     }
 
-    if (!process.env.GOOGLE_CLIENT_ID) {
-      return NextResponse.redirect(
-        new URL('/dashboard/settings?error=gcal_not_configured', req.url)
-      )
-    }
-
-    // Encode practice ID in the state param so we can retrieve it in the callback.
-    // We also store it in a short-lived cookie to verify it wasn't tampered with.
-    const state = Buffer.from(practice.id).toString('base64url')
-
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-    const redirectUri = `${appUrl}/api/integrations/google-calendar/callback`
+    const scopes = [
+      'https://www.googleapis.com/auth/calendar.readonly',
+      'https://www.googleapis.com/auth/calendar.events'
+    ]
 
     const params = new URLSearchParams({
-      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_id: clientId,
       redirect_uri: redirectUri,
       response_type: 'code',
-      scope: [
-        'https://www.googleapis.com/auth/calendar.events',
-        'https://www.googleapis.com/auth/userinfo.email',
-      ].join(' '),
+      scope: scopes.join(' '),
       access_type: 'offline',
-      prompt: 'consent',   // force consent so we always get a refresh_token
-      state,
+      prompt: 'consent',
+      state: Buffer.from(JSON.stringify({ practiceId })).toString('base64')
     })
 
-    const oauthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params}`
+    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 
-    // Store state in cookie so callback can verify it
-    const res = NextResponse.redirect(oauthUrl)
-    res.cookies.set('gcal_state', state, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 600, // 10 minutes
-      path: '/',
-    })
-
-    return res
-  } catch (error: any) {
-    console.error('Google Calendar auth error:', error)
-    return NextResponse.redirect(
-      new URL('/dashboard/settings?error=gcal_auth_failed', req.url)
-    )
+    return NextResponse.redirect(googleAuthUrl)
+  } catch (err) {
+    console.error('[google-calendar/auth GET]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
