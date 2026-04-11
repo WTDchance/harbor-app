@@ -1,46 +1,125 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { getCalendarEvents } from '@/lib/googleCalendar'
+import { NextRequest, NextResponse } from 'next/server'
+import { refreshAccessToken } from '@/lib/googleCalendar'
+
+async function getPracticeId(): Promise<string | null> {
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (s) => {
+          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
+        }
+      }
+    }
+  )
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return null
+  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
+  return data?.practice_id || null
+}
+
+interface GoogleCalendarEvent {
+  id: string
+  summary: string
+  description?: string
+  start: { dateTime?: string; date?: string }
+  end: { dateTime?: string; date?: string }
+  location?: string
+}
+
+interface NormalizedEvent {
+  id: string
+  title: string
+  description?: string
+  start: string
+  end: string
+  location?: string
+}
 
 export async function GET(req: NextRequest) {
-    try {
-          const cookieStore = await cookies()
-          const supabase = createServerClient(
-                  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-                  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-                  {
-                            cookies: {
-                                        getAll: () => cookieStore.getAll(),
-                                        setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} }
-                                      }
-                          }
-                )
-          const { data: { user } } = await supabase.auth.getUser()
-          if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  try {
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-          const { data: practice } = await supabaseAdmin
-            .from('practices')
-            .select('id, google_calendar_id')
-            .eq('notification_email', user.email)
-            .single()
+    const { data: connection, error: connError } = await supabaseAdmin
+      .from('calendar_connections')
+      .select('*')
+      .eq('practice_id', practiceId)
+      .eq('provider', 'google')
+      .single()
 
-          if (!practice) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    if (connError || !connection) {
+      return NextResponse.json(
+        { error: 'Google Calendar not connected' },
+        { status: 404 }
+      )
+    }
 
-          const { searchParams } = new URL(req.url)
-          const timeMin = searchParams.get('timeMin') || new Date().toISOString()
-          const timeMax = searchParams.get('timeMax') || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+    let accessToken = connection.access_token
 
-          const events = await getCalendarEvents(
-                  practice.id,
-                  practice.google_calendar_id || 'primary',
-                  timeMin,
-                  timeMax
-                )
-
-          return NextResponse.json({ events })
-        } catch (error: any) {
-          return NextResponse.json({ error: error.message }, { status: 500 })
+    // Check if token is expired and refresh if needed
+    if (connection.token_expires_at) {
+      const expiresAt = new Date(connection.token_expires_at).getTime()
+      if (expiresAt < Date.now()) {
+        if (!connection.refresh_token) {
+          return NextResponse.json(
+            { error: 'Google Calendar token expired and cannot be refreshed' },
+            { status: 401 }
+          )
         }
+
+        const refreshResult = await refreshAccessToken(connection.refresh_token, practiceId)
+        if (!refreshResult) {
+          return NextResponse.json(
+            { error: 'Failed to refresh Google Calendar token' },
+            { status: 500 }
+          )
+        }
+        accessToken = refreshResult.access_token
+      }
+    }
+
+    const now = new Date().toISOString()
+    const timeMax = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+
+    const eventsResponse = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(now)}&timeMax=${encodeURIComponent(timeMax)}&showDeleted=false&singleEvents=true&orderBy=startTime`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      }
+    )
+
+    if (!eventsResponse.ok) {
+      if (eventsResponse.status === 401) {
+        return NextResponse.json(
+          { error: 'Google Calendar token invalid' },
+          { status: 401 }
+        )
+      }
+      throw new Error(`Google Calendar API error: ${eventsResponse.statusText}`)
+    }
+
+    const data = await eventsResponse.json()
+    const events: NormalizedEvent[] = (data.items || []).map((event: GoogleCalendarEvent) => ({
+      id: event.id,
+      title: event.summary || 'Untitled',
+      description: event.description,
+      start: event.start.dateTime || event.start.date || '',
+      end: event.end.dateTime || event.end.date || '',
+      location: event.location
+    }))
+
+    return NextResponse.json({ events })
+  } catch (err) {
+    console.error('[google-calendar/events GET]', err)
+    return NextResponse.json({ error: 'Failed to fetch calendar events' }, { status: 500 })
   }
+        }
