@@ -1,11 +1,9 @@
-// app/api/calendar/events/route.ts â Read/write events on connected Apple Calendar
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import { getEvents, createEvent, deleteEvent, getDefaultCalendarUrl, listCalendars } from '@/lib/caldav'
+import { cookies } from 'next/headers'
+import { supabaseAdmin } from '@/lib/supabase'
+import { NextRequest, NextResponse } from 'next/server'
+import { createDAVClient } from 'tsdav'
 
-// Helper: get practice ID from auth
 async function getPracticeId(): Promise<string | null> {
   const cookieStore = await cookies()
   const supabase = createServerClient(
@@ -22,29 +20,19 @@ async function getPracticeId(): Promise<string | null> {
   )
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-
-  const { data } = await supabase.from('users').select('practice_id').eq('id', user.id).single()
+  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
   return data?.practice_id || null
 }
 
-// Helper: get Apple CalDAV credentials for practice
-async function getAppleCredentials(practiceId: string) {
-  const { data } = await supabaseAdmin
-    .from('calendar_connections')
-    .select('caldav_username, caldav_password, caldav_calendar_url')
-    .eq('practice_id', practiceId)
-    .eq('provider', 'apple')
-    .single()
-
-  if (!data?.caldav_username || !data?.caldav_password) return null
-  return {
-    username: data.caldav_username,
-    password: data.caldav_password,
-    calendarUrl: data.caldav_calendar_url || null,
-  }
+interface CalDAVEvent {
+  id?: string
+  summary: string
+  description?: string
+  startDate: string
+  endDate: string
+  location?: string
 }
 
-// GET /api/calendar/events?start=2026-04-09&end=2026-04-16&provider=apple
 export async function GET(req: NextRequest) {
   try {
     const practiceId = await getPracticeId()
@@ -52,66 +40,68 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { searchParams } = new URL(req.url)
-    const provider = searchParams.get('provider') || 'apple'
-    const startStr = searchParams.get('start')
-    const endStr = searchParams.get('end')
+    const { data: connection, error: connError } = await supabaseAdmin
+      .from('calendar_connections')
+      .select('*')
+      .eq('practice_id', practiceId)
+      .eq('provider', 'apple')
+      .single()
 
-    if (!startStr || !endStr) {
-      return NextResponse.json({ error: 'start and end query params required (YYYY-MM-DD)' }, { status: 400 })
-    }
-
-    const start = new Date(startStr)
-    const end = new Date(endStr)
-
-    if (provider === 'apple') {
-      const creds = await getAppleCredentials(practiceId)
-      if (!creds) {
-        return NextResponse.json({ error: 'Apple Calendar not connected. Go to Settings to connect.' }, { status: 404 })
-      }
-
-      // Get or discover calendar URL
-      let calendarUrl = creds.calendarUrl
-      if (!calendarUrl) {
-        calendarUrl = await getDefaultCalendarUrl({ username: creds.username, password: creds.password })
-        // Cache it for next time
-        await supabaseAdmin
-          .from('calendar_connections')
-          .update({ caldav_calendar_url: calendarUrl })
-          .eq('practice_id', practiceId)
-          .eq('provider', 'apple')
-      }
-
-      const events = await getEvents(
-        { username: creds.username, password: creds.password },
-        calendarUrl,
-        start,
-        end
+    if (connError || !connection) {
+      return NextResponse.json(
+        { error: 'Apple Calendar not connected' },
+        { status: 404 }
       )
-
-      return NextResponse.json({
-        provider: 'apple',
-        events: events.map(e => ({
-          uid: e.uid,
-          summary: e.summary,
-          start: e.dtstart,
-          end: e.dtend,
-          description: e.description,
-          location: e.location,
-        })),
-      })
     }
 
-    // For Google Calendar, use existing Google API flow
-    return NextResponse.json({ error: `Provider "${provider}" not supported for events API yet` }, { status: 400 })
+    if (!connection.caldav_username || !connection.caldav_password || !connection.caldav_url) {
+      return NextResponse.json(
+        { error: 'Incomplete CalDAV credentials' },
+        { status: 400 }
+      )
+    }
 
-  } catch (err: any) {
-    console.error('[Calendar Events GET]', err)
-    return NextResponse.json({ error: err.message || 'Failed to fetch events' }, { status: 500 })
+    const client = await createDAVClient({
+      serverUrl: connection.caldav_url,
+      credentials: {
+        username: connection.caldav_username,
+        password: connection.caldav_password
+      },
+      authType: 'basic',
+      defaultAccountType: 'caldav'
+    })
+
+    const calendars = await client.fetchCalendars()
+    if (!calendars || calendars.length === 0) {
+      return NextResponse.json({ events: [] })
+    }
+
+    const objects = await client.fetchCalendarObjects({ calendar: calendars[0] })
+
+    const events = objects.map((obj) => ({
+      id: obj.url,
+      summary: obj.summary || 'Untitled',
+      description: obj.description,
+      startDate: obj.startDate,
+      endDate: obj.endDate,
+      location: obj.location
+    }))
+
+    return NextResponse.json({ events })
+  } catch (err) {feat: add Apple CalDAV events support
+    console.error('[calendar/events GET]', err)
+    return NextResponse.json({ error: 'Failed to fetch calendar events' }, { status: 500 })
   }
 }
 
-// POST /api/calendar/events â Create event on Apple Calendar
+interface CreateEventBody {
+  summary: string
+  description?: string
+  startDate: string
+  endDate: string
+  location?: string
+}
+
 export async function POST(req: NextRequest) {
   try {
     const practiceId = await getPracticeId()
@@ -119,91 +109,73 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { provider, summary, start, end, description, location } = await req.json()
+    const body: CreateEventBody = await req.json()
+    const { summary, description, startDate, endDate, location } = body
 
-    if (!summary || !start || !end) {
-      return NextResponse.json({ error: 'summary, start, and end are required' }, { status: 400 })
-    }
-
-    if ((provider || 'apple') === 'apple') {
-      const creds = await getAppleCredentials(practiceId)
-      if (!creds) {
-        return NextResponse.json({ error: 'Apple Calendar not connected' }, { status: 404 })
-      }
-
-      let calendarUrl = creds.calendarUrl
-      if (!calendarUrl) {
-        calendarUrl = await getDefaultCalendarUrl({ username: creds.username, password: creds.password })
-        await supabaseAdmin
-          .from('calendar_connections')
-          .update({ caldav_calendar_url: calendarUrl })
-          .eq('practice_id', practiceId)
-          .eq('provider', 'apple')
-      }
-
-      const result = await createEvent(
-        { username: creds.username, password: creds.password },
-        calendarUrl,
-        {
-          summary,
-          start: new Date(start),
-          end: new Date(end),
-          description,
-          location,
-        }
+    if (!summary || !startDate || !endDate) {
+      return NextResponse.json(
+        { error: 'summary, startDate, and endDate are required' },
+        { status: 400 }
       )
-
-      return NextResponse.json({ success: true, uid: result.uid })
     }
 
-    return NextResponse.json({ error: `Provider "${provider}" not supported yet` }, { status: 400 })
+    const { data: connection, error: connError } = await supabaseAdmin
+      .from('calendar_connections')
+      .select('*')
+      .eq('practice_id', practiceId)
+      .eq('provider', 'apple')
+      .single()
 
-  } catch (err: any) {
-    console.error('[Calendar Events POST]', err)
-    return NextResponse.json({ error: err.message || 'Failed to create event' }, { status: 500 })
-  }
-}
-
-// DELETE /api/calendar/events?uid=xxx&provider=apple
-export async function DELETE(req: NextRequest) {
-  try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { searchParams } = new URL(req.url)
-    const provider = searchParams.get('provider') || 'apple'
-    const uid = searchParams.get('uid')
-
-    if (!uid) {
-      return NextResponse.json({ error: 'uid query param required' }, { status: 400 })
-    }
-
-    if (provider === 'apple') {
-      const creds = await getAppleCredentials(practiceId)
-      if (!creds) {
-        return NextResponse.json({ error: 'Apple Calendar not connected' }, { status: 404 })
-      }
-
-      let calendarUrl = creds.calendarUrl
-      if (!calendarUrl) {
-        calendarUrl = await getDefaultCalendarUrl({ username: creds.username, password: creds.password })
-      }
-
-      const eventUrl = calendarUrl.replace(/\/$/, '') + `/${uid}.ics`
-      await deleteEvent(
-        { username: creds.username, password: creds.password },
-        eventUrl
+    if (connError || !connection) {
+      return NextResponse.json(
+        { error: 'Apple Calendar not connected' },
+        { status: 404 }
       )
-
-      return NextResponse.json({ success: true })
     }
 
-    return NextResponse.json({ error: `Provider "${provider}" not supported yet` }, { status: 400 })
+    const client = await createDAVClient({
+      serverUrl: connection.caldav_url!,
+      credentials: {
+        username: connection.caldav_username!,
+        password: connection.caldav_password!
+      },
+      authType: 'basic',
+      defaultAccountType: 'caldav'
+    })
 
-  } catch (err: any) {
-    console.error('[Calendar Events DELETE]', err)
-    return NextResponse.json({ error: err.message || 'Failed to delete event' }, { status: 500 })
+    const calendars = await client.fetchCalendars()
+    if (!calendars || calendars.length === 0) {
+      return NextResponse.json(
+        { error: 'No calendars found' },
+        { status: 404 }
+      )
+    }
+
+    const iCalString = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//Harbor//Calendar//EN',
+      'BEGIN:VEVENT',
+      `UID:${Date.now()}@harborreceptionist.com`,
+      `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
+      `DTSTART:${startDate.replace(/[-:]/g, '').split('.')[0]}Z`,
+      `DTEND:${endDate.replace(/[-:]/g, '').split('.')[0]}Z`,
+      `SUMMARY:${summary}`,
+      ...(description ? [`DESCRIPTION:${description}`] : []),
+      ...(location ? [`LOCATION:${location}`] : []),
+      'END:VEVENT',
+      'END:VCALENDAR'
+    ].join('\r\n')
+
+    const event = await client.createCalendarObject({
+      calendar: calendars[0],
+      filename: `${Date.now()}.ics`,
+      iCalString
+    })
+
+    return NextResponse.json({ event }, { status: 201 })
+  } catch (err) {
+    console.error('[calendar/events POST]', err)
+    return NextResponse.json({ error: 'Failed to create event' }, { status: 500 })
   }
-}
+      }
