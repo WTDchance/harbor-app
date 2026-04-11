@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { PhoneNumberPicker } from '@/components/PhoneNumberPicker'
 import { useRouter } from 'next/navigation'
 import {
   Check, ArrowRight, ArrowLeft, Phone, Shield, Clock, Star,
@@ -8,7 +9,7 @@ import {
   Calendar, MessageSquare, Wifi, CreditCard,
 } from 'lucide-react'
 
-const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie']
+const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie', 'Choose Your Number']
 
 const SPECIALTIES = [
   'Individual Therapy', 'Couples Therapy', 'Family Therapy',
@@ -67,6 +68,7 @@ function formatPrice(cents: number): string {
 export default function SignupPage() {
   const router = useRouter()
   const [step, setStep] = useState(0)
+  const [selectedPhoneNumber, setSelectedPhoneNumber] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [founding, setFounding] = useState<FoundingInfo | null>(null)
@@ -153,6 +155,7 @@ export default function SignupPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...form,
+          selected_phone_number: selectedPhoneNumber || null,
           email: form.email.trim().toLowerCase(),
           greeting: form.greeting || defaultGreeting,
           specialties,
@@ -171,7 +174,7 @@ export default function SignupPage() {
         setLoading(false)
         return
       }
-      // Redirect to Stripe Checkout â card-upfront, charge-now flow.
+      // Redirect to Stripe Checkout Ã¢ÂÂ card-upfront, charge-now flow.
       window.location.href = data.checkout_url
     } catch {
       setError('Signup failed. Please try again.')
@@ -222,7 +225,7 @@ export default function SignupPage() {
             {isFounding ? (
               <>
                 <Star className="w-3.5 h-3.5 inline mr-1" />
-                <strong>Founding Practice Offer</strong> â {remaining} of {founding.cap} spots left Â· Lock in{' '}
+                <strong>Founding Practice Offer</strong> Ã¢ÂÂ {remaining} of {founding.cap} spots left ÃÂ· Lock in{' '}
                 <strong>{formatPrice(founding.price_cents)}/mo</strong>{' '}
                 <span className="line-through text-slate-500">{formatPrice(founding.regular_price_cents)}</span>{' '}
                 forever
@@ -264,6 +267,7 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
+                  step === 4 && "Choose your practice phone number."
           </p>
 
           {error && (
@@ -527,7 +531,7 @@ export default function SignupPage() {
                   <div className="text-sm">
                     <p className="font-medium text-slate-200">
                       You'll be charged <strong className="text-teal-300">{formatPrice(priceCents)}/mo</strong>
-                      {isFounding && <span className="text-amber-300"> â Founding Practice rate locked forever</span>}
+                      {isFounding && <span className="text-amber-300"> Ã¢ÂÂ Founding Practice rate locked forever</span>}
                     </p>
                     <p className="text-xs text-slate-400 mt-1">
                       Payment is processed securely by Stripe. You can cancel anytime from your dashboard.
@@ -542,10 +546,45 @@ export default function SignupPage() {
                   className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
                   <ArrowLeft className="w-5 h-5" /> Back
                 </button>
-                <button onClick={submit} disabled={loading}
+                <button onClick={() => setStep(4)} disabled={loading}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Redirecting to checkoutâ¦' : `Continue to Checkout`}
+                  {loading ? 'Redirecting to checkoutÃ¢ÂÂ¦' : `Choose Your Number â`}
                   {!loading && <ArrowRight className="w-5 h-5" />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 4 && (
+            <div className="space-y-6">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Choose Your Phone Number</h2>
+                <p className="mt-2 text-slate-400">
+                  Select your practice&apos;s phone number. Patients will use this number to reach Ellie.
+                </p>
+              </div>
+
+              <PhoneNumberPicker
+                city={formData.city || ''}
+                state={formData.state || ''}
+                onSelect={setSelectedPhoneNumber}
+                selectedNumber={selectedPhoneNumber}
+              />
+
+              <div className="p-4 bg-teal-900/30 border border-teal-700 rounded-lg">
+                <p className="text-sm text-teal-300">
+                  Tip: Choose a number with a local area code so patients feel comfortable calling.
+                </p>
+              </div>
+
+              <div className="flex gap-3 mt-2">
+                <button onClick={() => setStep(3)}
+                  className="flex-1 bg-slate-700 hover:bg-slate-600 text-white font-medium py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                  <ArrowLeft className="w-5 h-5" /> Back
+                </button>
+                <button onClick={submit} disabled={loading || !selectedPhoneNumber}
+                  className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
+                  {loading ? 'Redirecting to checkout...' : 'Continue to Checkout'} <ArrowRight className="w-5 h-5" />
                 </button>
               </div>
             </div>
