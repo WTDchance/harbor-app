@@ -565,8 +565,8 @@ export default function SignupPage() {
               </div>
 
               <PhoneNumberPicker
-                city={formData.city || ''}
-                state={formData.state || ''}
+                city={form.city || ''}
+                state={form.state || ''}
                 onSelect={setSelectedPhoneNumber}
                 selectedNumber={selectedPhoneNumber}
               />
