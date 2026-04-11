@@ -174,7 +174,7 @@ export default function SignupPage() {
         setLoading(false)
         return
       }
-      // Redirect to Stripe Checkout Ã¢ÂÂ card-upfront, charge-now flow.
+      // Redirect to Stripe Checkout -- card-upfront, charge-now flow.
       window.location.href = data.checkout_url
     } catch {
       setError('Signup failed. Please try again.')
@@ -225,7 +225,7 @@ export default function SignupPage() {
             {isFounding ? (
               <>
                 <Star className="w-3.5 h-3.5 inline mr-1" />
-                <strong>Founding Practice Offer</strong> Ã¢ÂÂ {remaining} of {founding.cap} spots left ÃÂ· Lock in{' '}
+                <strong>Founding Practice Offer</strong> {"\u2014"} {remaining} of {founding.cap} spots left {"\u00B7"} Lock in{' '}
                 <strong>{formatPrice(founding.price_cents)}/mo</strong>{' '}
                 <span className="line-through text-slate-500">{formatPrice(founding.regular_price_cents)}</span>{' '}
                 forever
@@ -267,7 +267,7 @@ export default function SignupPage() {
             {step === 1 && "What services do you offer? This helps your receptionist answer patient questions."}
             {step === 2 && "Create your account to access your Harbor dashboard."}
             {step === 3 && "Customize how your AI receptionist introduces herself to callers."}
-                  step === 4 && "Choose your practice phone number."
+                {step === 4 && "Choose your practice phone number."}
           </p>
 
           {error && (
@@ -531,7 +531,7 @@ export default function SignupPage() {
                   <div className="text-sm">
                     <p className="font-medium text-slate-200">
                       You'll be charged <strong className="text-teal-300">{formatPrice(priceCents)}/mo</strong>
-                      {isFounding && <span className="text-amber-300"> Ã¢ÂÂ Founding Practice rate locked forever</span>}
+                {isFounding && <span className="text-amber-300"> {"\u2B50"} Founding Practice rate locked forever</span>}
                     </p>
                     <p className="text-xs text-slate-400 mt-1">
                       Payment is processed securely by Stripe. You can cancel anytime from your dashboard.
@@ -548,7 +548,7 @@ export default function SignupPage() {
                 </button>
                 <button onClick={() => setStep(4)} disabled={loading}
                   className="flex-1 bg-teal-500 hover:bg-teal-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-lg transition-colors flex items-center justify-center gap-2">
-                  {loading ? 'Redirecting to checkoutÃ¢ÂÂ¦' : `Choose Your Number â`}
+                {loading ? 'Redirecting to checkout...' : 'Choose Your Number \u2192'}
                   {!loading && <ArrowRight className="w-5 h-5" />}
                 </button>
               </div>
