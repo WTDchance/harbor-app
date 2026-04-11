@@ -221,7 +221,7 @@ export async function POST(req: NextRequest) {
                   if (waitlist?.[0]?.patient_phone) {
                             const w = waitlist[0]
                             await sendSMS(w.patient_phone,
-                                                    `Hi ${w.patient_name.split(' ')[0]}! A slot just opened: ${fmtDate(appt.appointment_date)} at ${fmtTime(appt.appointment_time)} with ${practiceFromAppt?.name}. Call us to book!`
+                                                    `Harbor Receptionist: Hi ${w.patient_name.split(' ')[0]}! A slot just opened: ${fmtDate(appt.appointment_date)} at ${fmtTime(appt.appointment_time)} with ${practiceFromAppt?.name}. Call us to book!`
                                                   )
                             await supabaseAdmin.from('waitlist').update({ status: 'notified' }).eq('id', w.id)
                           }
