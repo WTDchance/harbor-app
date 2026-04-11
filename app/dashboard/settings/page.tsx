@@ -1,4 +1,11 @@
-'use client'
+→…·             <div className="w-5 h-5 border-2 border-teal-400 border-t-transparent rounded-full animate-spin" />
+                ) : gcal?.connected ? (
+                                  <button
+                                                      onClick={disconnectGcal}
+                                                      disabled={gcalDisconnecting}
+                                                      className="px-3 py-1.5 text-xs font-medium text-red-600 border border-red-200 rounded-lg hover:bg-red-50 disabled:opacity-50 transition-colors"
+                                                    >
+                                    {gcalDisconnecting ? 'Disconne</button>'use client'
 
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
