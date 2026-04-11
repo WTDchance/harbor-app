@@ -1,111 +1,131 @@
-import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { NextRequest, NextResponse } from 'next/server'
 
-// GET /api/integrations/google-calendar/callback
-// Google redirects here after the user grants consent.
-// Exchanges the authorization code for access + refresh tokens,
-// saves them to the practice record, then redirects back to Settings.
+interface GoogleTokenResponse {
+  access_token: string
+  refresh_token?: string
+  expires_in: number
+  token_type: string
+}
+
+interface GoogleUserInfo {
+  email: string
+  name: string
+}
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = req.nextUrl
-  const code = searchParams.get('code')
-  const state = searchParams.get('state')
-  const errorParam = searchParams.get('error')
-
-  const settingsUrl = new URL(
-    '/dashboard/settings',
-    process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  )
-
-  // User denied access
-  if (errorParam === 'access_denied') {
-    settingsUrl.searchParams.set('gcal', 'denied')
-    return NextResponse.redirect(settingsUrl)
-  }
-
-  if (!code || !state) {
-    settingsUrl.searchParams.set('gcal', 'error')
-    return NextResponse.redirect(settingsUrl)
-  }
-
   try {
-    // Verify state cookie matches URL state to prevent CSRF
-    const cookieState = req.cookies.get('gcal_state')?.value
-    if (!cookieState || cookieState !== state) {
-      console.error('Google Calendar callback: state mismatch')
-      settingsUrl.searchParams.set('gcal', 'error')
-      return NextResponse.redirect(settingsUrl)
+    const code = req.nextUrl.searchParams.get('code')
+    const state = req.nextUrl.searchParams.get('state')
+    const error = req.nextUrl.searchParams.get('error')
+
+    if (error) {
+      return NextResponse.redirect(
+        new URL(`/dashboard/settings?error=${encodeURIComponent(error)}`, req.url)
+      )
     }
 
-    // Decode practice ID from state
-    const practiceId = Buffer.from(state, 'base64url').toString('utf8')
+    if (!code || !state) {
+      return NextResponse.redirect(
+        new URL('/dashboard/settings?error=missing_parameters', req.url)
+      )
+    }
 
-    // Exchange authorization code for tokens
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-    const redirectUri = `${appUrl}/api/integrations/google-calendar/callback`
+    let stateData: { practiceId: string }
+    try {
+      stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'))
+    } catch {
+      return NextResponse.redirect(
+        new URL('/dashboard/settings?error=invalid_state', req.url)
+      )
+    }
 
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    const clientId = process.env.GOOGLE_CLIENT_ID
+    const clientSecret = process.env.GOOGLE_CLIENT_SECRET
+    const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/google-calendar/callback`
+
+    if (!clientId || !clientSecret) {
+      return NextResponse.redirect(
+        new URL('/dashboard/settings?error=server_misconfigured', req.url)
+      )
+    }
+
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         code,
-        client_id: process.env.GOOGLE_CLIENT_ID!,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        client_id: clientId,
+        client_secret: clientSecret,
         redirect_uri: redirectUri,
-        grant_type: 'authorization_code',
-      }),
+        grant_type: 'authorization_code'
+      })
     })
 
-    if (!tokenRes.ok) {
-      const err = await tokenRes.text()
-      console.error('Token exchange failed:', err)
-      settingsUrl.searchParams.set('gcal', 'error')
-      return NextResponse.redirect(settingsUrl)
+    if (!tokenResponse.ok) {
+      const errorData = await tokenResponse.json()
+      console.error('[google-calendar/callback] Token exchange failed:', errorData)
+      return NextResponse.redirect(
+        new URL(
+          `/dashboard/settings?error=${encodeURIComponent(errorData.error || 'token_exchange_failed')}`,
+          req.url
+        )
+      )
     }
 
-    const tokens = await tokenRes.json()
+    const tokens: GoogleTokenResponse = await tokenResponse.json()
 
-    // Fetch the user's email from Google
-    const infoRes = await fetch(
-      'https://www.googleapis.com/oauth2/v2/userinfo',
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+    // Get user info
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    })
+
+    if (!userResponse.ok) {
+      console.error('[google-calendar/callback] Failed to fetch user info')
+      return NextResponse.redirect(
+        new URL('/dashboard/settings?error=failed_to_fetch_user_info', req.url)
+      )
+    }
+
+    const userInfo: GoogleUserInfo = await userResponse.json()
+
+    // Save to calendar_connections
+    const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
+
+    const { error: upsertError } = await supabaseAdmin
+      .from('calendar_connections')
+      .upsert(
+        {
+          practice_id: stateData.practiceId,
+          provider: 'google',
+          label: `Google Calendar (${userInfo.email})`,
+          access_token: tokens.access_token,k
+            
+          refresh_token: tokens.refresh_token || null,
+          token_expires_at: expiresAt,
+          connected_email: userInfo.email,
+          sync_enabled: true,
+          updated_at: new Date().toISOString(),
+          created_at: new Date().toISOString()
+        },
+        { onConflict: 'practice_id,provider' }
+      )
+
+    if (upsertError) {
+      console.error('[google-calendar/callback] Upsert error:', upsertError)
+      return NextResponse.redirect(
+        new URL('/dashboard/settings?error=database_error', req.url)
+      )
+    }
+
+    return NextResponse.redirect(
+      new URL('/dashboard/settings?success=google_calendar_connected', req.url)
     )
-    const userInfo = infoRes.ok ? await infoRes.json() : {}
-    const calendarEmail = userInfo.email || null
-
-    // Save tokens + email to the practice record
-    const tokenPayload = {
-      access_token: tokens.access_token,
-      refresh_token: tokens.refresh_token,
-      expiry_date: Date.now() + (tokens.expires_in ?? 3600) * 1000,
-      token_type: tokens.token_type || 'Bearer',
-    }
-
-    const { error: dbError } = await supabaseAdmin
-      .from('practices')
-      .update({
-        google_calendar_token: tokenPayload,
-        google_calendar_email: calendarEmail,
-      })
-      .eq('id', practiceId)
-
-    if (dbError) {
-      console.error('Failed to save Google Calendar token:', dbError)
-      settingsUrl.searchParams.set('gcal', 'error')
-      const res = NextResponse.redirect(settingsUrl)
-      res.cookies.delete('gcal_state')
-      return res
-    }
-
-    settingsUrl.searchParams.set('gcal', 'connected')
-    const res = NextResponse.redirect(settingsUrl)
-    res.cookies.delete('gcal_state')
-    return res
-  } catch (error: any) {
-    console.error('Google Calendar callback error:', error)
-    settingsUrl.searchParams.set('gcal', 'error')
-    const res = NextResponse.redirect(settingsUrl)
-    res.cookies.delete('gcal_state')
-    return res
+  } catch (err) {
+    console.error('[google-calendar/callback GET]', err)
+    return NextResponse.redirect(
+      new URL('/dashboard/settings?error=internal_server_error', req.url)
+    )
   }
-}
+                  }
