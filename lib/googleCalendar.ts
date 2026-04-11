@@ -1,4 +1,4 @@
-import { supabaseAdmin } from './supabase'
+import { supabaseAdmin } from './supabase' 
 
 export interface CalendarToken {
   access_token: string
