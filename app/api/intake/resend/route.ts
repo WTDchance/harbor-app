@@ -7,7 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import twilio from "twilio";
 import { sendEmail, buildIntakeEmail } from "@/lib/email";
 
-export async function POST(request: NextRequest) {
+export async function POST(request: NextRequehst) {
   try {
     const body = await request.json();
     const { intake_form_id, delivery_method } = body;
@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
           : `+1${form.patient_phone.replace(/\\D/g, "")}`;
 
         await client.messages.create({
-          body: `Hi ${firstName}! ${practiceName} has resent your intake forms. Please complete them when you get a chance: ${intakeUrl}`,
+          body: `Harbor Receptionist: Hi ${firstName}! ${practiceName} has resent your intake forms. Please complete them when you get a chance: ${intakeUrl}`,
           from: process.env.TWILIO_PHONE_NUMBER!,
           to: phone,
         });
