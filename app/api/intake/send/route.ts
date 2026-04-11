@@ -201,7 +201,7 @@ async function sendIntakeSMS(
   await client.messages.create({
     to: phone.startsWith('+') ? phone : `+1${phone.replace(/\D/g, '')}`,
     from: process.env.TWILIO_PHONE_NUMBER,
-    body: `Hi ${firstName}! Thanks for calling ${practiceName}. Here's a link to your new patient intake forms â just tap to get started:\n\n${intakeUrl}\n\nThe link is valid for 7 days. Reply STOP to opt out.`,
+    body: `Harbor Receptionist: Hi ${firstName}! Thanks for calling ${practiceName}. Here's a link to your new patient intake forms â just tap to get started:\n\n${intakeUrl}\n\nThe link is valid for 7 days. Reply STOP to opt out.`,
   })
 }
 
