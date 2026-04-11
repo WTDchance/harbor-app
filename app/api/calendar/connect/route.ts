@@ -1,9 +1,9 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { NextRequest, NextResponse } from 'next/server'
 
-async function getPractice() {
+async function getPracticeId(): Promise<string | null> {
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -19,91 +19,135 @@ async function getPractice() {
   )
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabase.from('practices').select('id').eq('notification_email', user.email).single()
-  return data
+  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
+  return data?.practice_id || null
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('calendar_connections')
+      .select('*')
+      .eq('practice_id', practiceId)
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    return NextResponse.json({ connections: data })
+  } catch (err) {
+    console.error('[calendar/connect GET]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}
+
+interface ConnectRequestBody {
+  provider: 'apple' | 'google' | 'outlook'
+  email?: string
+  password?: string
+  name?: string
+  caldav_url?: string
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const { provider, email, password, name } = await req.json()
-
-    if (!provider || !email) {
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // For Apple CalDAV: test credentials before saving
-    if (provider === 'apple' && password) {
-      try {
-        const testResp = await fetch('https://caldav.icloud.com/', {
-          method: 'OPTIONS',
-          headers: {
-            Authorization: 'Basic ' + Buffer.from(email + ':' + password).toString('base64'),
-          },
-          signal: AbortSignal.timeout(6000),
-        })
-        if (testResp.status === 401) {
-          return NextResponse.json({
-            error: 'Apple ID authentication failed. Make sure you are using an app-specific password from appleid.apple.com, not your main Apple ID password.',
-          }, { status: 400 })
-        }
-      } catch {
-        // Network error or timeout — save anyway and retry on first sync
+    const body: ConnectRequestBody = await req.json()
+    const { provider, email, password, name, caldav_url } = body
+
+    if (!provider) {
+      return NextResponse.json({ error: 'provider is required' }, { status: 400 })
+    }
+
+    if (provider === 'apple') {
+      if (!email || !password) {
+        return NextResponse.json(
+          { error: 'email and password required for Apple CalDAV' },
+          { status: 400 }
+        )
       }
-    }
 
-    const label =
-      name ||
-      (provider === 'apple' ? 'Apple Calendar' :
-       provider === 'google' ? 'Google Calendar' : 'Outlook Calendar')
-
-    const { error } = await supabaseAdmin
-      .from('calendar_connections')
-      .upsert({
-        practice_id: practice.id,
-        provider,
-        label,
-        caldav_username: provider === 'apple' ? email : null,
-        caldav_password: provider === 'apple' ? password : null,
+      const connectionData = {
+        practice_id: practiceId,
+        provider: 'apple',
+        label: name || `Apple Calendar (${email})`,
+        caldav_username: email,
+        caldav_password: password,
+        caldav_url: caldav_url || 'https://caldav.icloud.com',
+        connected_email: email,
         sync_enabled: true,
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'practice_id,provider',
-      })
-
-    if (error) {
-      console.error('calendar_connections upsert error:', error)
-      if (error.code === '42P01') {
-        return NextResponse.json({
-          error: 'Calendar connections table not set up yet. Please contact support.',
-        }, { status: 500 })
+        updated_at: new Date().toISOString()
       }
-      throw error
+
+      const { data, error } = await supabaseAdmin
+        .from('calendar_connections')
+        .upsert(
+          {
+            ...connectionData,
+            created_at: new Date().toISOString()
+          },
+          { onConflict: 'practice_id,provider' }
+        )
+        .select()
+        .single()
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 })
+      }
+
+      return NextResponse.json({ connection: data }, { status: 201 })
     }
 
-    return NextResponse.json({ success: true })
-  } catch (e: any) {
-    console.error('Calendar connect error:', e)
-    return NextResponse.json({ error: e.message || 'Internal server error' }, { status: 500 })
+    return NextResponse.json(
+      { error: `Provider ${provider} not supported in this endpoint` },
+      { status: 400 }
+    )
+  } catch (err) {
+    console.error('[calendar/connect POST]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+}
+
+interface DeleteRequestBody {
+  provider: 'apple' | 'google' | 'outlook'
 }
 
 export async function DELETE(req: NextRequest) {
   try {
-    const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const practiceId = await getPracticeId()
+    if (!practiceId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
 
-    const { provider } = await req.json()
-    await supabaseAdmin
+    const body: DeleteRequestBody = await req.json()
+    const { provider } = body
+
+    if (!provider) {
+      return NextResponse.json({ error: 'provider is required' }, { status: 400 })
+    }
+
+    const { error } = await supabaseAdmin
       .from('calendar_connections')
       .delete()
-      .eq('practice_id', practice.id)
+      .eq('practice_id', practiceId)
       .eq('provider', provider)
 
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
     return NextResponse.json({ success: true })
-  } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: 500 })
+  } catch (err) {
+    console.error('[calendar/connect DELETE]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
 }
