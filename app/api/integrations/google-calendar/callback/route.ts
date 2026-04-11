@@ -100,7 +100,7 @@ export async function GET(req: NextRequest) {
           practice_id: stateData.practiceId,
           provider: 'google',
           label: `Google Calendar (${userInfo.email})`,
-          access_token: tokens.access_token,k
+          access_token: tokens.access_token,
             
           refresh_token: tokens.refresh_token || null,
           token_expires_at: expiresAt,
