@@ -178,7 +178,7 @@ async function sendFillSMS(
     await client.messages.create({
       to: phone,
       from: process.env.TWILIO_PHONE_NUMBER,
-      body: `Hi ${name}, a ${sessionType} appointment just opened at ${practiceName} on ${slotFormatted}. Reply YES to claim it — you have 10 minutes. Reply STOP to opt out. Harbor AI`,
+      body: `Harbor Receptionist: Hi ${name}, a ${sessionType} appointment just opened at ${practiceName} on ${slotFormatted}. Reply YES to claim it — you have 10 minutes. Reply STOP to opt out. Harbor AI`,
     })
     console.log(`✓ Fill offer SMS sent to ${phone}`)
   } catch (smsErr) {
