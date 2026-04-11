@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
       hour: 'numeric', minute: '2-digit'
     })
 
-    const message = `Hi ${patient_name}, reminder: you have a ${session_type || 'therapy'} appointment at ${practiceData?.name} on ${timeFormatted}. Reply CONFIRM or CANCEL. For in-person visits, reply HERE when you arrive and we'll notify your therapist! — Harbor`
+    const message = `Harbor Receptionist: Hi ${patient_name}, reminder: you have a ${session_type || 'therapy'} appointment at ${practiceData?.name} on ${timeFormatted}. Reply CONFIRM or CANCEL. For in-person visits, reply HERE when you arrive and we'll notify your therapist! — Harbor`
 
     let twilio_sid = null
     if (process.env.TWILIO_ACCOUNT_SID && patient_phone) {
