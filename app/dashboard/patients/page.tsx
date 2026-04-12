@@ -162,6 +162,12 @@ export default function PatientsPage() {
     fetchPatients();
   }, [fetchPatients]);
 
+  // Auto-refresh every 2 minutes
+  useEffect(() => {
+    const interval = setInterval(fetchPatients, 120000);
+    return () => clearInterval(interval);
+  }, [fetchPatients]);
+
   return (
     <div className="max-w-5xl mx-auto p-6">
       <div className="flex items-center justify-between mb-6">

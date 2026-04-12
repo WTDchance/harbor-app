@@ -473,6 +473,12 @@ export default function IntakeDashboardPage() {
   useEffect(() => { fetchSubmissions() }, [fetchSubmissions])
   useEffect(() => { setPage(1) }, [statusFilter, search, fromDate, toDate])
 
+  // Auto-refresh every 2 minutes
+  useEffect(() => {
+    const interval = setInterval(fetchSubmissions, 120000)
+    return () => clearInterval(interval)
+  }, [fetchSubmissions])
+
   const completed = submissions.filter((s) => s.status === 'completed')
   const avgPhq9 = completed.length > 0 && completed.some((s) => s.phq9_score !== null)
     ? Math.round(completed.reduce((sum, s) => sum + (s.phq9_score ?? 0), 0) / completed.filter((s) => s.phq9_score !== null).length)

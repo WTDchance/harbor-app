@@ -41,35 +41,42 @@ export default function CrisisPage() {
   const [marking, setMarking] = useState<string | null>(null)
   const supabase = createClient()
 
+  const fetchAlerts = async (isInitial = false) => {
+    if (isInitial) setLoading(true)
+    // Get the logged-in user's practice
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) { setLoading(false); return }
+
+    // Find their practice via user record
+    const { data: userData } = await supabase
+      .from('users')
+      .select('practice_id')
+      .eq('id', user.id)
+      .single()
+
+    const practiceId = userData?.practice_id
+    if (!practiceId) { setLoading(false); return }
+
+    // Get crisis alerts
+    let query = supabase
+      .from('crisis_alerts')
+      .select('id, call_log_id, patient_phone, keywords_found, reviewed, reviewed_at, created_at, call_logs(summary, duration_seconds, transcript)')
+      .eq('practice_id', practiceId)
+      .order('created_at', { ascending: false })
+
+    const { data } = await query
+    setAlerts(data || [])
+    setLoading(false)
+  }
+
   useEffect(() => {
-    const fetchAlerts = async () => {
-      // Get the logged-in user's practice
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { setLoading(false); return }
+    fetchAlerts(true)
+  }, [supabase])
 
-      // Find their practice via user record
-      const { data: userData } = await supabase
-        .from('users')
-        .select('practice_id')
-        .eq('id', user.id)
-        .single()
-
-      const practiceId = userData?.practice_id
-      if (!practiceId) { setLoading(false); return }
-
-      // Get crisis alerts
-      let query = supabase
-        .from('crisis_alerts')
-        .select('id, call_log_id, patient_phone, keywords_found, reviewed, reviewed_at, created_at, call_logs(summary, duration_seconds, transcript)')
-        .eq('practice_id', practiceId)
-        .order('created_at', { ascending: false })
-
-      const { data } = await query
-      setAlerts(data || [])
-      setLoading(false)
-    }
-
-    fetchAlerts()
+  // Auto-refresh crisis alerts every 30 seconds (urgent data)
+  useEffect(() => {
+    const interval = setInterval(() => fetchAlerts(), 30000)
+    return () => clearInterval(interval)
   }, [supabase])
 
   const unreviewed = alerts.filter(a => !a.reviewed)

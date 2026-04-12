@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "fix: intake packets auto-resolve practice_id from patient record"
+git commit -m "feat: auto-refresh all dashboard pages - patients, intake, crisis (30s), appointments (2min)"
 echo.
 
 echo Pushing to GitHub (main)...

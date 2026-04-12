@@ -69,6 +69,12 @@ export default function AppointmentsPage() {
     fetchAppointments()
   }, [weekOffset])
 
+  // Auto-refresh every 2 minutes
+  useEffect(() => {
+    const interval = setInterval(fetchAppointments, 120000)
+    return () => clearInterval(interval)
+  }, [weekOffset])
+
   async function fetchAppointments() {
     setLoading(true)
     try {
