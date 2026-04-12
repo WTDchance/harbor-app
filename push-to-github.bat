@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "chore: sync local changes to match localhost"
+git commit -m "fix: repair intake resend route - typo, email params, practice branding"
 echo.
 
 echo Pushing to GitHub (main)...

@@ -7,7 +7,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import twilio from "twilio";
 import { sendEmail, buildIntakeEmail } from "@/lib/email";
 
-export async function POST(request: NextRequehst) {
+export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { intake_form_id, delivery_method } = body;
@@ -45,7 +45,7 @@ export async function POST(request: NextRequehst) {
     // Get practice info for the message
     const { data: practice } = await supabaseAdmin
       .from("practices")
-      .select("name, ai_name")
+      .select("name, ai_name, provider_name")
       .eq("id", form.practice_id)
       .single();
 
@@ -75,10 +75,10 @@ export async function POST(request: NextRequehst) {
         );
         const phone = form.patient_phone.startsWith("+")
           ? form.patient_phone
-          : `+1${form.patient_phone.replace(/\\D/g, "")}`;
+          : `+1${form.patient_phone.replace(/\D/g, "")}`;
 
         await client.messages.create({
-          body: `Harbor Receptionist: Hi ${firstName}! ${practiceName} has resent your intake forms. Please complete them when you get a chance: ${intakeUrl}`,
+          body: `${practiceName}: Hi ${firstName}! We've resent your intake forms. Please complete them when you get a chance: ${intakeUrl} — Reply STOP to opt out.`,
           from: process.env.TWILIO_PHONE_NUMBER!,
           to: phone,
         });
@@ -92,15 +92,18 @@ export async function POST(request: NextRequehst) {
     // Send via email
     if ((method === "email" || method === "both") && form.patient_email) {
       try {
-        const emailHtml = buildIntakeEmail({
-          firstName,
+        const { subject, html, from } = buildIntakeEmail({
           practiceName,
+          providerName: practice.provider_name || undefined,
+          patientName: firstName,
           intakeUrl,
         });
+
         await sendEmail({
           to: form.patient_email,
-          subject: `${practiceName} - Complete Your Intake Forms`,
-          html: emailHtml,
+          subject,
+          html,
+          from: `${practiceName} <${from}>`,
         });
         emailSent = true;
         console.log(`[Intake Resend] Email sent to ${form.patient_email}`);
@@ -117,6 +120,14 @@ export async function POST(request: NextRequehst) {
         },
         { status: 500 }
       );
+    }
+
+    // Reset status back to pending if it was completed (allows re-filling)
+    if (form.status === "completed") {
+      await supabaseAdmin
+        .from("intake_forms")
+        .update({ status: "pending", completed_at: null })
+        .eq("id", form.id);
     }
 
     return NextResponse.json({
