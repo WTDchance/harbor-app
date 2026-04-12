@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "fix: repair intake resend route - typo, email params, practice branding"
+git commit -m "fix: sidebar speed + intake default filter - use user.id for practice lookup, show all intake forms by default"
 echo.
 
 echo Pushing to GitHub (main)...

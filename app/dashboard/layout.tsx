@@ -133,7 +133,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           const { data: userRecord } = await supabase
             .from("users")
             .select("practice_id")
-            .eq("email", session.user.email)
+            .eq("id", session.user.id)
             .single();
 
           if (userRecord?.practice_id) {

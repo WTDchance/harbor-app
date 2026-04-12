@@ -438,7 +438,7 @@ export default function IntakeDashboardPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
-  const [statusFilter, setStatusFilter] = useState<'completed' | 'pending' | 'all'>('completed')
+  const [statusFilter, setStatusFilter] = useState<'completed' | 'pending' | 'all'>('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate, setToDate] = useState('')
   const [total, setTotal] = useState(0)
