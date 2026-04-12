@@ -74,6 +74,7 @@ export async function GET(
     .select(
       `id, patient_name, patient_email, patient_phone, patient_dob,
        phq9_score, phq9_severity, gad7_score, gad7_severity,
+       presenting_concerns, medications, medical_history, prior_therapy, substance_use, family_history,
        status, token, created_at, completed_at, expires_at, patient_id`
     )
     .eq("practice_id", practiceId)
@@ -91,6 +92,7 @@ export async function GET(
         .select(
           `id, patient_name, patient_email, patient_phone, patient_dob,
            phq9_score, phq9_severity, gad7_score, gad7_severity,
+           presenting_concerns, medications, medical_history, prior_therapy, substance_use, family_history,
            status, token, created_at, completed_at, expires_at`
         )
         .eq("practice_id", practiceId)
@@ -211,6 +213,12 @@ export async function GET(
       phq9_severity: f.phq9_severity,
       gad7_score: f.gad7_score,
       gad7_severity: f.gad7_severity,
+      presenting_concerns: f.presenting_concerns || null,
+      medications: f.medications || null,
+      medical_history: f.medical_history || null,
+      prior_therapy: f.prior_therapy || null,
+      substance_use: f.substance_use || null,
+      family_history: f.family_history || null,
       created_at: f.created_at,
       completed_at: f.completed_at,
     })),

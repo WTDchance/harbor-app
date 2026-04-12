@@ -33,7 +33,55 @@ const FREQUENCY_OPTIONS = [
   { value: 3, label: 'Nearly every day' }
 ]
 
-type Step = 'loading' | 'intro' | 'demographics' | 'insurance' | 'phq9' | 'gad7' | 'consent' | 'notes' | 'submitting' | 'done' | 'error'
+type Step = 'loading' | 'intro' | 'demographics' | 'insurance' | 'presenting_concerns' | 'medications' | 'medical_history' | 'prior_therapy' | 'substance_use' | 'family_history' | 'phq9' | 'gad7' | 'consent' | 'notes' | 'submitting' | 'done' | 'error'
+
+type IntakeConfig = Record<string, boolean>
+
+const DEFAULT_CONFIG: IntakeConfig = {
+  demographics: true, insurance: true, presenting_concerns: true,
+  medications: true, medical_history: true, prior_therapy: true,
+  substance_use: true, family_history: false, phq9: true, gad7: true,
+  consent: true, additional_notes: true,
+}
+
+type PresentingConcerns = {
+  primary_concern: string
+  goals: string
+  symptom_duration: string
+  coping_strategies: string
+  current_risk: string
+}
+
+type MedicationEntry = { name: string; dosage: string; prescriber: string; duration: string }
+
+type MedicalHistory = {
+  current_conditions: string
+  past_surgeries: string
+  allergies: string
+  primary_care_physician: string
+  pcp_phone: string
+}
+
+type PriorTherapy = {
+  has_prior: boolean | null
+  details: string
+  what_helped: string
+  what_didnt: string
+  hospitalization_history: string
+}
+
+type SubstanceUse = {
+  alcohol: string
+  tobacco: string
+  cannabis: string
+  other: string
+  concerns: string
+}
+
+type FamilyHistory = {
+  conditions: string
+  details: string
+}
 
 type IntakeDocument = {
   id: string
@@ -198,6 +246,26 @@ export default function IntakePage() {
   const [documentSignatures, setDocumentSignatures] = useState<Record<string, string | null>>({})
   const [mainSignature, setMainSignature] = useState<string | null>(null)
   const [signedName, setSignedName] = useState('')
+  const [config, setConfig] = useState<IntakeConfig>(DEFAULT_CONFIG)
+
+  // New section states
+  const [presentingConcerns, setPresentingConcerns] = useState<PresentingConcerns>({
+    primary_concern: '', goals: '', symptom_duration: '', coping_strategies: '', current_risk: ''
+  })
+  const [medications, setMedications] = useState<MedicationEntry[]>([])
+  const [noMedications, setNoMedications] = useState(false)
+  const [medicalHistory, setMedicalHistory] = useState<MedicalHistory>({
+    current_conditions: '', past_surgeries: '', allergies: '', primary_care_physician: '', pcp_phone: ''
+  })
+  const [priorTherapy, setPriorTherapy] = useState<PriorTherapy>({
+    has_prior: null, details: '', what_helped: '', what_didnt: '', hospitalization_history: ''
+  })
+  const [substanceUse, setSubstanceUse] = useState<SubstanceUse>({
+    alcohol: 'none', tobacco: 'none', cannabis: 'none', other: '', concerns: ''
+  })
+  const [familyHistory, setFamilyHistory] = useState<FamilyHistory>({
+    conditions: '', details: ''
+  })
 
   const [demographics, setDemographics] = useState<Demographics>({
     first_name: '', last_name: '', date_of_birth: '', phone: '', email: '',
@@ -231,6 +299,7 @@ export default function IntakePage() {
           if (data.patient_phone) setDemographics(d => ({ ...d, phone: data.patient_phone }))
           if (data.patient_email) setDemographics(d => ({ ...d, email: data.patient_email }))
           if (data.documents) setDocuments(data.documents)
+          if (data.intake_config) setConfig(prev => ({ ...prev, ...data.intake_config }))
           setStep('intro')
         } else if (data.status === 'completed') {
           setStep('done')
@@ -252,9 +321,43 @@ export default function IntakePage() {
   const allRequiredSigned = documents.filter(d => d.requires_signature).every(d => documentSignatures[d.id])
   const consentComplete = allDocsAcknowledged && allRequiredSigned && mainSignature && signedName
 
-  const steps: Step[] = ['intro', 'demographics', 'insurance', 'phq9', 'gad7', 'consent', 'notes']
+  // Build dynamic step order based on practice config
+  const steps: Step[] = ['intro']
+  if (config.demographics) steps.push('demographics')
+  if (config.insurance) steps.push('insurance')
+  if (config.presenting_concerns) steps.push('presenting_concerns')
+  if (config.medications) steps.push('medications')
+  if (config.medical_history) steps.push('medical_history')
+  if (config.prior_therapy) steps.push('prior_therapy')
+  if (config.substance_use) steps.push('substance_use')
+  if (config.family_history) steps.push('family_history')
+  if (config.phq9) steps.push('phq9')
+  if (config.gad7) steps.push('gad7')
+  if (config.consent && documents.length > 0) steps.push('consent')
+  if (config.additional_notes) steps.push('notes')
+
   const currentStepIndex = steps.indexOf(step)
   const totalSteps = steps.length - 1 // exclude intro
+
+  const nextStep = () => {
+    const idx = steps.indexOf(step)
+    if (idx < steps.length - 1) setStep(steps[idx + 1])
+  }
+  const prevStep = () => {
+    const idx = steps.indexOf(step)
+    if (idx > 0) setStep(steps[idx - 1])
+  }
+  const getNextLabel = (): string => {
+    const idx = steps.indexOf(step)
+    const next = steps[idx + 1]
+    const labels: Record<string, string> = {
+      demographics: 'Personal Info', insurance: 'Insurance', presenting_concerns: 'Therapy Goals',
+      medications: 'Medications', medical_history: 'Medical History', prior_therapy: 'Prior Treatment',
+      substance_use: 'Substance Use', family_history: 'Family History',
+      phq9: 'Depression Screening', gad7: 'Anxiety Screening', consent: 'Consent & Signatures', notes: 'Final Notes',
+    }
+    return labels[next] || 'Next'
+  }
 
   async function handleSubmit() {
     setStep('submitting')
@@ -264,11 +367,17 @@ export default function IntakePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           token,
-          phq9_answers: phq9Answers,
-          gad7_answers: gad7Answers,
+          phq9_answers: config.phq9 ? phq9Answers : null,
+          gad7_answers: config.gad7 ? gad7Answers : null,
           additional_notes: notes || null,
-          demographics,
-          insurance,
+          demographics: config.demographics ? demographics : null,
+          insurance: config.insurance ? insurance : null,
+          presenting_concerns: config.presenting_concerns ? presentingConcerns : null,
+          medications: config.medications ? (noMedications ? { none: true } : { list: medications }) : null,
+          medical_history: config.medical_history ? medicalHistory : null,
+          prior_therapy: config.prior_therapy ? priorTherapy : null,
+          substance_use: config.substance_use ? substanceUse : null,
+          family_history: config.family_history ? familyHistory : null,
           signature: mainSignature,
           signed_name: signedName,
           document_acknowledgments: documentAcks,
@@ -369,14 +478,15 @@ export default function IntakePage() {
             <div className="bg-teal-50 rounded-xl p-4 mb-6">
               <p className="text-teal-800 text-sm font-medium mb-2">You will complete:</p>
               <ul className="text-teal-700 text-sm space-y-1.5">
-                <li className="flex items-center gap-2"><span className="text-teal-500">📋</span> Personal information</li>
-                <li className="flex items-center gap-2"><span className="text-teal-500">🏥</span> Insurance details</li>
-                <li className="flex items-center gap-2"><span className="text-teal-500">📊</span> Mental health screenings (PHQ-9 &amp; GAD-7)</li>
-                {documents.length > 0 && (
-                  <li className="flex items-center gap-2"><span className="text-teal-500">📝</span> Consent forms &amp; e-signatures</li>
-                )}
+                {config.demographics && <li className="flex items-center gap-2"><span className="text-teal-500">📋</span> Personal information</li>}
+                {config.insurance && <li className="flex items-center gap-2"><span className="text-teal-500">🏥</span> Insurance details</li>}
+                {config.presenting_concerns && <li className="flex items-center gap-2"><span className="text-teal-500">💬</span> Reason for seeking therapy</li>}
+                {(config.medications || config.medical_history) && <li className="flex items-center gap-2"><span className="text-teal-500">💊</span> Medical &amp; medication history</li>}
+                {config.prior_therapy && <li className="flex items-center gap-2"><span className="text-teal-500">🧠</span> Prior mental health treatment</li>}
+                {(config.phq9 || config.gad7) && <li className="flex items-center gap-2"><span className="text-teal-500">📊</span> Mental health screenings</li>}
+                {documents.length > 0 && <li className="flex items-center gap-2"><span className="text-teal-500">📝</span> Consent forms &amp; e-signatures</li>}
               </ul>
-              <p className="text-teal-600 text-xs mt-3">Takes about 5–10 minutes</p>
+              <p className="text-teal-600 text-xs mt-3">Takes about {steps.length > 8 ? '10–15' : '5–10'} minutes</p>
             </div>
             <button
               onClick={() => setStep('demographics')}
@@ -521,14 +631,11 @@ export default function IntakePage() {
               </div>
             </div>
 
-            <button
-              onClick={() => setStep('insurance')}
-              disabled={!demographicsValid}
-              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition"
-            >
-              Next: Insurance →
+            <button onClick={nextStep} disabled={!demographicsValid}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
             </button>
-            <button onClick={() => setStep('intro')} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
           </div>
         )}
 
@@ -607,14 +714,293 @@ export default function IntakePage() {
               </div>
             )}
 
-            <button
-              onClick={() => setStep('phq9')}
+            <button onClick={nextStep}
               disabled={insurance.has_insurance === null || (insurance.has_insurance && !insurance.insurance_provider)}
-              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition"
-            >
-              Next: Mental Health Screening →
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
             </button>
-            <button onClick={() => setStep('demographics')} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+
+        {/* ─── Presenting Concerns ────────────────────────────── */}
+        {step === 'presenting_concerns' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Reason for Seeking Therapy</h2>
+            <p className="text-gray-500 text-sm mb-5">Help your therapist understand what brings you in</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">What are your primary concerns? *</label>
+                <textarea value={presentingConcerns.primary_concern} onChange={e => setPresentingConcerns(p => ({ ...p, primary_concern: e.target.value }))}
+                  rows={3} placeholder="e.g., I've been struggling with anxiety at work and difficulty sleeping..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">What are your goals for therapy?</label>
+                <textarea value={presentingConcerns.goals} onChange={e => setPresentingConcerns(p => ({ ...p, goals: e.target.value }))}
+                  rows={2} placeholder="e.g., Better manage my stress, improve relationships, develop coping strategies..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">How long have you been experiencing these concerns?</label>
+                <select value={presentingConcerns.symptom_duration} onChange={e => setPresentingConcerns(p => ({ ...p, symptom_duration: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 bg-white">
+                  <option value="">Select...</option>
+                  <option value="less_than_month">Less than a month</option>
+                  <option value="1_3_months">1–3 months</option>
+                  <option value="3_6_months">3–6 months</option>
+                  <option value="6_12_months">6–12 months</option>
+                  <option value="1_2_years">1–2 years</option>
+                  <option value="more_than_2_years">More than 2 years</option>
+                  <option value="lifelong">As long as I can remember</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">What coping strategies have you tried?</label>
+                <textarea value={presentingConcerns.coping_strategies} onChange={e => setPresentingConcerns(p => ({ ...p, coping_strategies: e.target.value }))}
+                  rows={2} placeholder="e.g., Exercise, meditation, talking to friends..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Are you currently experiencing thoughts of harming yourself or others?</label>
+                <select value={presentingConcerns.current_risk} onChange={e => setPresentingConcerns(p => ({ ...p, current_risk: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 bg-white">
+                  <option value="">Select...</option>
+                  <option value="no">No</option>
+                  <option value="passive">Sometimes I have passing thoughts but no plan or intent</option>
+                  <option value="yes">Yes — I would like to discuss this with my therapist</option>
+                </select>
+                {presentingConcerns.current_risk === 'yes' && (
+                  <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                    <p className="text-xs text-red-700 font-medium">If you are in immediate danger, please call 988 (Suicide & Crisis Lifeline) or 911.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+            <button onClick={nextStep} disabled={!presentingConcerns.primary_concern.trim()}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+
+        {/* ─── Medications ───────────────────────────────────── */}
+        {step === 'medications' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Current Medications</h2>
+            <p className="text-gray-500 text-sm mb-5">List any medications you are currently taking</p>
+
+            <label className="flex items-center gap-3 mb-4 cursor-pointer">
+              <input type="checkbox" checked={noMedications} onChange={e => { setNoMedications(e.target.checked); if (e.target.checked) setMedications([]) }}
+                className="h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500" />
+              <span className="text-sm text-gray-700">I am not currently taking any medications</span>
+            </label>
+
+            {!noMedications && (
+              <div className="space-y-3">
+                {medications.map((med, i) => (
+                  <div key={i} className="border border-gray-200 rounded-lg p-3 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-xs font-medium text-gray-500">Medication {i + 1}</span>
+                      <button onClick={() => setMedications(m => m.filter((_, j) => j !== i))} className="text-xs text-red-400 hover:text-red-600">Remove</button>
+                    </div>
+                    <input type="text" value={med.name} onChange={e => { const u = [...medications]; u[i] = { ...u[i], name: e.target.value }; setMedications(u) }}
+                      placeholder="Medication name" className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-400" />
+                    <div className="grid grid-cols-3 gap-2">
+                      <input type="text" value={med.dosage} onChange={e => { const u = [...medications]; u[i] = { ...u[i], dosage: e.target.value }; setMedications(u) }}
+                        placeholder="Dosage" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-400" />
+                      <input type="text" value={med.prescriber} onChange={e => { const u = [...medications]; u[i] = { ...u[i], prescriber: e.target.value }; setMedications(u) }}
+                        placeholder="Prescriber" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-400" />
+                      <input type="text" value={med.duration} onChange={e => { const u = [...medications]; u[i] = { ...u[i], duration: e.target.value }; setMedications(u) }}
+                        placeholder="How long?" className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-teal-400" />
+                    </div>
+                  </div>
+                ))}
+                <button onClick={() => setMedications(m => [...m, { name: '', dosage: '', prescriber: '', duration: '' }])}
+                  className="w-full py-2 border-2 border-dashed border-gray-200 rounded-lg text-sm text-gray-500 hover:border-teal-300 hover:text-teal-600 transition">
+                  + Add Medication
+                </button>
+              </div>
+            )}
+
+            <button onClick={nextStep}
+              disabled={!noMedications && medications.length === 0}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+
+        {/* ─── Medical History ────────────────────────────────── */}
+        {step === 'medical_history' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Medical History</h2>
+            <p className="text-gray-500 text-sm mb-5">This helps your therapist understand your overall health</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Current medical conditions</label>
+                <textarea value={medicalHistory.current_conditions} onChange={e => setMedicalHistory(h => ({ ...h, current_conditions: e.target.value }))}
+                  rows={2} placeholder="e.g., Diabetes, high blood pressure, thyroid condition, chronic pain..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Past surgeries or hospitalizations</label>
+                <textarea value={medicalHistory.past_surgeries} onChange={e => setMedicalHistory(h => ({ ...h, past_surgeries: e.target.value }))}
+                  rows={2} placeholder="e.g., Appendectomy 2019, none..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Allergies (medications, food, environmental)</label>
+                <input type="text" value={medicalHistory.allergies} onChange={e => setMedicalHistory(h => ({ ...h, allergies: e.target.value }))}
+                  placeholder="e.g., Penicillin, peanuts, none known"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Primary care physician</label>
+                  <input type="text" value={medicalHistory.primary_care_physician} onChange={e => setMedicalHistory(h => ({ ...h, primary_care_physician: e.target.value }))}
+                    placeholder="Dr. Name" className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">PCP phone number</label>
+                  <input type="tel" value={medicalHistory.pcp_phone} onChange={e => setMedicalHistory(h => ({ ...h, pcp_phone: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+                </div>
+              </div>
+            </div>
+            <button onClick={nextStep}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+
+        {/* ─── Prior Therapy ──────────────────────────────────── */}
+        {step === 'prior_therapy' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Prior Mental Health Treatment</h2>
+            <p className="text-gray-500 text-sm mb-5">Have you seen a therapist, psychiatrist, or counselor before?</p>
+
+            {priorTherapy.has_prior === null ? (
+              <div className="grid grid-cols-2 gap-3">
+                <button onClick={() => setPriorTherapy(p => ({ ...p, has_prior: true }))}
+                  className="py-4 border-2 border-gray-200 rounded-xl text-sm font-medium hover:border-teal-400 transition">Yes</button>
+                <button onClick={() => setPriorTherapy(p => ({ ...p, has_prior: false }))}
+                  className="py-4 border-2 border-gray-200 rounded-xl text-sm font-medium hover:border-teal-400 transition">No, this is my first time</button>
+              </div>
+            ) : priorTherapy.has_prior ? (
+              <div className="space-y-4">
+                <div className="flex justify-end"><button onClick={() => setPriorTherapy(p => ({ ...p, has_prior: null }))} className="text-xs text-gray-400 hover:text-gray-600">Change</button></div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Previous therapists/psychiatrists and approximate dates</label>
+                  <textarea value={priorTherapy.details} onChange={e => setPriorTherapy(p => ({ ...p, details: e.target.value }))}
+                    rows={2} placeholder="e.g., Dr. Smith, CBT, 2022-2023..."
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">What was helpful?</label>
+                  <textarea value={priorTherapy.what_helped} onChange={e => setPriorTherapy(p => ({ ...p, what_helped: e.target.value }))}
+                    rows={2} placeholder="e.g., Learning CBT techniques for managing anxiety..."
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">What wasn&apos;t helpful or reasons for leaving?</label>
+                  <textarea value={priorTherapy.what_didnt} onChange={e => setPriorTherapy(p => ({ ...p, what_didnt: e.target.value }))}
+                    rows={2} className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Any psychiatric hospitalizations?</label>
+                  <textarea value={priorTherapy.hospitalization_history} onChange={e => setPriorTherapy(p => ({ ...p, hospitalization_history: e.target.value }))}
+                    rows={1} placeholder="e.g., None, or describe briefly..."
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-4">
+                <p className="text-sm text-gray-600 mb-2">No prior mental health treatment noted.</p>
+                <button onClick={() => setPriorTherapy(p => ({ ...p, has_prior: null }))} className="text-xs text-teal-500">Change</button>
+              </div>
+            )}
+
+            <button onClick={nextStep} disabled={priorTherapy.has_prior === null}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+
+        {/* ─── Substance Use ──────────────────────────────────── */}
+        {step === 'substance_use' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Substance Use</h2>
+            <p className="text-gray-500 text-sm mb-5">This information is confidential and helps your therapist provide the best care</p>
+            <div className="space-y-4">
+              {[
+                { key: 'alcohol' as const, label: 'Alcohol use' },
+                { key: 'tobacco' as const, label: 'Tobacco/nicotine use' },
+                { key: 'cannabis' as const, label: 'Cannabis/marijuana use' },
+              ].map(({ key, label }) => (
+                <div key={key}>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+                  <select value={substanceUse[key]} onChange={e => setSubstanceUse(s => ({ ...s, [key]: e.target.value }))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 bg-white">
+                    <option value="none">None</option>
+                    <option value="rarely">Rarely (a few times a year)</option>
+                    <option value="occasionally">Occasionally (1–2 times a month)</option>
+                    <option value="weekly">Weekly</option>
+                    <option value="daily">Daily or almost daily</option>
+                  </select>
+                </div>
+              ))}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Other substances (if applicable)</label>
+                <input type="text" value={substanceUse.other} onChange={e => setSubstanceUse(s => ({ ...s, other: e.target.value }))}
+                  placeholder="e.g., prescription misuse, recreational drugs..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Any concerns about your substance use?</label>
+                <textarea value={substanceUse.concerns} onChange={e => setSubstanceUse(s => ({ ...s, concerns: e.target.value }))}
+                  rows={2} placeholder="Optional"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+            </div>
+            <button onClick={nextStep}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+
+        {/* ─── Family History ─────────────────────────────────── */}
+        {step === 'family_history' && (
+          <div className="bg-white rounded-2xl shadow p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">Family Mental Health History</h2>
+            <p className="text-gray-500 text-sm mb-5">Is there a history of mental health conditions in your immediate family?</p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Known conditions in family (check all that apply or describe)</label>
+                <textarea value={familyHistory.conditions} onChange={e => setFamilyHistory(f => ({ ...f, conditions: e.target.value }))}
+                  rows={2} placeholder="e.g., Depression (mother), Substance abuse (father), Anxiety (sibling), None known..."
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Any additional details?</label>
+                <textarea value={familyHistory.details} onChange={e => setFamilyHistory(f => ({ ...f, details: e.target.value }))}
+                  rows={2} placeholder="Optional"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400 resize-none" />
+              </div>
+            </div>
+            <button onClick={nextStep}
+              className="w-full mt-6 bg-teal-500 hover:bg-teal-600 text-white font-semibold py-3 rounded-xl transition">
+              Next: {getNextLabel()} →
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
           </div>
         )}
 
@@ -645,11 +1031,11 @@ export default function IntakePage() {
                 </div>
               ))}
             </div>
-            <button onClick={() => setStep('gad7')} disabled={!allPHQ9Answered}
+            <button onClick={nextStep} disabled={!allPHQ9Answered}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              Next: Anxiety Screening →
+              Next: {getNextLabel()} →
             </button>
-            <button onClick={() => setStep('insurance')} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
           </div>
         )}
 
@@ -680,11 +1066,11 @@ export default function IntakePage() {
                 </div>
               ))}
             </div>
-            <button onClick={() => setStep(documents.length > 0 ? 'consent' : 'notes')} disabled={!allGAD7Answered}
+            <button onClick={nextStep} disabled={!allGAD7Answered}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              {documents.length > 0 ? 'Next: Consent & Signatures →' : 'Almost done →'}
+              Next: {getNextLabel()} →
             </button>
-            <button onClick={() => setStep('phq9')} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
           </div>
         )}
 
@@ -748,11 +1134,11 @@ export default function IntakePage() {
               </div>
             </div>
 
-            <button onClick={() => setStep('notes')} disabled={!consentComplete}
+            <button onClick={nextStep} disabled={!consentComplete}
               className="w-full mt-6 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
               Almost done →
             </button>
-            <button onClick={() => setStep('gad7')} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
           </div>
         )}
 
@@ -783,7 +1169,7 @@ export default function IntakePage() {
               className="w-full mt-4 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
               Submit Intake Forms ✓
             </button>
-            <button onClick={() => setStep(documents.length > 0 ? 'consent' : 'gad7')} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
           </div>
         )}
       </div>

@@ -36,6 +36,12 @@ export async function POST(req: NextRequest) {
       additional_notes,
       demographics,
       insurance,
+      presenting_concerns,
+      medications,
+      medical_history,
+      prior_therapy,
+      substance_use,
+      family_history,
       signature,
       signed_name,
       document_acknowledgments,
@@ -93,6 +99,12 @@ export async function POST(req: NextRequest) {
         gad7_answers: gad7_answers || null,
         gad7_score: gad7Result?.score ?? null,
         gad7_severity: gad7Result?.severity ?? null,
+        presenting_concerns: presenting_concerns || null,
+        medications: medications || null,
+        medical_history: medical_history || null,
+        prior_therapy: prior_therapy || null,
+        substance_use: substance_use || null,
+        family_history: family_history || null,
         additional_notes: additional_notes || null,
         completed_at: new Date().toISOString()
       })
@@ -241,13 +253,15 @@ export async function GET(req: NextRequest) {
     if (!intake) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     let practiceName = ''
+    let intakeConfig: Record<string, boolean> | null = null
     if (intake.practice_id) {
       const { data: practice } = await supabase
         .from('practices')
-        .select('name, provider_name')
+        .select('name, provider_name, intake_config')
         .eq('id', intake.practice_id)
         .single()
       practiceName = practice?.provider_name || practice?.name || ''
+      intakeConfig = practice?.intake_config?.sections || null
     }
 
     let documents: Array<{
@@ -273,7 +287,8 @@ export async function GET(req: NextRequest) {
       practice_name: practiceName,
       questionnaire_type: intake.questionnaire_type,
       expires_at: intake.expires_at,
-      documents
+      documents,
+      intake_config: intakeConfig
     })
   } catch (error) {
     console.error('Intake GET error:', error)

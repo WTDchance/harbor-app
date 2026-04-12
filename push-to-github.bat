@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "feat: support tickets + contact/book-a-demo page with Cal.com embed"
+git commit -m "feat: expanded intake forms, patient chart clinical data, CalDAV validation, contact page, support tickets"
 echo.
 
 echo Pushing to GitHub (main)...

@@ -23,26 +23,81 @@ async function getPracticeId(): Promise<string | null> {
   return data?.practice_id || null
 }
 
+/**
+ * Validate CalDAV credentials by attempting a PROPFIND on iCloud.
+ * Returns calendar count on success, throws on failure.
+ */
+async function validateCalDAV(email: string, password: string): Promise<{ calendarCount: number }> {
+  const caldavUrl = 'https://caldav.icloud.com'
+  const principalUrl = `${caldavUrl}/${encodeURIComponent(email)}/calendars/`
+
+  // PROPFIND to discover calendars
+  const res = await fetch(principalUrl, {
+    method: 'PROPFIND',
+    headers: {
+      'Authorization': 'Basic ' + Buffer.from(`${email}:${password}`).toString('base64'),
+      'Content-Type': 'application/xml; charset=utf-8',
+      'Depth': '1',
+    },
+    body: `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:cs="http://calendarserver.org/ns/" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:displayname/>
+    <d:resourcetype/>
+    <cs:getctag/>
+  </d:prop>
+</d:propfind>`,
+  })
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error('Invalid credentials. Make sure you are using an app-specific password, not your Apple ID password.')
+  }
+
+  if (!res.ok && res.status !== 207) {
+    throw new Error(`CalDAV server returned status ${res.status}. Please try again.`)
+  }
+
+  // Parse the 207 multistatus response to count calendars
+  const xml = await res.text()
+  // Count <d:resourcetype> entries that contain <c:calendar/> or <cal:calendar/>
+  const calendarMatches = xml.match(/<[^>]*calendar[^/]*\/>/gi) || []
+  const calendarCount = Math.max(calendarMatches.length, 1) // at least 1 if we got 207
+
+  return { calendarCount }
+}
+
+// GET — return Apple Calendar connection status for the settings page
 export async function GET(req: NextRequest) {
   try {
     const practiceId = await getPracticeId()
     if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      return NextResponse.json({ connected: false, username: null })
     }
 
     const { data, error } = await supabaseAdmin
       .from('calendar_connections')
       .select('*')
       .eq('practice_id', practiceId)
+      .eq('provider', 'apple')
+      .maybeSingle()
 
     if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
+      console.error('[calendar/connect GET]', error)
+      return NextResponse.json({ connected: false, username: null })
     }
 
-    return NextResponse.json({ connections: data })
+    if (!data) {
+      return NextResponse.json({ connected: false, username: null })
+    }
+
+    return NextResponse.json({
+      connected: true,
+      username: data.connected_email || data.caldav_username,
+      calendarCount: data.calendar_count || null,
+    })
   } catch (err) {
     console.error('[calendar/connect GET]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ connected: false, username: null })
   }
 }
 
@@ -54,6 +109,7 @@ interface ConnectRequestBody {
   caldav_url?: string
 }
 
+// POST — connect Apple Calendar with CalDAV validation
 export async function POST(req: NextRequest) {
   try {
     const practiceId = await getPracticeId()
@@ -71,7 +127,19 @@ export async function POST(req: NextRequest) {
     if (provider === 'apple') {
       if (!email || !password) {
         return NextResponse.json(
-          { error: 'email and password required for Apple CalDAV' },
+          { error: 'Apple ID email and app-specific password are required.' },
+          { status: 400 }
+        )
+      }
+
+      // Validate credentials against iCloud CalDAV
+      let calendarCount = 0
+      try {
+        const result = await validateCalDAV(email, password)
+        calendarCount = result.calendarCount
+      } catch (err: any) {
+        return NextResponse.json(
+          { error: err.message || 'Failed to connect to iCloud calendar.' },
           { status: 400 }
         )
       }
@@ -84,6 +152,7 @@ export async function POST(req: NextRequest) {
         caldav_password: password,
         caldav_url: caldav_url || 'https://caldav.icloud.com',
         connected_email: email,
+        calendar_count: calendarCount,
         sync_enabled: true,
         updated_at: new Date().toISOString()
       }
@@ -101,10 +170,15 @@ export async function POST(req: NextRequest) {
         .single()
 
       if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 })
+        console.error('[calendar/connect POST] DB error:', error)
+        return NextResponse.json({ error: 'Failed to save connection. ' + error.message }, { status: 500 })
       }
 
-      return NextResponse.json({ connection: data }, { status: 201 })
+      return NextResponse.json({
+        connected: true,
+        username: email,
+        calendarCount,
+      }, { status: 201 })
     }
 
     return NextResponse.json(
@@ -121,6 +195,7 @@ interface DeleteRequestBody {
   provider: 'apple' | 'google' | 'outlook'
 }
 
+// DELETE — disconnect a calendar provider
 export async function DELETE(req: NextRequest) {
   try {
     const practiceId = await getPracticeId()

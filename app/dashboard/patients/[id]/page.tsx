@@ -45,6 +45,12 @@ type PatientData = {
     phq9_severity: string | null;
     gad7_score: number | null;
     gad7_severity: string | null;
+    presenting_concerns: any | null;
+    medications: any | null;
+    medical_history: any | null;
+    prior_therapy: any | null;
+    substance_use: any | null;
+    family_history: any | null;
     created_at: string;
     completed_at: string | null;
   }[];
@@ -951,6 +957,202 @@ export default function PatientDetailPage() {
           <p className="text-sm text-gray-500">No intake forms yet.</p>
         )}
       </div>
+
+      {/* Clinical Intake Data (from completed intake forms) */}
+      {(() => {
+        const completedForm = intake_forms.find(f => f.status === 'completed' && (
+          f.presenting_concerns || f.medications || f.medical_history ||
+          f.prior_therapy || f.substance_use || f.family_history
+        ));
+        if (!completedForm) return null;
+        return (
+          <div className="space-y-6">
+            {/* Presenting Concerns */}
+            {completedForm.presenting_concerns && (
+              <div className="bg-white border rounded-lg p-5 shadow-sm">
+                <h2 className="font-semibold text-gray-900 mb-3">Presenting Concerns</h2>
+                <div className="space-y-2 text-sm">
+                  {completedForm.presenting_concerns.primary_concern && (
+                    <div>
+                      <span className="text-gray-500">Primary Concern:</span>
+                      <p className="text-gray-800 mt-0.5">{completedForm.presenting_concerns.primary_concern}</p>
+                    </div>
+                  )}
+                  {completedForm.presenting_concerns.goals && (
+                    <div>
+                      <span className="text-gray-500">Goals for Therapy:</span>
+                      <p className="text-gray-800 mt-0.5">{completedForm.presenting_concerns.goals}</p>
+                    </div>
+                  )}
+                  {completedForm.presenting_concerns.symptom_duration && (
+                    <InfoRow label="Symptom Duration" value={completedForm.presenting_concerns.symptom_duration} />
+                  )}
+                  {completedForm.presenting_concerns.coping_strategies && (
+                    <div>
+                      <span className="text-gray-500">Current Coping Strategies:</span>
+                      <p className="text-gray-800 mt-0.5">{completedForm.presenting_concerns.coping_strategies}</p>
+                    </div>
+                  )}
+                  {completedForm.presenting_concerns.current_risk && completedForm.presenting_concerns.current_risk !== 'none' && (
+                    <div className="bg-amber-50 border border-amber-200 rounded p-2 mt-2">
+                      <span className="text-amber-800 font-medium">Risk Indicator: </span>
+                      <span className="text-amber-700 capitalize">{completedForm.presenting_concerns.current_risk}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Medications */}
+            {completedForm.medications && (
+              <div className="bg-white border rounded-lg p-5 shadow-sm">
+                <h2 className="font-semibold text-gray-900 mb-3">Medications</h2>
+                {completedForm.medications.none ? (
+                  <p className="text-sm text-gray-500">No current medications reported.</p>
+                ) : completedForm.medications.list && completedForm.medications.list.length > 0 ? (
+                  <div className="space-y-2">
+                    {completedForm.medications.list.map((med: any, i: number) => (
+                      <div key={i} className="flex items-start gap-3 text-sm border-b pb-2 last:border-0">
+                        <div className="flex-1">
+                          <span className="font-medium text-gray-800">{med.name || 'Unknown'}</span>
+                          {med.dosage && <span className="text-gray-500 ml-2">{med.dosage}</span>}
+                        </div>
+                        {med.prescriber && <span className="text-gray-400 text-xs">Rx: {med.prescriber}</span>}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No medication details provided.</p>
+                )}
+              </div>
+            )}
+
+            {/* Medical History & Prior Therapy — side by side */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {completedForm.medical_history && (
+                <div className="bg-white border rounded-lg p-5 shadow-sm">
+                  <h2 className="font-semibold text-gray-900 mb-3">Medical History</h2>
+                  <div className="space-y-2 text-sm">
+                    {completedForm.medical_history.conditions && (
+                      <div>
+                        <span className="text-gray-500">Current Conditions:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.medical_history.conditions}</p>
+                      </div>
+                    )}
+                    {completedForm.medical_history.surgeries && (
+                      <div>
+                        <span className="text-gray-500">Past Surgeries:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.medical_history.surgeries}</p>
+                      </div>
+                    )}
+                    {completedForm.medical_history.allergies && (
+                      <div>
+                        <span className="text-gray-500">Allergies:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.medical_history.allergies}</p>
+                      </div>
+                    )}
+                    {completedForm.medical_history.pcp_name && (
+                      <InfoRow label="Primary Care Provider" value={completedForm.medical_history.pcp_name} />
+                    )}
+                    {completedForm.medical_history.pcp_phone && (
+                      <InfoRow label="PCP Phone" value={completedForm.medical_history.pcp_phone} />
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {completedForm.prior_therapy && (
+                <div className="bg-white border rounded-lg p-5 shadow-sm">
+                  <h2 className="font-semibold text-gray-900 mb-3">Prior Therapy</h2>
+                  <div className="space-y-2 text-sm">
+                    <InfoRow label="Previous Therapy" value={completedForm.prior_therapy.has_prior ? 'Yes' : 'No'} />
+                    {completedForm.prior_therapy.details && (
+                      <div>
+                        <span className="text-gray-500">Details:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.prior_therapy.details}</p>
+                      </div>
+                    )}
+                    {completedForm.prior_therapy.what_helped && (
+                      <div>
+                        <span className="text-gray-500">What Helped:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.prior_therapy.what_helped}</p>
+                      </div>
+                    )}
+                    {completedForm.prior_therapy.what_didnt_help && (
+                      <div>
+                        <span className="text-gray-500">What Didn&apos;t Help:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.prior_therapy.what_didnt_help}</p>
+                      </div>
+                    )}
+                    {completedForm.prior_therapy.hospitalization && (
+                      <div className="bg-amber-50 border border-amber-200 rounded p-2 mt-1">
+                        <span className="text-amber-800 font-medium">Hospitalization History: </span>
+                        <span className="text-amber-700">{completedForm.prior_therapy.hospitalization_details || 'Yes'}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Substance Use & Family History — side by side */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {completedForm.substance_use && (
+                <div className="bg-white border rounded-lg p-5 shadow-sm">
+                  <h2 className="font-semibold text-gray-900 mb-3">Substance Use</h2>
+                  <div className="divide-y text-sm">
+                    {completedForm.substance_use.alcohol && (
+                      <InfoRow label="Alcohol" value={completedForm.substance_use.alcohol} />
+                    )}
+                    {completedForm.substance_use.tobacco && (
+                      <InfoRow label="Tobacco" value={completedForm.substance_use.tobacco} />
+                    )}
+                    {completedForm.substance_use.cannabis && (
+                      <InfoRow label="Cannabis" value={completedForm.substance_use.cannabis} />
+                    )}
+                    {completedForm.substance_use.other_substances && (
+                      <div className="py-1.5">
+                        <span className="text-gray-500">Other Substances:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.substance_use.other_substances}</p>
+                      </div>
+                    )}
+                    {completedForm.substance_use.concerns && (
+                      <div className="py-1.5">
+                        <span className="text-gray-500">Concerns:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.substance_use.concerns}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {completedForm.family_history && (
+                <div className="bg-white border rounded-lg p-5 shadow-sm">
+                  <h2 className="font-semibold text-gray-900 mb-3">Family Mental Health History</h2>
+                  <div className="space-y-2 text-sm">
+                    {completedForm.family_history.conditions && completedForm.family_history.conditions.length > 0 && (
+                      <div>
+                        <span className="text-gray-500">Conditions in Family:</span>
+                        <div className="flex flex-wrap gap-1.5 mt-1">
+                          {completedForm.family_history.conditions.map((c: string, i: number) => (
+                            <span key={i} className="bg-gray-100 text-gray-700 px-2 py-0.5 rounded text-xs">{c}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {completedForm.family_history.details && (
+                      <div>
+                        <span className="text-gray-500">Additional Details:</span>
+                        <p className="text-gray-800 mt-0.5">{completedForm.family_history.details}</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Outcome trend (if data exists) */}
       {outcome_trend.length > 1 && (

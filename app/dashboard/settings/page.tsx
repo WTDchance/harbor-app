@@ -57,6 +57,24 @@ export default function SettingsPage() {
   const [appleCalForm, setAppleCalForm] = useState({ appleId: '', appPassword: '' })
   const [showAppleCalForm, setShowAppleCalForm] = useState(false)
 
+  // Intake config state
+  const [intakeConfig, setIntakeConfig] = useState<Record<string, boolean>>({
+    demographics: true,
+    insurance: true,
+    presenting_concerns: true,
+    medications: true,
+    medical_history: true,
+    prior_therapy: true,
+    substance_use: true,
+    family_history: false,
+    phq9: true,
+    gad7: true,
+    consent: true,
+    additional_notes: true,
+  })
+  const [intakeSaving, setIntakeSaving] = useState(false)
+  const [intakeSaved, setIntakeSaved] = useState(false)
+
   // Calendar Subscription state
   const [calToken, setCalToken] = useState<string | null>(null)
   const [calFeedUrl, setCalFeedUrl] = useState<string | null>(null)
@@ -75,7 +93,7 @@ export default function SettingsPage() {
       const { data: userRecord } = await supabase
         .from('users')
         .select('practice_id')
-        .eq('email', user.email)
+        .eq('id', user.id)
         .single()
 
       if (!userRecord?.practice_id) {
@@ -104,6 +122,9 @@ export default function SettingsPage() {
         setDailyRecapEnabled(p.daily_recap_enabled !== false)
         setDailyRecapTime(p.daily_recap_time || '19:00')
         setDailyRecapMethod(p.daily_recap_method || 'email')
+        if (p.intake_config?.sections) {
+          setIntakeConfig(prev => ({ ...prev, ...p.intake_config.sections }))
+        }
       }
       setLoading(false)
     }
@@ -213,6 +234,23 @@ export default function SettingsPage() {
     if (res.ok) {
       setSchedulingSaved(true)
       setTimeout(() => setSchedulingSaved(false), 3000)
+    }
+  }
+
+  const handleIntakeConfigSave = async () => {
+    if (!practice) return
+    setIntakeSaving(true)
+    const res = await fetch(`/api/practices/${practice.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        intake_config: { sections: intakeConfig },
+      }),
+    })
+    setIntakeSaving(false)
+    if (res.ok) {
+      setIntakeSaved(true)
+      setTimeout(() => setIntakeSaved(false), 3000)
     }
   }
 
@@ -520,6 +558,62 @@ export default function SettingsPage() {
             className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving...' : saved ? '\u2713 Saved' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+
+      {/* Intake Form Configuration */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Intake Form Sections</h2>
+          <p className="text-xs text-gray-400 mt-1">Choose which sections patients see when they fill out intake paperwork</p>
+        </div>
+        <div className="p-5 space-y-3">
+          {[
+            { key: 'demographics', label: 'Demographics', desc: 'Name, DOB, address, phone, email, emergency contact, pronouns', locked: true },
+            { key: 'insurance', label: 'Insurance Information', desc: 'Provider, policy number, group number, subscriber details' },
+            { key: 'presenting_concerns', label: 'Reason for Seeking Therapy', desc: 'Primary concerns, goals for therapy, symptom timeline, previous coping strategies' },
+            { key: 'medications', label: 'Current Medications', desc: 'Medication list with dosage, prescriber, and how long taking each' },
+            { key: 'medical_history', label: 'Medical History', desc: 'Current conditions, past surgeries/hospitalizations, allergies, primary care physician' },
+            { key: 'prior_therapy', label: 'Prior Mental Health Treatment', desc: 'Previous therapists/psychiatrists, treatment types, what helped or didn\'t' },
+            { key: 'substance_use', label: 'Substance Use Screening', desc: 'Alcohol, tobacco, cannabis, other substance use frequency and concerns' },
+            { key: 'family_history', label: 'Family Mental Health History', desc: 'Mental health conditions in immediate family members' },
+            { key: 'phq9', label: 'PHQ-9 (Depression Screening)', desc: '9-item standardized depression questionnaire with severity scoring' },
+            { key: 'gad7', label: 'GAD-7 (Anxiety Screening)', desc: '7-item standardized anxiety questionnaire with severity scoring' },
+            { key: 'consent', label: 'Consent & Signatures', desc: 'Document acknowledgment, e-signatures, and treatment consent', locked: true },
+            { key: 'additional_notes', label: 'Additional Notes', desc: 'Open text field for anything else the patient wants to share' },
+          ].map(({ key, label, desc, locked }) => (
+            <div key={key} className="flex items-start gap-3 py-2">
+              <button
+                onClick={() => {
+                  if (locked) return
+                  setIntakeConfig(prev => ({ ...prev, [key]: !prev[key] }))
+                }}
+                className={`relative mt-0.5 w-10 h-5 rounded-full transition-colors shrink-0 ${
+                  locked ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'
+                } ${intakeConfig[key] ? 'bg-teal-600' : 'bg-gray-300'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                  intakeConfig[key] ? 'translate-x-5' : ''
+                }`} />
+              </button>
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-gray-900">
+                  {label}
+                  {locked && <span className="text-xs text-gray-400 ml-2">(always on)</span>}
+                </p>
+                <p className="text-xs text-gray-500">{desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="p-5 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={handleIntakeConfigSave}
+            disabled={intakeSaving}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+          >
+            {intakeSaving ? 'Saving...' : intakeSaved ? '\u2713 Saved' : 'Save Intake Settings'}
           </button>
         </div>
       </div>
