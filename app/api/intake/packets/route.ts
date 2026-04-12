@@ -19,9 +19,23 @@ const DEFAULT_PACKET_ITEMS = [
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { patient_id, practice_id, call_log_id, items } = body
-    if (!patient_id || !practice_id) {
-      return NextResponse.json({ error: 'patient_id and practice_id required' }, { status: 400 })
+    const { patient_id, call_log_id, items } = body
+    let { practice_id } = body
+    if (!patient_id) {
+      return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
+    }
+
+    // Auto-resolve practice_id from patient if not provided
+    if (!practice_id) {
+      const { data: patient } = await supabaseAdmin
+        .from('patients')
+        .select('practice_id')
+        .eq('id', patient_id)
+        .single()
+      if (!patient?.practice_id) {
+        return NextResponse.json({ error: 'Could not resolve practice for this patient' }, { status: 404 })
+      }
+      practice_id = patient.practice_id
     }
 
     const { data: packet, error: packetErr } = await supabaseAdmin

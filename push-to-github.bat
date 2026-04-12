@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "fix: sidebar speed + intake default filter - use user.id for practice lookup, show all intake forms by default"
+git commit -m "fix: intake packets auto-resolve practice_id from patient record"
 echo.
 
 echo Pushing to GitHub (main)...
