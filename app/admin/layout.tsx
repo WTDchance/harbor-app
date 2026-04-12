@@ -13,6 +13,7 @@ import {
   BarChart3,
   ArrowLeftRight,
   UserPlus,
+  LifeBuoy,
 } from 'lucide-react'
 
 const navItems = [
@@ -21,6 +22,7 @@ const navItems = [
   { href: '/admin/signups', label: 'Signups', icon: UserPlus },
   { href: '/admin/practices', label: 'All Practices', icon: Users },
   { href: '/admin/provision', label: 'Add Therapist', icon: PlusCircle },
+  { href: '/admin/support', label: 'Support Tickets', icon: LifeBuoy },
   { href: '/admin/activity', label: 'Activity Feed', icon: Activity },
 ]
 

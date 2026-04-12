@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "feat: auto-refresh all dashboard pages - patients, intake, crisis (30s), appointments (2min)"
+git commit -m "feat: support ticket system - report problems + admin tracker"
 echo.
 
 echo Pushing to GitHub (main)...

@@ -99,6 +99,18 @@ const NAV = [
     ),
   },
   {
+    href: "/dashboard/support",
+    label: "Support",
+    exact: false,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M6.5 6.5a2.5 2.5 0 014.5 1.5c0 1.5-2.5 2-2.5 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <circle cx="9" cy="13" r="0.75" fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
     href: "/dashboard/settings",
     label: "Settings",
     exact: false,
