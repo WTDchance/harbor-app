@@ -62,6 +62,7 @@ export default function LandingPage() {
         <div className="flex items-center gap-6">
           <a href="#how-it-works" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">How It Works</a>
           <a href="#pricing" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">Pricing</a>
+          <Link href="/contact" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">Book a Demo</Link>
           <Link href="/login" className="text-sm text-gray-600 hover:text-gray-900">Log in</Link>
           <Link href="/signup" className="text-white px-5 py-2 rounded-lg text-sm font-semibold transition-all hover:shadow-lg" style={{ backgroundColor: '#1f375d' }}>
             Get Started
@@ -328,6 +329,22 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Book a Demo */}
+      <section id="demo" className="px-6 py-20 bg-gray-50">
+        <div className="max-w-2xl mx-auto text-center">
+          <h2 className="text-3xl font-bold mb-4" style={{ color: '#1f375d' }}>See Harbor in action</h2>
+          <p className="text-gray-500 text-lg mb-8">Book a quick 15-minute walkthrough. We&apos;ll show you exactly how Ellie handles calls, screens patients, and sends you summaries.</p>
+          <Link
+            href="/contact"
+            className="inline-block text-white font-bold px-8 py-4 rounded-xl text-lg hover:shadow-xl hover:scale-[1.02] transition-all"
+            style={{ backgroundColor: '#52bfc0' }}
+          >
+            Book a Demo Call
+          </Link>
+          <p className="text-gray-400 text-sm mt-4">Or email us at <a href="mailto:hello@harborreceptionist.com" className="underline hover:text-gray-600">hello@harborreceptionist.com</a></p>
+        </div>
+      </section>
+
       {/* CTA band */}
       <section className="px-6 py-16 text-white text-center" style={{ background: 'linear-gradient(135deg, #1f375d 0%, #3e85af 100%)' }}>
         <div className="max-w-2xl mx-auto">
@@ -350,6 +367,7 @@ export default function LandingPage() {
               <p className="text-xs text-gray-400 mt-1">AI receptionist for therapy practices</p>
             </div>
             <div className="flex gap-6 text-sm text-gray-500">
+              <Link href="/contact" className="hover:text-gray-900">Book a Demo</Link>
               <Link href="/login" className="hover:text-gray-900">Log in</Link>
               <Link href="/signup" className="hover:text-gray-900">Get Started</Link>
             </div>

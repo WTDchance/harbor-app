@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "feat: support ticket system - report problems + admin tracker"
+git commit -m "feat: support tickets + contact/book-a-demo page with Cal.com embed"
 echo.
 
 echo Pushing to GitHub (main)...
