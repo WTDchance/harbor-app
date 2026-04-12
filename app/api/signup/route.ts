@@ -263,6 +263,26 @@ export async function POST(req: NextRequest) {
       console.error('User record creation failed (non-fatal):', userError)
     }
 
+    // --- LOCAL DEV BYPASS: skip Stripe entirely on localhost ---
+    if (APP_URL.includes('localhost')) {
+      // Mark practice as active immediately
+      await supabaseAdmin
+        .from('practices')
+        .update({ status: 'active', subscription_status: 'dev_bypass' })
+        .eq('id', practice.id)
+
+      console.log(`[DEV] Signup created (Stripe bypassed): ${practice_name} (${practice.id})`)
+
+      return NextResponse.json({
+        success: true,
+        practice_id: practice.id,
+        founding_member: isFounding,
+        comped: false,
+        checkout_url: `${APP_URL}/dashboard`,
+        session_id: 'dev_bypass',
+      })
+    }
+
     // --- 5. Create (or reuse) Stripe customer ---
     const customer = await stripe.customers.create({
       email: normalizedEmail,

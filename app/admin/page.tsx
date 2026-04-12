@@ -62,7 +62,7 @@ export default function AdminOverview() {
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Harbor Admin</h1>
+          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2"><Link href="/" className="hover:opacity-80 transition-opacity"><img src="/harbor-logo.svg" alt="Harbor" className="h-8" /></Link> Admin</h1>
           <p className="text-gray-500 mt-1">Overview of all practices</p>
         </div>
         <Link

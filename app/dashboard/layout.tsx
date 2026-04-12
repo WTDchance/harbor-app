@@ -198,20 +198,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Logo + Practice Name */}
         <Link
           href="/dashboard"
-          className="flex items-center gap-3 px-5 py-5 border-b border-gray-100 hover:bg-gray-50 transition-colors"
+          className="flex flex-col items-center gap-2 px-3 py-4 border-b border-gray-100 hover:bg-gray-50/80 transition-colors"
+          style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)' }}
           onClick={() => setMobileOpen(false)}
         >
-          <div className="w-9 h-9 rounded-xl bg-teal-600 flex items-center justify-center shrink-0 shadow-sm">
-            <svg width="18" height="18" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M14 3C8 3 3 8 3 14s5 11 11 11 11-5 11-11S20 3 14 3z" fill="white" fillOpacity="0.2" />
-              <path d="M14 6c-4.4 0-8 3.6-8 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 10c-2.7 0-5-1.3-6.4-3.4.6-1.2 2-2 3.4-2 .3 0 .6.1.9.2.6.3 1.3.5 2.1.5s1.5-.2 2.1-.5c.3-.1.6-.2.9-.2 1.4 0 2.8.8 3.4 2C19 17.7 16.7 19 14 19z" fill="white" />
-            </svg>
+          <div className="flex items-center gap-2.5">
+            <img src="/harbor-icon-clean.png" alt="" className="h-10 w-auto" />
+            <span className="text-xl font-bold tracking-wider" style={{ color: '#1f375d' }}>HARBOR</span>
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-bold text-gray-900 leading-tight truncate">
+          <div className="text-center min-w-0 w-full">
+            <p className="text-sm font-bold leading-tight truncate" style={{ color: '#1f375d' }}>
               {practiceName || "Harbor"}
             </p>
-            <p className="text-xs text-teal-600 leading-tight font-medium">Practice Dashboard</p>
+            <p className="text-xs leading-tight font-medium" style={{ color: '#52bfc0' }}>Practice Dashboard</p>
           </div>
         </Link>
 
@@ -227,17 +226,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 className={`
                   flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
                   ${active
-                    ? "bg-teal-50 text-teal-700"
+                    ? "text-white shadow-sm"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
                   }
                 `}
+                style={active ? { backgroundColor: '#1f375d' } : undefined}
               >
-                <span className={active ? "text-teal-600" : "text-gray-400"}>
+                <span className={active ? "text-white/80" : "text-gray-400"}>
                   {item.icon}
                 </span>
                 {item.label}
                 {active && (
-                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-teal-500" />
+                  <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#52bfc0' }} />
                 )}
               </Link>
             );
@@ -247,8 +247,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* User footer */}
         <div className="px-3 py-4 border-t border-gray-100">
           <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
-            <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center shrink-0">
-              <span className="text-xs font-semibold text-teal-700">{initials}</span>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#1f375d' }}>
+              <span className="text-xs font-semibold text-white">{initials}</span>
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-xs text-gray-500 truncate">{userEmail}</p>
@@ -278,8 +278,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
+          <img src="/harbor-icon-clean.png" alt="Harbor" className="h-7 w-auto" />
           <span className="text-sm font-semibold text-gray-900">
-            {practiceName || "Harbor"}
+            {practiceName || ""}
           </span>
         </div>
 

@@ -205,12 +205,9 @@ export default function SignupPage() {
     <div className="min-h-screen bg-slate-900">
       <div className="border-b border-slate-800">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
-              <Phone className="w-4 h-4 text-white" />
-            </div>
-            <span className="text-white font-bold text-xl">Harbor</span>
-          </div>
+          <a href="/" className="hover:opacity-80 transition-opacity">
+            <img src="/harbor-logo.svg" alt="Harbor" className="h-12" />
+          </a>
           <div className="flex items-center gap-6 text-sm text-slate-400">
             <span className="flex items-center gap-1"><Shield className="w-3 h-3" /> HIPAA Ready</span>
             <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> 5 min setup</span>

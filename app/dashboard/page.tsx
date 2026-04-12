@@ -141,7 +141,7 @@ export default function DashboardHome() {
         }
     })();
 
-    loadStats();
+    loadStats(true);
   }, []);
 
   // Auto-refresh call logs every 2 minutes
@@ -152,24 +152,12 @@ export default function DashboardHome() {
     return () => clearInterval(interval)
   }, [])
 
-  async function loadStats() {
-    setLoading(true);
+  async function loadStats(isInitial = false) {
+    if (isInitial) setLoading(true);
     try {
       const today = new Date();
       const startOfDay = new Date(today.setHours(0, 0, 0, 0)).toISOString();
       const endOfDay = new Date(today.setHours(23, 59, 59, 999)).toISOString();
-
-      // Fetch user's practice_id for direct Supabase queries
-      const { data: { user } } = await supabase.auth.getUser();
-      let practiceId: string | null = null;
-      if (user) {
-        const { data: userRecord } = await supabase
-          .from("users")
-          .select("practice_id")
-          .eq("id", user.id)
-          .single();
-        practiceId = userRecord?.practice_id ?? null;
-      }
 
       const [patientsRes, intakeRes, appointmentsRes, pendingRes] = await Promise.all([
         apiFetch("/api/patients"),
@@ -243,7 +231,7 @@ export default function DashboardHome() {
       {/* Header */}
       <div className="bg-white border-b border-gray-100 px-6 py-5">
         <div className="max-w-6xl mx-auto">
-          <h1 className="text-xl font-bold text-gray-900">
+          <h1 className="text-xl font-bold" style={{ color: '#1f375d' }}>
             {greeting}{greetingName ? `, ${greetingName}` : ""}
           </h1>
           <p className="text-sm text-gray-400 mt-0.5">
@@ -353,7 +341,7 @@ export default function DashboardHome() {
                 {s.icon}
               </div>
               <p className={`text-3xl font-bold ${s.color}`}>{s.value}</p>
-              <p className="text-sm font-medium text-gray-700 mt-1">{s.label}</p>
+              <p className="text-sm font-medium mt-1" style={{ color: '#1f375d' }}>{s.label}</p>
               <p className="text-xs text-gray-400 mt-0.5">{s.sub}</p>
             </Link>
           ))}
@@ -364,7 +352,7 @@ export default function DashboardHome() {
           {/* Upcoming appointments */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-              <h2 className="text-sm font-semibold text-gray-900">Today's Schedule</h2>
+              <h2 className="text-sm font-semibold" style={{ color: '#1f375d' }}>Today's Schedule</h2>
               <Link href="/dashboard/appointments" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
                 View all →
               </Link>
@@ -411,7 +399,7 @@ export default function DashboardHome() {
           {/* Recent intake submissions */}
           <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-              <h2 className="text-sm font-semibold text-gray-900">Recent Intakes</h2>
+              <h2 className="text-sm font-semibold" style={{ color: '#1f375d' }}>Recent Intakes</h2>
               <Link href="/dashboard/intake" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
                 View all →
               </Link>
@@ -467,7 +455,7 @@ export default function DashboardHome() {
         {/* Recent Calls */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-50">
-            <h2 className="text-sm font-semibold text-gray-900">Recent Calls</h2>
+            <h2 className="text-sm font-semibold" style={{ color: '#1f375d' }}>Recent Calls</h2>
             <Link href="/dashboard/calls" className="text-xs text-teal-600 hover:text-teal-700 font-medium">
               View all →
             </Link>

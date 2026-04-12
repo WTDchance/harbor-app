@@ -16,6 +16,8 @@ const TIMEZONES = [
 
 type GCalStatus = { connected: boolean; email: string | null } | null
 type AppleCalStatus = { connected: boolean; username: string | null; calendarCount?: number } | null
+type SchedulingMode = 'harbor_driven' | 'notification'
+type RecapMethod = 'email' | 'sms' | 'both'
 
 export default function SettingsPage() {
   const [practice, setPractice] = useState<any>(null)
@@ -31,6 +33,14 @@ export default function SettingsPage() {
     insurance_accepted: '',
     notification_emails: '',
   })
+
+  // Scheduling mode state
+  const [schedulingMode, setSchedulingMode] = useState<SchedulingMode>('notification')
+  const [dailyRecapEnabled, setDailyRecapEnabled] = useState(true)
+  const [dailyRecapTime, setDailyRecapTime] = useState('19:00')
+  const [dailyRecapMethod, setDailyRecapMethod] = useState<RecapMethod>('email')
+  const [schedulingSaving, setSchedulingSaving] = useState(false)
+  const [schedulingSaved, setSchedulingSaved] = useState(false)
 
   // Google Calendar state
   const [gcal, setGcal] = useState<GCalStatus>(null)
@@ -90,6 +100,10 @@ export default function SettingsPage() {
           insurance_accepted: (p.insurance_accepted || []).join(', '),
           notification_emails: (p.notification_emails || []).join(', '),
         })
+        setSchedulingMode(p.scheduling_mode || 'notification')
+        setDailyRecapEnabled(p.daily_recap_enabled !== false)
+        setDailyRecapTime(p.daily_recap_time || '19:00')
+        setDailyRecapMethod(p.daily_recap_method || 'email')
       }
       setLoading(false)
     }
@@ -182,6 +196,26 @@ export default function SettingsPage() {
     }
   }
 
+  const handleSchedulingSave = async () => {
+    if (!practice) return
+    setSchedulingSaving(true)
+    const res = await fetch(`/api/practices/${practice.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scheduling_mode: schedulingMode,
+        daily_recap_enabled: dailyRecapEnabled,
+        daily_recap_time: dailyRecapTime,
+        daily_recap_method: dailyRecapMethod,
+      }),
+    })
+    setSchedulingSaving(false)
+    if (res.ok) {
+      setSchedulingSaved(true)
+      setTimeout(() => setSchedulingSaved(false), 3000)
+    }
+  }
+
   const disconnectGcal = async () => {
     setGcalDisconnecting(true)
     try {
@@ -208,8 +242,8 @@ export default function SettingsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: 'apple',
-          caldav_username: appleCalForm.appleId,
-          caldav_password: appleCalForm.appPassword,
+          email: appleCalForm.appleId,
+          password: appleCalForm.appPassword,
         }),
       })
       const data = await res.json()
@@ -229,7 +263,11 @@ export default function SettingsPage() {
   const disconnectAppleCal = async () => {
     setAppleCalDisconnecting(true)
     try {
-      const res = await fetch('/api/calendar/connect', { method: 'DELETE' })
+      const res = await fetch('/api/calendar/connect', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'apple' }),
+      })
       if (res.ok) {
         setAppleCal({ connected: false, username: null })
       }
@@ -287,6 +325,118 @@ export default function SettingsPage() {
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Practice Settings</h1>
         <p className="text-gray-500 mt-1">Changes sync to {practice?.ai_name || 'your AI receptionist'} automatically</p>
+      </div>
+
+      {/* Scheduling Mode */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Scheduling Mode</h2>
+          <p className="text-xs text-gray-400 mt-1">How should {practice?.ai_name || 'your receptionist'} handle appointment changes?</p>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="grid grid-cols-1 gap-3">
+            <label
+              className={`relative flex items-start gap-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                schedulingMode === 'harbor_driven'
+                  ? 'border-teal-500 bg-teal-50'
+                  : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="scheduling_mode"
+                value="harbor_driven"
+                checked={schedulingMode === 'harbor_driven'}
+                onChange={() => setSchedulingMode('harbor_driven')}
+                className="mt-1 text-teal-600 focus:ring-teal-500"
+              />
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Harbor Drives the Schedule</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {practice?.ai_name || 'Your receptionist'} books and reschedules appointments directly.
+                  You&apos;ll get a daily recap of all changes. Best for practices that want full automation.
+                </p>
+              </div>
+            </label>
+            <label
+              className={`relative flex items-start gap-4 p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                schedulingMode === 'notification'
+                  ? 'border-teal-500 bg-teal-50'
+                  : 'border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              <input
+                type="radio"
+                name="scheduling_mode"
+                value="notification"
+                checked={schedulingMode === 'notification'}
+                onChange={() => setSchedulingMode('notification')}
+                className="mt-1 text-teal-600 focus:ring-teal-500"
+              />
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Notify Me First</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {practice?.ai_name || 'Your receptionist'} collects the request and sends you a notification to confirm.
+                  Changes revert if not confirmed within 2 hours. Best for practices that want final say.
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {/* Daily Recap Settings */}
+          <div className="border-t border-gray-100 pt-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-sm font-medium text-gray-900">Daily Schedule Recap</p>
+                <p className="text-xs text-gray-500">Get a summary of all schedule changes and tomorrow&apos;s appointments</p>
+              </div>
+              <button
+                onClick={() => setDailyRecapEnabled(!dailyRecapEnabled)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${
+                  dailyRecapEnabled ? 'bg-teal-600' : 'bg-gray-300'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                  dailyRecapEnabled ? 'translate-x-5' : ''
+                }`} />
+              </button>
+            </div>
+            {dailyRecapEnabled && (
+              <div className="flex items-center gap-4 ml-0">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Send at</label>
+                  <input
+                    type="time"
+                    value={dailyRecapTime}
+                    onChange={e => setDailyRecapTime(e.target.value)}
+                    className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Send via</label>
+                  <select
+                    value={dailyRecapMethod}
+                    onChange={e => setDailyRecapMethod(e.target.value as RecapMethod)}
+                    className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  >
+                    <option value="email">Email</option>
+                    <option value="sms">Text Message</option>
+                    <option value="both">Both</option>
+                  </select>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="p-5 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={handleSchedulingSave}
+            disabled={schedulingSaving}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+          >
+            {schedulingSaving ? 'Saving...' : schedulingSaved ? '\u2713 Saved' : 'Save Scheduling Settings'}
+          </button>
+        </div>
       </div>
 
       {/* Practice Info */}
@@ -374,11 +524,11 @@ export default function SettingsPage() {
         </div>
       </div>
 
-                {/* Calendar Subscription */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-1">Calendar Subscription</h2>
-            <p className="text-sm text-gray-500 mb-4">
-              Sync your Harbor appointments to your personal calendar app.
+                {/* Calendar Sync — THE primary calendar solution */}
+          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+            <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Sync to Your Calendar</h2>
+            <p className="text-sm text-gray-500 mt-1 mb-4">
+              Add Harbor appointments to your existing calendar. Works with Apple Calendar, Google Calendar, and Outlook — one click, no passwords needed.
             </p>
 
             {calLoading ? (
@@ -421,11 +571,11 @@ export default function SettingsPage() {
                 </button>
               </div>
             )}
-          </div>  {/* Integrations */}
+          </div>  {/* Advanced Calendar Integrations */}
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-5 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Calendar Integrations</h2>
-          <p className="text-xs text-gray-400 mt-1">Connect a calendar so your AI receptionist can check availability and book appointments</p>
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Advanced: Direct Calendar Access</h2>
+          <p className="text-xs text-gray-400 mt-1">Optional — connect directly so {practice?.ai_name || 'your receptionist'} can check your availability before booking</p>
         </div>
         <div className="p-5 space-y-5">
 

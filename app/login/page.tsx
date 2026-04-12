@@ -5,6 +5,7 @@
 
 import { useState, useEffect, FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
 
 const supabase = createClient();
@@ -80,13 +81,9 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo / wordmark */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-teal-600 mb-4 shadow-lg">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M14 3C8 3 3 8 3 14s5 11 11 11 11-5 11-11S20 3 14 3z" fill="white" fillOpacity="0.2" />
-              <path d="M14 6c-4.4 0-8 3.6-8 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm0 3c1.1 0 2 .9 2 2s-.9 2-2 2-2-.9-2-2 .9-2 2-2zm0 10c-2.7 0-5-1.3-6.4-3.4.6-1.2 2-2 3.4-2 .3 0 .6.1.9.2.6.3 1.3.5 2.1.5s1.5-.2 2.1-.5c.3-.1.6-.2.9-.2 1.4 0 2.8.8 3.4 2C19 17.7 16.7 19 14 19z" fill="white" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">Harbor</h1>
+          <Link href="/" className="inline-flex flex-col items-center gap-0 hover:opacity-80 transition-opacity">
+            <img src="/harbor-logo.svg" alt="Harbor" className="h-16 mb-4" />
+          </Link>
           <p className="text-sm text-gray-500 mt-1">AI Receptionist for Therapy Practices</p>
         </div>
 

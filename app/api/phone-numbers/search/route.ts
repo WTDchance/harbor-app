@@ -1,19 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
-import { createClient } from '@/lib/supabase-server'
 
 export async function POST(req: NextRequest) {
   try {
-    // Auth check
-    const supabase = await createClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (!user || authError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    // No auth required — this is a read-only Twilio search used during signup
+    // before the user has an account
 
     // Parse request body
     const { area_code, city, state, zip_code } = await req.json()
@@ -73,7 +64,7 @@ export async function POST(req: NextRequest) {
       postalCode: num.postalCode,
     }))
 
-    console.log(`[Phone Numbers Search] User ${user.id} found ${results.length} available numbers`, {
+    console.log(`[Phone Numbers Search] Found ${results.length} available numbers`, {
       searchParams: { area_code, city, state, zip_code },
     })
 

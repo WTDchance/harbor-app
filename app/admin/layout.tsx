@@ -38,15 +38,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* Admin sidebar — slate/dark tone to differentiate from therapist view */}
       <aside className="w-64 bg-slate-900 text-white min-h-screen flex flex-col">
         <div className="p-6 border-b border-slate-700">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-teal-500 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">H</span>
-            </div>
+          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+            <img src="/harbor-logo.svg" alt="Harbor" className="h-10" />
             <div>
-              <h1 className="text-lg font-bold leading-none">Harbor</h1>
               <p className="text-xs text-slate-400 mt-0.5">Admin Console</p>
             </div>
-          </div>
+          </Link>
         </div>
 
         <nav className="flex-1 px-4 py-6">
