@@ -378,6 +378,7 @@ export default function LandingPage() {
               <Link href="/privacy-policy" className="hover:text-gray-900">Privacy Policy</Link>
               <Link href="/sms" className="hover:text-gray-900">SMS Terms</Link>
               <Link href="/terms" className="hover:text-gray-900">Terms of Service</Link>
+              <Link href="/hipaa" className="hover:text-gray-900">HIPAA</Link>
             </div>
           </div>
         </div>

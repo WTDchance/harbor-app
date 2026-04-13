@@ -1,13 +1,13 @@
 @echo off
 echo ========================================
-echo   Harbor - Push Health Check Fix
+echo   Harbor - Push HIPAA Page + Footer Link
 echo ========================================
 echo.
 
 cd /d E:\Harbor\harbor-app
 
 git add -A
-git commit -m "fix: health check now hits homepage instead of 404 auth/session endpoint"
+git commit -m "feat: add HIPAA compliance page and footer link"
 git push origin main
 
 echo.
