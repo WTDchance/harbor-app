@@ -62,6 +62,7 @@ export default function LandingPage() {
         <div className="flex items-center gap-6">
           <a href="#how-it-works" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">How It Works</a>
           <a href="#pricing" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">Pricing</a>
+          <Link href="/blog" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">Blog</Link>
           <Link href="/contact" className="text-sm text-gray-500 hover:text-gray-900 hidden sm:block">Book a Demo</Link>
           <Link href="/login" className="text-sm text-gray-600 hover:text-gray-900">Log in</Link>
           <Link href="/signup" className="text-white px-5 py-2 rounded-lg text-sm font-semibold transition-all hover:shadow-lg" style={{ backgroundColor: '#1f375d' }}>

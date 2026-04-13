@@ -1,13 +1,13 @@
 @echo off
 echo ========================================
-echo   Harbor - Push HIPAA Page + Footer Link
+echo   Harbor - Push Blog + HIPAA Page
 echo ========================================
 echo.
 
 cd /d E:\Harbor\harbor-app
 
 git add -A
-git commit -m "feat: add HIPAA compliance page and footer link"
+git commit -m "feat: add blog system with markdown posts, HIPAA compliance page, and nav/footer updates"
 git push origin main
 
 echo.
