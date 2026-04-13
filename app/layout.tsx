@@ -1,4 +1,6 @@
 import type { Metadata } from 'next'
+import { Suspense } from 'react'
+import { PostHogProvider } from '@/components/PostHogProvider'
 import './globals.css'
 
 const siteUrl = 'https://harborreceptionist.com'
@@ -6,11 +8,11 @@ const siteUrl = 'https://harborreceptionist.com'
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'Harbor — AI Receptionist for Therapy Practices',
+    default: 'Harbor â AI Receptionist for Therapy Practices',
     template: '%s | Harbor Receptionist',
   },
   description:
-    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
+    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries â starting at $197/mo.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
     icon: '/favicon.ico',
@@ -26,7 +28,7 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: siteUrl,
     siteName: 'Harbor Receptionist',
-    title: 'Harbor — AI Receptionist for Therapy Practices',
+    title: 'Harbor â AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
     images: [
@@ -34,13 +36,13 @@ export const metadata: Metadata = {
         url: '/og-image.svg',
         width: 1200,
         height: 630,
-        alt: 'Harbor AI Receptionist — Never miss a patient call again',
+        alt: 'Harbor AI Receptionist â Never miss a patient call again',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Harbor — AI Receptionist for Therapy Practices',
+    title: 'Harbor â AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
     images: ['/og-image.svg'],
@@ -70,7 +72,7 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
         <link rel="icon" type="image/png" href="/favicon.ico" />
 
-        {/* Google Tag Manager — replace GTM-XXXXXXX with your container ID */}
+        {/* Google Tag Manager â replace GTM-XXXXXXX with your container ID */}
         {process.env.NEXT_PUBLIC_GTM_ID && (
           <script
             dangerouslySetInnerHTML={{
@@ -83,7 +85,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
           />
         )}
 
-        {/* Microsoft Clarity — replace CLARITY_ID with your project ID */}
+        {/* Microsoft Clarity â replace CLARITY_ID with your project ID */}
         {process.env.NEXT_PUBLIC_CLARITY_ID && (
           <script
             dangerouslySetInnerHTML={{
@@ -108,7 +110,11 @@ y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
             />
           </noscript>
         )}
-        {children}
+        <Suspense fallback={null}>
+          <PostHogProvider>
+            {children}
+          </PostHogProvider>
+        </Suspense>
         <script
           dangerouslySetInnerHTML={{
             __html: `
