@@ -8,6 +8,7 @@
 import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import { Check, Loader2, Phone, ArrowRight } from 'lucide-react'
+import posthog from 'posthog-js'
 
 interface StatusResponse {
   status?: string
@@ -87,6 +88,19 @@ function SignupSuccessContent() {
   }
 
   const ready = !!data?.ready
+
+  // Track signup completion in PostHog
+  useEffect(() => {
+    if (ready && data) {
+      posthog.capture('signup_completed', {
+        practice_name: data.practice_name,
+        ai_name: data.ai_name,
+        founding_member: data.founding_member,
+        phone_number: data.phone_number,
+      })
+    }
+  }, [ready, data])
+
   const prettyPhone = formatPhoneForDisplay(data?.phone_number)
 
   return (
