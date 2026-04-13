@@ -1,39 +1,15 @@
 @echo off
 echo ========================================
-echo   Harbor - Push Local Changes to GitHub
+echo   Harbor - Push Conflict Fix to GitHub
 echo ========================================
-echo.
-
-echo Setting up git...
-git config --global --add safe.directory E:/Harbor/harbor-app
-git config --global user.email "chancewonser@gmail.com"
-git config --global user.name "WTDchance"
 echo.
 
 cd /d E:\Harbor\harbor-app
 
-echo Checking git status...
-git status --short
-echo.
-
-echo Pulling latest from GitHub first...
-git pull origin main
-echo.
-
-echo Adding all changes...
 git add -A
-echo.
-
-echo Committing...
-git commit -m "feat: uptime monitoring dashboard with health check APIs and SMS alerting"
-echo.
-
-echo Pushing to GitHub (main)...
+git commit -m "fix: resolve merge conflict markers in health route"
 git push origin main
-echo.
 
-echo ========================================
-echo   DONE! Check Railway for green deploy.
-echo ========================================
 echo.
+echo DONE!
 pause

@@ -1,11 +1,6 @@
 // Admin Health Check API
-<<<<<<< HEAD
-// GET /api/admin/health — runs live checks on all services
-// POST /api/admin/health — runs checks + stores results + triggers alerts if needed
-=======
-// GET /api/admin/health â runs live checks on all services
-// POST /api/admin/health â runs checks + stores results + triggers alerts if needed
->>>>>>> 7b5802070d970226728064b28eaf3b02bf52e91a
+// GET /api/admin/health - runs live checks on all services
+// POST /api/admin/health - runs checks + stores results + triggers alerts if needed
 // Requires admin role
 
 import { NextRequest, NextResponse } from 'next/server'
@@ -221,11 +216,7 @@ async function sendDowntimeAlert(results: CheckResult[]) {
   }
 }
 
-<<<<<<< HEAD
-// GET — live check, no storage (for dashboard refresh)
-=======
-// GET â live check, no storage (for dashboard refresh)
->>>>>>> 7b5802070d970226728064b28eaf3b02bf52e91a
+// GET - live check, no storage (for dashboard refresh)
 export async function GET(req: NextRequest) {
   // Optional: allow cron/internal calls with secret
   const secret = req.nextUrl.searchParams.get('secret')
@@ -266,11 +257,7 @@ export async function GET(req: NextRequest) {
   })
 }
 
-<<<<<<< HEAD
-// POST — run checks + store results + alert
-=======
-// POST â run checks + store results + alert
->>>>>>> 7b5802070d970226728064b28eaf3b02bf52e91a
+// POST - run checks + store results + alert
 export async function POST(req: NextRequest) {
   const secret = req.nextUrl.searchParams.get('secret')
   const isCron = secret === process.env.HEALTH_CHECK_SECRET
