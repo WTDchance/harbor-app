@@ -2,9 +2,12 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "SMS Messaging Program | Harbor Receptionist",
+  title: "SMS Terms",
   description:
-    "Harbor Receptionist SMS appointment confirmation, reminder, and intake program details, opt-in, opt-out, and message frequency.",
+    "SMS messaging program terms, opt-in, opt-out, message types, frequency, and how to manage your preferences.",
+  alternates: {
+    canonical: "https://harborreceptionist.com/sms",
+  },
 };
 
 export default function SmsProgramPage() {

@@ -42,18 +42,65 @@ export default function LandingPage() {
   const foundingDollars = Math.floor((fc?.price_cents ?? 19700) / 100)
   const regularDollars = Math.floor((fc?.regular_price_cents ?? 39700) / 100)
 
+  const claimed = cap - remaining
   const spotsCopy = remaining <= 0
     ? 'All founding spots claimed'
     : remaining === 1
       ? '1 founding spot left'
-      : `${remaining} of ${cap} founding spots left`
+      : claimed >= 3
+        ? `Only ${remaining} founding spots remaining`
+        : 'Limited founding spots available'
 
   const heroSub = isFoundingAvailable
     ? `$${foundingDollars}/month founding (reg. $${regularDollars}) · ${spotsCopy} · Setup in 5 minutes`
     : `$${regularDollars}/month · Setup in 5 minutes · Founding spots have sold out`
 
+  const schemaOrg = {
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'Organization',
+        name: 'Harbor Receptionist',
+        url: 'https://harborreceptionist.com',
+        logo: 'https://harborreceptionist.com/harbor-logo.svg',
+        description: 'AI receptionist built for therapy practices. Answers calls 24/7, screens patients, sends summaries.',
+        contactPoint: {
+          '@type': 'ContactPoint',
+          email: 'support@harborreceptionist.com',
+          contactType: 'customer service',
+        },
+      },
+      {
+        '@type': 'SoftwareApplication',
+        name: 'Harbor AI Receptionist',
+        applicationCategory: 'HealthApplication',
+        operatingSystem: 'Web',
+        offers: {
+          '@type': 'Offer',
+          price: isFoundingAvailable ? foundingDollars : regularDollars,
+          priceCurrency: 'USD',
+          priceValidUntil: '2027-01-01',
+        },
+        description: 'AI receptionist for therapy practices. Answers every call, screens new patients, detects crises, and sends full call summaries.',
+      },
+      {
+        '@type': 'FAQPage',
+        mainEntity: [
+          { '@type': 'Question', name: 'How long does setup take?', acceptedAnswer: { '@type': 'Answer', text: 'Under 5 minutes. Fill out your practice details, and Ellie is live before you finish your coffee.' } },
+          { '@type': 'Question', name: 'Will patients know they are talking to an AI?', acceptedAnswer: { '@type': 'Answer', text: 'Yes. Ellie is warm and human-sounding, but she is transparent that she is an AI assistant. Most patients appreciate the quick response.' } },
+          { '@type': 'Question', name: 'What happens during a crisis call?', acceptedAnswer: { '@type': 'Answer', text: 'Ellie provides the 988 Suicide and Crisis Lifeline, encourages the caller to seek immediate help, and sends you an urgent SMS alert in real time.' } },
+          { '@type': 'Question', name: 'Is this HIPAA compliant?', acceptedAnswer: { '@type': 'Answer', text: 'Yes. Harbor is HIPAA compliant. We encrypt all data in transit and at rest, enforce row-level security for practice isolation, and execute a Business Associate Agreement (BAA) with every practice.' } },
+        ],
+      },
+    ],
+  }
+
   return (
     <div className="min-h-screen bg-white">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(schemaOrg) }}
+      />
       {/* Nav — clean with logo */}
       <nav className="bg-white border-b border-gray-100 px-6 py-4 flex items-center justify-between sticky top-0 z-50">
         <Link href="/" className="hover:opacity-80 transition-opacity">
@@ -163,7 +210,7 @@ export default function LandingPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             {[
               { stat: '67%', text: "of callers don't leave voicemails when they reach one" },
-              { stat: '1st', text: 'practice to answer gets the new patient \u2013 not the best fit' },
+              { stat: '391%', text: 'higher conversion when you respond in under 1 minute vs. 30+ minutes' },
               { stat: '24/7', text: 'people seek help outside business hours, and you miss them' },
             ].map(({ stat, text }) => (
               <div key={stat} className="bg-white rounded-2xl p-6 border border-gray-200 text-center hover:shadow-md transition-shadow">
@@ -211,8 +258,8 @@ export default function LandingPage() {
               { icon: '\uD83E\uDDE0', title: 'Mental Health Screening', desc: 'PHQ-2 and GAD-2 scores captured live on every call. Full PHQ-9 and GAD-7 intake assessments sent automatically.' },
               { icon: '\uD83D\uDCF1', title: 'Smart Waitlist Filling', desc: 'When an appointment cancels, Ellie texts the next patient automatically. They have 10 minutes to claim the slot.' },
               { icon: '\uD83D\uDCCB', title: 'Post-Call Summaries', desc: 'Every call generates a full transcript, AI summary, and action items delivered to your inbox.' },
-              { icon: '\u2699\uFE0F', title: 'Real-Time Updates', desc: 'Change your hours, specialties, or availability in your settings dashboard \u2013 Ellie updates instantly.' },
-              { icon: '\uD83D\uDD12', title: 'HIPAA-Conscious Design', desc: 'Built with HIPAA-conscious architecture. Your patient data stays yours. Always.' },
+              { icon: '\uD83D\uDCCA', title: 'Insurance Verification', desc: 'Ellie asks about insurance during intake calls and logs it to your dashboard \u2013 saving you 30\u201345 minutes per new patient.' },
+              { icon: '\uD83D\uDD12', title: 'HIPAA Compliant', desc: 'End-to-end encryption, row-level data isolation, and a signed BAA with every practice. Your patient data stays yours.' },
             ].map(({ icon, title, desc }) => (
               <div key={title} className="bg-white rounded-2xl p-5 border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all group">
                 <div className="text-3xl mb-3">{icon}</div>
@@ -250,7 +297,7 @@ export default function LandingPage() {
                 \uD83C\uDFAF Founding Practice Offer &ndash; {spotsCopy}
               </p>
               <p className="text-orange-600 text-sm mt-1">
-                Lock in ${foundingDollars}/mo forever &ndash; only {cap} spots available. Price never increases.
+                Lock in ${foundingDollars}/mo forever. Price never increases.
               </p>
             </div>
           ) : (
@@ -309,8 +356,79 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* FAQ */}
+      {/* Cost Comparison */}
       <section className="px-6 py-20 bg-white">
+        <div className="max-w-4xl mx-auto">
+          <div className="text-center mb-12">
+            <h2 className="text-3xl font-bold mb-4" style={{ color: '#1f375d' }}>How Harbor compares</h2>
+            <p className="text-gray-500 text-lg">The same coverage as a full-time hire at a fraction of the cost.</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[
+              {
+                title: 'Part-Time Receptionist',
+                price: '$2,500+/mo',
+                items: [
+                  { label: '24/7 coverage', included: false },
+                  { label: 'Crisis detection', included: false },
+                  { label: 'Mental health screening', included: false },
+                  { label: 'Instant call summaries', included: false },
+                  { label: 'Never calls in sick', included: false },
+                ],
+                highlight: false,
+              },
+              {
+                title: 'Harbor AI',
+                price: `$${isFoundingAvailable ? foundingDollars : regularDollars}/mo`,
+                items: [
+                  { label: '24/7 coverage', included: true },
+                  { label: 'Crisis detection', included: true },
+                  { label: 'Mental health screening', included: true },
+                  { label: 'Instant call summaries', included: true },
+                  { label: 'Never calls in sick', included: true },
+                ],
+                highlight: true,
+              },
+              {
+                title: 'Answering Service',
+                price: '$200\u2013500/mo',
+                items: [
+                  { label: '24/7 coverage', included: true },
+                  { label: 'Crisis detection', included: false },
+                  { label: 'Mental health screening', included: false },
+                  { label: 'Instant call summaries', included: false },
+                  { label: 'Never calls in sick', included: true },
+                ],
+                highlight: false,
+              },
+            ].map(({ title, price, items, highlight }) => (
+              <div
+                key={title}
+                className={`rounded-2xl p-6 ${highlight ? 'ring-2 shadow-lg bg-white' : 'bg-gray-50 border border-gray-200'}`}
+                style={highlight ? { ringColor: '#52bfc0' } : {}}
+              >
+                <h3 className="font-semibold text-lg mb-1" style={{ color: '#1f375d' }}>{title}</h3>
+                <p className="text-2xl font-bold mb-5" style={{ color: highlight ? '#52bfc0' : '#1f375d' }}>{price}</p>
+                <ul className="space-y-3">
+                  {items.map(({ label, included }) => (
+                    <li key={label} className="flex items-center gap-2 text-sm">
+                      {included ? (
+                        <span className="font-bold" style={{ color: '#52bfc0' }}>{'\u2713'}</span>
+                      ) : (
+                        <span className="text-red-400 font-bold">{'\u2717'}</span>
+                      )}
+                      <span className={included ? 'text-gray-700' : 'text-gray-400'}>{label}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="px-6 py-20 bg-gray-50">
         <div className="max-w-2xl mx-auto">
           <h2 className="text-3xl font-bold text-center mb-10" style={{ color: '#1f375d' }}>Frequently asked questions</h2>
           <div className="space-y-6">
@@ -319,7 +437,7 @@ export default function LandingPage() {
               { q: "Will patients know they're talking to an AI?", a: "Yes. Ellie is warm and human-sounding, but she's transparent that she's an AI assistant. Most patients appreciate the quick response." },
               { q: 'What happens during a crisis call?', a: 'Ellie provides the 988 Suicide & Crisis Lifeline, encourages the caller to seek immediate help, and sends you an urgent SMS alert \u2013 all in real time.' },
               { q: 'Can I customize what Ellie says?', a: 'Yes. Your settings dashboard lets you update hours, specialties, location, and more. Every change syncs to Ellie instantly.' },
-              { q: 'Is this HIPAA compliant?', a: 'Harbor is built with HIPAA-conscious practices. We recommend consulting your own compliance counsel and establishing a BAA as appropriate for your practice.' },
+              { q: 'Is this HIPAA compliant?', a: 'Yes. Harbor is HIPAA compliant. We encrypt all data in transit and at rest, enforce row-level security for practice isolation, and execute a Business Associate Agreement (BAA) with every practice. Learn more on our HIPAA Compliance page.' },
             ].map(({ q, a }) => (
               <div key={q} className="border-b border-gray-100 pb-6">
                 <h3 className="font-semibold mb-2" style={{ color: '#1f375d' }}>{q}</h3>
