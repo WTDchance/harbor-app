@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import Image from 'next/image'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 
 interface FoundingCount {
   used: number
@@ -54,6 +54,72 @@ export default function LandingPage() {
   const heroSub = isFoundingAvailable
     ? `$${foundingDollars}/month founding (reg. $${regularDollars}) · ${spotsCopy} · Setup in 5 minutes`
     : `$${regularDollars}/month · Setup in 5 minutes · Founding spots have sold out`
+
+  // ── Missed-call calculator & email capture ──
+  const [missedCalls, setMissedCalls] = useState(3)
+  const [calcEmail, setCalcEmail] = useState('')
+  const [calcSubmitted, setCalcSubmitted] = useState(false)
+  const [calcLoading, setCalcLoading] = useState(false)
+
+  const avgNewPatientValue = 2400 // avg annual value of a therapy patient
+  const bookingRate = 0.6 // 60% of answered calls book
+  const annualLoss = Math.round(missedCalls * 52 * bookingRate * avgNewPatientValue)
+  const monthlyLoss = Math.round(annualLoss / 12)
+
+  const handleCalcSubmit = async () => {
+    if (!calcEmail.trim() || !/^\S+@\S+\.\S+$/.test(calcEmail)) return
+    setCalcLoading(true)
+    try {
+      await fetch('/api/leads/capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: calcEmail.trim().toLowerCase(),
+          source: 'missed_call_calculator',
+          missed_calls_per_week: missedCalls,
+          estimated_annual_loss: annualLoss,
+        }),
+      })
+      setCalcSubmitted(true)
+    } catch { /* fail silently */ }
+    setCalcLoading(false)
+  }
+
+  // ── Exit-intent popup ──
+  const [showExitPopup, setShowExitPopup] = useState(false)
+  const [exitEmail, setExitEmail] = useState('')
+  const [exitSubmitted, setExitSubmitted] = useState(false)
+  const [exitLoading, setExitLoading] = useState(false)
+  const exitShownRef = useRef(false)
+
+  useEffect(() => {
+    const handleMouseLeave = (e: MouseEvent) => {
+      if (e.clientY <= 0 && !exitShownRef.current && !calcSubmitted) {
+        exitShownRef.current = true
+        setShowExitPopup(true)
+      }
+    }
+    document.addEventListener('mouseleave', handleMouseLeave)
+    return () => document.removeEventListener('mouseleave', handleMouseLeave)
+  }, [calcSubmitted])
+
+  const handleExitSubmit = async () => {
+    if (!exitEmail.trim() || !/^\S+@\S+\.\S+$/.test(exitEmail)) return
+    setExitLoading(true)
+    try {
+      await fetch('/api/leads/capture', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: exitEmail.trim().toLowerCase(),
+          source: 'exit_intent',
+        }),
+      })
+      setExitSubmitted(true)
+      setTimeout(() => setShowExitPopup(false), 2000)
+    } catch { /* fail silently */ }
+    setExitLoading(false)
+  }
 
   const schemaOrg = {
     '@context': 'https://schema.org',
@@ -427,6 +493,79 @@ export default function LandingPage() {
         </div>
       </section>
 
+      {/* Missed Call Calculator */}
+      <section className="px-6 py-20" style={{ background: 'linear-gradient(135deg, #1f375d 0%, #3e85af 100%)' }}>
+        <div className="max-w-2xl mx-auto text-center">
+          <h2 className="text-3xl font-bold text-white mb-3">What are missed calls costing you?</h2>
+          <p className="text-white/70 mb-10">Most therapy practices miss 3–5 calls per week. Here{'\u2019'}s what that means in lost revenue.</p>
+
+          <div className="bg-white/10 backdrop-blur rounded-2xl p-8 border border-white/20">
+            <label className="block text-white/80 text-sm mb-3">How many calls do you miss per week?</label>
+            <div className="flex items-center justify-center gap-4 mb-6">
+              <button
+                onClick={() => setMissedCalls(Math.max(1, missedCalls - 1))}
+                className="w-10 h-10 rounded-full bg-white/20 text-white text-xl font-bold hover:bg-white/30 transition-colors"
+              >&minus;</button>
+              <span className="text-5xl font-bold text-white w-16 text-center">{missedCalls}</span>
+              <button
+                onClick={() => setMissedCalls(Math.min(20, missedCalls + 1))}
+                className="w-10 h-10 rounded-full bg-white/20 text-white text-xl font-bold hover:bg-white/30 transition-colors"
+              >+</button>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={20}
+              value={missedCalls}
+              onChange={(e) => setMissedCalls(Number(e.target.value))}
+              className="w-full mb-8 accent-teal-400"
+            />
+
+            <div className="grid grid-cols-2 gap-4 mb-8">
+              <div className="bg-white/10 rounded-xl p-4">
+                <div className="text-sm text-white/60">Monthly loss</div>
+                <div className="text-2xl font-bold text-amber-300">${monthlyLoss.toLocaleString()}</div>
+              </div>
+              <div className="bg-white/10 rounded-xl p-4">
+                <div className="text-sm text-white/60">Annual loss</div>
+                <div className="text-2xl font-bold text-amber-300">${annualLoss.toLocaleString()}</div>
+              </div>
+            </div>
+
+            <p className="text-white/50 text-xs mb-6">Based on 60% booking rate and $2,400 avg. annual patient value.</p>
+
+            {calcSubmitted ? (
+              <div className="bg-teal-500/20 border border-teal-400/30 rounded-xl p-4">
+                <p className="text-teal-300 font-semibold">{'\u2713'} We{'\u2019'}ll be in touch — check your inbox.</p>
+              </div>
+            ) : (
+              <div>
+                <p className="text-white/80 text-sm mb-3">Want to see how Harbor pays for itself? Drop your email.</p>
+                <div className="flex gap-2 max-w-md mx-auto">
+                  <input
+                    type="email"
+                    value={calcEmail}
+                    onChange={(e) => setCalcEmail(e.target.value)}
+                    placeholder="you@yourpractice.com"
+                    className="flex-1 px-4 py-3 rounded-lg bg-white/20 border border-white/30 text-white placeholder-white/50 focus:outline-none focus:border-teal-400"
+                    onKeyDown={(e) => e.key === 'Enter' && handleCalcSubmit()}
+                  />
+                  <button
+                    onClick={handleCalcSubmit}
+                    disabled={calcLoading}
+                    className="px-6 py-3 rounded-lg font-semibold text-white transition-all hover:scale-[1.02] disabled:opacity-50"
+                    style={{ backgroundColor: '#52bfc0' }}
+                  >
+                    {calcLoading ? '...' : 'Send'}
+                  </button>
+                </div>
+                <p className="text-white/40 text-xs mt-2">No spam. Just one email with your ROI breakdown.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* FAQ */}
       <section className="px-6 py-20 bg-gray-50">
         <div className="max-w-2xl mx-auto">
@@ -502,6 +641,62 @@ export default function LandingPage() {
           </div>
         </div>
       </footer>
+
+      {/* Exit-Intent Popup */}
+      {showExitPopup && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm px-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 relative animate-in fade-in zoom-in">
+            <button
+              onClick={() => setShowExitPopup(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 text-xl leading-none"
+            >&times;</button>
+
+            {exitSubmitted ? (
+              <div className="text-center py-4">
+                <div className="text-4xl mb-3">{'\u2713'}</div>
+                <h3 className="text-xl font-bold mb-2" style={{ color: '#1f375d' }}>You{'\u2019'}re on the list</h3>
+                <p className="text-gray-500">We{'\u2019'}ll reach out soon.</p>
+              </div>
+            ) : (
+              <>
+                <div className="text-center mb-6">
+                  <div className="w-12 h-12 rounded-full mx-auto mb-4 flex items-center justify-center" style={{ backgroundColor: '#52bfc0' }}>
+                    <span className="text-white text-xl">{'\uD83D\uDCDE'}</span>
+                  </div>
+                  <h3 className="text-xl font-bold mb-2" style={{ color: '#1f375d' }}>Before you go&mdash;</h3>
+                  <p className="text-gray-500 text-sm">
+                    Curious but not ready to commit? Leave your email and we{'\u2019'}ll send you a quick breakdown of how Harbor works for practices like yours.
+                  </p>
+                </div>
+                <div className="space-y-3">
+                  <input
+                    type="email"
+                    value={exitEmail}
+                    onChange={(e) => setExitEmail(e.target.value)}
+                    placeholder="you@yourpractice.com"
+                    className="w-full px-4 py-3 rounded-lg border border-gray-200 focus:outline-none focus:border-teal-500 text-gray-900"
+                    onKeyDown={(e) => e.key === 'Enter' && handleExitSubmit()}
+                  />
+                  <button
+                    onClick={handleExitSubmit}
+                    disabled={exitLoading}
+                    className="w-full py-3 rounded-lg text-white font-semibold transition-all hover:shadow-lg disabled:opacity-50"
+                    style={{ backgroundColor: '#1f375d' }}
+                  >
+                    {exitLoading ? 'Sending...' : 'Send me the details'}
+                  </button>
+                  <button
+                    onClick={() => setShowExitPopup(false)}
+                    className="w-full text-sm text-gray-400 hover:text-gray-600"
+                  >
+                    No thanks, I{'\u2019'}m good
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

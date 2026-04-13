@@ -255,6 +255,7 @@ export default function SignupPage() {
           <div className="flex justify-between text-xs text-slate-500 mt-1">
             {STEPS.map((s) => <span key={s} className="max-w-[70px] text-center">{s}</span>)}
           </div>
+          <p className="text-center text-sm text-slate-400 mt-3">Step {step + 1} of {STEPS.length}</p>
         </div>
 
         <div className="bg-slate-800 border border-slate-700 rounded-xl p-8">
