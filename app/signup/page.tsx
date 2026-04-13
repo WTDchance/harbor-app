@@ -8,6 +8,7 @@ import {
   Building2, User, Mail, Lock, MapPin, Stethoscope, Heart,
   Calendar, MessageSquare, Wifi, CreditCard,
 } from 'lucide-react'
+import posthog from 'posthog-js'
 
 const STEPS = ['Your Practice', 'Services & Hours', 'Your Account', 'Customize Ellie', 'Choose Your Number']
 
@@ -129,7 +130,7 @@ export default function SignupPage() {
     return true
   }
 
-  const next = () => { if (validateStep(step)) setStep(step + 1) }
+  const next = () => { if (validateStep(step)) { posthog.capture('signup_step_completed', { step: step + 1, step_name: STEPS[step] }); setStep(step + 1) } }
   const back = () => { setError(''); setStep(step - 1) }
 
   const submit = async () => {
