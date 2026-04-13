@@ -7,7 +7,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 // global signups_enabled flag. Admin-only.
 export async function GET(_request: NextRequest) {
   try {
-    const supabase = createClient()
+    const supabase = await createClient()
     const {
       data: { user },
       error: authError,
