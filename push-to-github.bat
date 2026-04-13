@@ -21,7 +21,7 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "feat: expanded intake forms, patient chart clinical data, CalDAV validation, contact page, support tickets"
+git commit -m "security: add practice_id to intake submit patient update + verify-identity update (HIPAA isolation fix)"
 echo.
 
 echo Pushing to GitHub (main)...

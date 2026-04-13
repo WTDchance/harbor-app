@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
         .from('patients')
         .update({ date_of_birth })
         .eq('id', patient.id)
+        .eq('practice_id', practice_id)
 
       return NextResponse.json({
         verified: true,

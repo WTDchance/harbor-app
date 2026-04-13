@@ -217,6 +217,7 @@ async function updatePatientFromIntake(
       .from('patients')
       .update(updates)
       .eq('id', patientId)
+      .eq('practice_id', intake.practice_id)
 
     if (updateError) {
       console.error('[Intake] Failed to update patient record:', updateError.message)
