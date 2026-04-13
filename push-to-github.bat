@@ -21,7 +21,14 @@ git add -A
 echo.
 
 echo Committing...
-git commit -m "security: add practice_id to intake submit patient update + verify-identity update (HIPAA isolation fix)"
+git commit -m "feat: uptime monitoring dashboard + health check APIs
+
+- Add /api/admin/health endpoint (live service checks for Harbor, Vapi, Twilio, Supabase)
+- Add /api/admin/health/history endpoint (uptime metrics, call stats, incidents)
+- Add admin System Health dashboard (/admin/uptime) with auto-refresh
+- SMS alerting on service downtime via Twilio
+- Incident auto-creation on service down, auto-resolution on recovery
+- Add System Health nav item to admin sidebar"
 echo.
 
 echo Pushing to GitHub (main)...
