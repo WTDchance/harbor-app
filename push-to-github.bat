@@ -16,19 +16,16 @@ echo Checking git status...
 git status --short
 echo.
 
+echo Pulling latest from GitHub first...
+git pull origin main
+echo.
+
 echo Adding all changes...
 git add -A
 echo.
 
 echo Committing...
-git commit -m "feat: uptime monitoring dashboard + health check APIs
-
-- Add /api/admin/health endpoint (live service checks for Harbor, Vapi, Twilio, Supabase)
-- Add /api/admin/health/history endpoint (uptime metrics, call stats, incidents)
-- Add admin System Health dashboard (/admin/uptime) with auto-refresh
-- SMS alerting on service downtime via Twilio
-- Incident auto-creation on service down, auto-resolution on recovery
-- Add System Health nav item to admin sidebar"
+git commit -m "feat: uptime monitoring dashboard with health check APIs and SMS alerting"
 echo.
 
 echo Pushing to GitHub (main)...
