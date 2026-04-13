@@ -20,16 +20,16 @@ interface CheckResult {
 async function checkHarborApp(): Promise<CheckResult> {
   const start = Date.now()
   try {
-    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'}/api/auth/session`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'}/`, {
       method: 'GET',
       signal: AbortSignal.timeout(10000),
     })
     const ms = Date.now() - start
     return {
       service: 'harbor_app',
-      status: res.ok || res.status === 401 ? (ms > 5000 ? 'degraded' : 'healthy') : 'down',
+      status: res.ok ? (ms > 5000 ? 'degraded' : 'healthy') : 'down',
       response_ms: ms,
-      error_message: res.ok || res.status === 401 ? null : `HTTP ${res.status}`,
+      error_message: res.ok ? null : `HTTP ${res.status}`,
       metadata: { status_code: res.status },
     }
   } catch (err: any) {
