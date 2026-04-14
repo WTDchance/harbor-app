@@ -112,12 +112,12 @@ async function handleAssistantRequest(message: any) {
     location: practice.location || '',
     telehealth: practice.telehealth_available || false,
     insurance_accepted: practice.insurance_accepted || [],
-    system_prompt_notes: practice.system_prompt_notes || '',
+    system_prompt_notes: practice.system_prompt || '',
     emotional_support_enabled: true,
   })
 
   const aiName = practice.ai_name || 'Ellie'
-  const greeting = `Hi there, thank you for calling ${practice.name}. This is ${aiName}. How can I help you today?`
+  const greeting = practice.greeting || `Hi there, thank you for calling ${practice.name}. This is ${aiName}. How can I help you today?`
 
   // Build the webhook URL for tool call callbacks
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
