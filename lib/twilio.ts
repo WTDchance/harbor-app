@@ -13,7 +13,7 @@ const fromNumber = process.env.TWILIO_PHONE_NUMBER || ''
 const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID || ''
 
 if (!accountSid || !authToken || !fromNumber) {
-  console.warn('⚠️ Twilio environment variables not configured. SMS operations will fail.')
+    console.warn('⚠️ Twilio environment variables not configured. SMS operations will fail.')
 }
 
 // Initialize Twilio client
@@ -22,21 +22,21 @@ const twilioClient = accountSid && authToken ? twilio(accountSid, authToken) : n
 
 
 /**
- * Internal: return true if the recipient has opted out.
- * If practiceId is provided, check for a STOP specific to that practice.
- * If not provided, fail-safe: block if ANY practice has them on a STOP list
- * (prevents cross-practice spam after opt-out).
- */
+   * Internal: return true if the recipient has opted out.
+   * If practiceId is provided, check for a STOP specific to that practice.
+   * If not provided, fail-safe: block if ANY practice has them on a STOP list
+   * (prevents cross-practice spam after opt-out).
+   */
 async function _isBlocked(toNumber: string, practiceId?: string): Promise<boolean> {
-  try {
-    let query = supabaseAdmin.from('sms_opt_outs').select('id').eq('phone', toNumber)
-    if (practiceId) query = query.eq('practice_id', practiceId)
-    const { data } = await query.limit(1).maybeSingle()
-    return !!data
-  } catch (err) {
-    console.error('[twilio] opt-out check failed, allowing send:', err)
-    return false
-  }
+    try {
+          let query = supabaseAdmin.from('sms_opt_outs').select('id').eq('phone', toNumber)
+          if (practiceId) query = query.eq('practice_id', practiceId)
+          const { data } = await query.limit(1).maybeSingle()
+          return !!data
+    } catch (err) {
+          console.error('[twilio] opt-out check failed, allowing send:', err)
+          return false
+    }
 }
 
 /**
@@ -50,48 +50,48 @@ async function _isBlocked(toNumber: string, practiceId?: string): Promise<boolea
  * @returns Message SID if successful, null if failed
  */
 export async function sendSMS(
-  toNumber: string,
-  body: string,
-  practiceId?: string
-): Promise<string | null> {
-  // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
+    toNumber: string,
+    body: string,
+    practiceId?: string
+  ): Promise<string | null> {
+    // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
   if (process.env.SMS_ENABLED !== 'true') {
-    console.log(`[SMS DISABLED] Would have sent to ${toNumber}: ${body}`)
-    return null
+        console.log(`[SMS DISABLED] Would have sent to ${toNumber}: ${body}`)
+        return null
   }
 
   if (!twilioClient) {
-    console.warn('⚠️ Twilio not configured - message not sent')
-    return null
+        console.warn('⚠️ Twilio not configured - message not sent')
+        return null
   }
 
   // Opt-out check: respect any STOP on file for this number
   if (await _isBlocked(toNumber, practiceId)) {
-    console.log(`[SMS BLOCKED] ${toNumber} is opted out${practiceId ? ` for practice ${practiceId}` : ''}`)
-    return null
+        console.log(`[SMS BLOCKED] ${toNumber} is opted out${practiceId ? ` for practice ${practiceId}` : ''}`)
+        return null
   }
 
   try {
-    const messageParams: Record<string, string> = {
-      to: toNumber,
-      body: body,
-    }
+        const messageParams: Record<string, string> = {
+                to: toNumber,
+                body: body,
+        }
 
-    if (messagingServiceSid) {
-      // Use Messaging Service → enables RCS with automatic SMS fallback
-      messageParams.messagingServiceSid = messagingServiceSid
-    } else {
-      // Direct SMS (no RCS)
-      messageParams.from = fromNumber
-    }
+      if (messagingServiceSid) {
+              // Use Messaging Service → enables RCS with automatic SMS fallback
+          messageParams.messagingServiceSid = messagingServiceSid
+      } else {
+              // Direct SMS (no RCS)
+          messageParams.from = fromNumber
+      }
 
-    const message = await twilioClient.messages.create(messageParams as Parameters<typeof twilioClient.messages.create>[0])
-    const channel = messagingServiceSid ? 'RCS/SMS' : 'SMS'
-    console.log(`✓ ${channel} sent to ${toNumber}: ${message.sid}`)
-    return message.sid
+      const message = await twilioClient.messages.create(messageParams as Parameters<typeof twilioClient.messages.create>[0])
+        const channel = messagingServiceSid ? 'RCS/SMS' : 'SMS'
+        console.log(`✓ ${channel} sent to ${toNumber}: ${message.sid}`)
+        return message.sid
   } catch (error) {
-    console.error('Error sending message:', error)
-    throw error
+        console.error('Error sending message:', error)
+        throw error
   }
 }
 
@@ -103,38 +103,43 @@ export async function sendSMS(
  * @param body - Message content
  */
 export async function sendSMSFromNumber(
-  fromTwilioNumber: string,
-  toNumber: string,
-  body: string,
-  practiceId?: string
-): Promise<string | null> {
-  // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
+    fromTwilioNumber: string,
+    toNumber: string,
+    body: string,
+    practiceId?: string
+  ): Promise<string | null> {
+    // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
   if (process.env.SMS_ENABLED !== 'true') {
-    console.log(`[SMS DISABLED] Would have sent from ${fromTwilioNumber} to ${toNumber}: ${body}`)
-    return null
+        console.log(`[SMS DISABLED] Would have sent from ${fromTwilioNumber} to ${toNumber}: ${body}`)
+        return null
   }
 
   if (!twilioClient) {
-    console.warn('⚠️ Twilio not configured - SMS not sent')
-    return null
+        console.warn('⚠️ Twilio not configured - SMS not sent')
+        return null
   }
 
   if (await _isBlocked(toNumber, practiceId)) {
-    console.log(`[SMS BLOCKED] ${toNumber} is opted out${practiceId ? ` for practice ${practiceId}` : ''}`)
-    return null
+        console.log(`[SMS BLOCKED] ${toNumber} is opted out${practiceId ? ` for practice ${practiceId}` : ''}`)
+        return null
   }
 
   try {
-    const message = await twilioClient.messages.create({
-      from: fromTwilioNumber,
-      to: toNumber,
-      body: body,
-    })
-    console.log(`✓ SMS sent from ${fromTwilioNumber} to ${toNumber}`)
-    return message.sid
+        const msgParams: Record<string, string> = {
+                to: toNumber,
+                body: body,
+        }
+        if (messagingServiceSid) {
+                msgParams.messagingServiceSid = messagingServiceSid
+        } else {
+                msgParams.from = fromTwilioNumber
+        }
+        const message = await twilioClient.messages.create(msgParams as Parameters<typeof twilioClient.messages.create>[0])
+        console.log(`✓ SMS sent from ${fromTwilioNumber} to ${toNumber}`)
+        return message.sid
   } catch (error) {
-    console.error('Error sending SMS:', error)
-    throw error
+        console.error('Error sending SMS:', error)
+        throw error
   }
 }
 
@@ -143,23 +148,23 @@ export async function sendSMSFromNumber(
  * Used to find which practice owns an incoming SMS
  */
 export async function listPhoneNumbers() {
-  if (!twilioClient) {
-    console.warn('⚠️ Twilio not configured')
-    return []
-  }
+    if (!twilioClient) {
+          console.warn('⚠️ Twilio not configured')
+          return []
+    }
 
   try {
-    const incomingPhoneNumbers = await twilioClient
-      .incomingPhoneNumbers.list()
-    return incomingPhoneNumbers.map((number) => ({
-      sid: number.sid,
-      phoneNumber: number.phoneNumber,
-      friendlyName: number.friendlyName,
-      smsUrl: number.smsUrl,
-    }))
+        const incomingPhoneNumbers = await twilioClient
+          .incomingPhoneNumbers.list()
+        return incomingPhoneNumbers.map((number) => ({
+                sid: number.sid,
+                phoneNumber: number.phoneNumber,
+                friendlyName: number.friendlyName,
+                smsUrl: number.smsUrl,
+        }))
   } catch (error) {
-    console.error('Error listing phone numbers:', error)
-    return []
+        console.error('Error listing phone numbers:', error)
+        return []
   }
 }
 
@@ -168,23 +173,23 @@ export async function listPhoneNumbers() {
  * Useful for configuring which endpoint receives SMS
  */
 export async function getPhoneNumberWebhook(phoneNumberSid: string) {
-  if (!twilioClient) {
-    console.warn('⚠️ Twilio not configured')
-    return null
-  }
+    if (!twilioClient) {
+          console.warn('⚠️ Twilio not configured')
+          return null
+    }
 
   try {
-    const incomingPhoneNumber = await twilioClient
-      .incomingPhoneNumbers(phoneNumberSid)
-      .fetch()
-    return {
-      phoneNumber: incomingPhoneNumber.phoneNumber,
-      smsUrl: incomingPhoneNumber.smsUrl,
-      smsMethod: incomingPhoneNumber.smsMethod,
-    }
+        const incomingPhoneNumber = await twilioClient
+          .incomingPhoneNumbers(phoneNumberSid)
+          .fetch()
+        return {
+                phoneNumber: incomingPhoneNumber.phoneNumber,
+                smsUrl: incomingPhoneNumber.smsUrl,
+                smsMethod: incomingPhoneNumber.smsMethod,
+        }
   } catch (error) {
-    console.error('Error getting phone number webhook:', error)
-    return null
+        console.error('Error getting phone number webhook:', error)
+        return null
   }
 }
 
@@ -193,27 +198,27 @@ export async function getPhoneNumberWebhook(phoneNumberSid: string) {
  * This is called during practice setup to route SMS to our app
  */
 export async function updatePhoneNumberWebhook(
-  phoneNumberSid: string,
-  smsUrl: string,
-  smsMethod: 'GET' | 'POST' = 'POST'
-) {
-  if (!twilioClient) {
-    console.warn('⚠️ Twilio not configured - webhook not updated')
-    return false
-  }
+    phoneNumberSid: string,
+    smsUrl: string,
+    smsMethod: 'GET' | 'POST' = 'POST'
+  ) {
+    if (!twilioClient) {
+          console.warn('⚠️ Twilio not configured - webhook not updated')
+          return false
+    }
 
   try {
-    await twilioClient
-      .incomingPhoneNumbers(phoneNumberSid)
-      .update({
-        smsUrl: smsUrl,
-        smsMethod: smsMethod,
-      })
-    console.log(`✓ Updated SMS webhook for ${phoneNumberSid}`)
-    return true
+        await twilioClient
+          .incomingPhoneNumbers(phoneNumberSid)
+          .update({
+                    smsUrl: smsUrl,
+                    smsMethod: smsMethod,
+          })
+        console.log(`✓ Updated SMS webhook for ${phoneNumberSid}`)
+        return true
   } catch (error) {
-    console.error('Error updating phone number webhook:', error)
-    throw error
+        console.error('Error updating phone number webhook:', error)
+        throw error
   }
 }
 
@@ -224,10 +229,10 @@ export async function updatePhoneNumberWebhook(
  * @param message - Message to send back
  */
 export function generateSMSResponse(message: string): string {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Message>${escapeXml(message)}</Message>
-</Response>`
+    return `<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+      <Message>${escapeXml(message)}</Message>
+      </Response>`
 }
 
 /**
@@ -235,12 +240,12 @@ export function generateSMSResponse(message: string): string {
  * Important for SMS message bodies
  */
 function escapeXml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&apos;')
 }
 
 /**
@@ -248,22 +253,22 @@ function escapeXml(str: string): string {
  * E.164: +[country code][number], e.g., +15551234567
  */
 export function formatPhoneNumber(phone: string): string {
-  // Remove any non-digit characters
+    // Remove any non-digit characters
   const digits = phone.replace(/\D/g, '')
 
   // Add +1 if it's 10 digits (US/Canada)
   if (digits.length === 10) {
-    return `+1${digits}`
+        return `+1${digits}`
   }
 
   // If already 11 digits (with leading 1), add +
   if (digits.length === 11 && digits.startsWith('1')) {
-    return `+${digits}`
+        return `+${digits}`
   }
 
   // If already in correct format
   if (digits.length >= 11) {
-    return `+${digits}`
+        return `+${digits}`
   }
 
   // Fallback - return as-is with +
@@ -275,15 +280,15 @@ export function formatPhoneNumber(phone: string): string {
  * Standard Twilio SMS webhook payload
  */
 export function extractPhoneFromTwilioPayload(payload: Record<string, any>): {
-  from: string
-  to: string
-  body: string
-  messageSid: string
+    from: string
+    to: string
+    body: string
+    messageSid: string
 } {
-  return {
-    from: payload.From || '',
-    to: payload.To || '',
-    body: payload.Body || '',
-    messageSid: payload.MessageSid || '',
-  }
+    return {
+          from: payload.From || '',
+          to: payload.To || '',
+          body: payload.Body || '',
+          messageSid: payload.MessageSid || '',
+    }
 }
