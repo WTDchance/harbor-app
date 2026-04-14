@@ -14,6 +14,7 @@ import {
   startConfirmationMessage,
   helpMessage,
 } from '@/lib/sms-optout'
+import { runSmsAgent } from '@/lib/sms-ai-agent'
 import type { SMSMessage } from '@/types'
 
 /**
@@ -137,10 +138,21 @@ export async function POST(request: NextRequest) {
 
     let aiResponse: string
     try {
-      aiResponse = await claudeGenerateSMS(body, systemPrompt, conversationHistory)
+      aiResponse = await runSmsAgent({
+        practice: practices,
+        patient: patient || null,
+        from,
+        body,
+        history: conversationHistory,
+      })
     } catch (error) {
-      console.error('Error generating response:', error)
-      aiResponse = `Thanks for your message! Our team will get back to you soon.`
+      console.error('Error generating agent response, falling back to plain Claude:', error)
+      try {
+        aiResponse = await claudeGenerateSMS(body, systemPrompt, conversationHistory)
+      } catch (err2) {
+        console.error('Fallback also failed:', err2)
+        aiResponse = `Thanks for your message! Our team will get back to you soon.`
+      }
     }
 
     // Add new messages to conversation
