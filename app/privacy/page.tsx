@@ -22,8 +22,7 @@ export default function PrivacyPage() {
           <section>
             <h2 className="text-xl font-bold text-gray-900 mb-3">1. Overview</h2>
             <p>
-              Harbor ("we", "us", "our", or "Company") operates the Harbor AI receptionist platform. This Privacy Policy explains how we collect, use, disclose, and safeguard your information when you use our service.
-            </p>
+Harbor Receptionist is operated by <strong>Delta Traffic Labs LLC</strong>strong> ("we", "us", "our", or "Company"), an Oregon limited liability company. Delta Traffic Labs LLC is the legal entity registered as the A2P 10DLC brand for the Harbor Receptionist SMS program. This Privacy Policy explains how we collect, use, disclose, and</strong>            </p>
             <p>
               Please read this Privacy Policy carefully. If you do not agree with our policies and practices, please do not use our service.
             </p>
