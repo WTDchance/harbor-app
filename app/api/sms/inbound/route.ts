@@ -6,6 +6,14 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { generateSMSResponse as claudeGenerateSMS, detectCrisisIndicators } from '@/lib/claude'
 import { getSmsReceptionistPrompt } from '@/lib/ai-prompts'
 import { generateSMSResponse as generateTwilioResponse, extractPhoneFromTwilioPayload } from '@/lib/twilio'
+import {
+  classifyInboundKeyword,
+  recordOptOut,
+  clearOptOut,
+  stopConfirmationMessage,
+  startConfirmationMessage,
+  helpMessage,
+} from '@/lib/sms-optout'
 import type { SMSMessage } from '@/types'
 
 /**
@@ -48,6 +56,33 @@ export async function POST(request: NextRequest) {
 
     const practiceId = practices.id
     console.log(`✓ Practice found: ${practices.name}`)
+
+    // --- A2P / TCPA: handle STOP / START / HELP keywords first ---
+    const keyword = classifyInboundKeyword(body)
+    if (keyword === 'stop') {
+      await recordOptOut(practiceId, from, body.trim())
+      const confirm = stopConfirmationMessage(practices.name)
+      await logSMSMessage(practiceId, from, body, false)
+      return new NextResponse(generateTwilioResponse(confirm), {
+        headers: { 'Content-Type': 'application/xml' },
+      })
+    }
+    if (keyword === 'start') {
+      await clearOptOut(practiceId, from)
+      const confirm = startConfirmationMessage(practices.name)
+      await logSMSMessage(practiceId, from, body, false)
+      return new NextResponse(generateTwilioResponse(confirm), {
+        headers: { 'Content-Type': 'application/xml' },
+      })
+    }
+    if (keyword === 'help') {
+      const contact = (practices as any).contact_phone || (practices as any).owner_phone || null
+      const help = helpMessage(practices.name, contact)
+      await logSMSMessage(practiceId, from, body, false)
+      return new NextResponse(generateTwilioResponse(help), {
+        headers: { 'Content-Type': 'application/xml' },
+      })
+    }
 
     // Check for crisis indicators
     const isCrisis = await detectCrisisIndicators(body)

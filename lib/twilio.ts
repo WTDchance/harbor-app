@@ -1,6 +1,7 @@
 // Twilio client and helper functions for SMS, RCS, and voice
 // Handles sending messages via RCS (with automatic SMS fallback) and managing phone numbers
 import twilio from 'twilio'
+import { supabaseAdmin } from './supabase'
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
 const authToken = process.env.TWILIO_AUTH_TOKEN || ''
@@ -19,6 +20,25 @@ if (!accountSid || !authToken || !fromNumber) {
 // This requires TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN
 const twilioClient = accountSid && authToken ? twilio(accountSid, authToken) : null
 
+
+/**
+ * Internal: return true if the recipient has opted out.
+ * If practiceId is provided, check for a STOP specific to that practice.
+ * If not provided, fail-safe: block if ANY practice has them on a STOP list
+ * (prevents cross-practice spam after opt-out).
+ */
+async function _isBlocked(toNumber: string, practiceId?: string): Promise<boolean> {
+  try {
+    let query = supabaseAdmin.from('sms_opt_outs').select('id').eq('phone', toNumber)
+    if (practiceId) query = query.eq('practice_id', practiceId)
+    const { data } = await query.limit(1).maybeSingle()
+    return !!data
+  } catch (err) {
+    console.error('[twilio] opt-out check failed, allowing send:', err)
+    return false
+  }
+}
+
 /**
  * Send a message via Twilio.
  * If TWILIO_MESSAGING_SERVICE_SID is set, uses RCS with automatic SMS fallback.
@@ -31,7 +51,8 @@ const twilioClient = accountSid && authToken ? twilio(accountSid, authToken) : n
  */
 export async function sendSMS(
   toNumber: string,
-  body: string
+  body: string,
+  practiceId?: string
 ): Promise<string | null> {
   // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
   if (process.env.SMS_ENABLED !== 'true') {
@@ -41,6 +62,12 @@ export async function sendSMS(
 
   if (!twilioClient) {
     console.warn('⚠️ Twilio not configured - message not sent')
+    return null
+  }
+
+  // Opt-out check: respect any STOP on file for this number
+  if (await _isBlocked(toNumber, practiceId)) {
+    console.log(`[SMS BLOCKED] ${toNumber} is opted out${practiceId ? ` for practice ${practiceId}` : ''}`)
     return null
   }
 
@@ -78,7 +105,8 @@ export async function sendSMS(
 export async function sendSMSFromNumber(
   fromTwilioNumber: string,
   toNumber: string,
-  body: string
+  body: string,
+  practiceId?: string
 ): Promise<string | null> {
   // SMS disabled until A2P campaign is approved — set SMS_ENABLED=true in Railway to re-enable
   if (process.env.SMS_ENABLED !== 'true') {
@@ -88,6 +116,11 @@ export async function sendSMSFromNumber(
 
   if (!twilioClient) {
     console.warn('⚠️ Twilio not configured - SMS not sent')
+    return null
+  }
+
+  if (await _isBlocked(toNumber, practiceId)) {
+    console.log(`[SMS BLOCKED] ${toNumber} is opted out${practiceId ? ` for practice ${practiceId}` : ''}`)
     return null
   }
 
