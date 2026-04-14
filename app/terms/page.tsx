@@ -1,4 +1,4 @@
-// app/terms/page.tsx
+—// app/terms/page.tsx
 // Harbor — Terms and Conditions
 
 import type { Metadata } from "next";
