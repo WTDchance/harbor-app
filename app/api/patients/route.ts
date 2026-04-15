@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { resolvePracticeIdForApi } from "@/lib/active-practice";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -33,18 +34,11 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error }, { status: 401 });
   }
 
-  // Look up practice via users table
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-
-  if (!userRecord?.practice_id) {
+  // Look up practice via users table (or admin act-as override)
+  const practiceId = await resolvePracticeIdForApi(supabase, user);
+  if (!practiceId) {
     return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   }
-
-  const practiceId = userRecord.practice_id;
   const { searchParams } = new URL(req.url);
   const search = searchParams.get("search")?.toLowerCase().trim();
 

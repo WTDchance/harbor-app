@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Phone, Users, AlertTriangle, Clock, CheckCircle, Edit2, Save, X } from 'lucide-react'
+import { Phone, Users, AlertTriangle, Clock, CheckCircle, Edit2, Save, X, Eye } from 'lucide-react'
 import { createClient } from '@/lib/supabase-browser'
 
 interface Practice {
@@ -201,13 +201,36 @@ export default function PracticeDetailPage({ params }: { params: { id: string } 
           <p className="text-sm text-gray-500 mt-1">Practice ID: {practice.id}</p>
         </div>
         {!editing ? (
-          <button
-            onClick={startEditing}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            <Edit2 className="h-4 w-4" />
-            Edit Practice
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={async () => {
+                const { data: { session } } = await supabase.auth.getSession()
+                if (!session) return
+                const res = await fetch('/api/admin/act-as', {
+                  method: 'POST',
+                  headers: {
+                    Authorization: `Bearer ${session.access_token}`,
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ practiceId: practice.id }),
+                })
+                if (res.ok) window.location.href = '/dashboard'
+                else alert('Failed to enter admin view')
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition-colors"
+              title="Open this practice's dashboard as admin"
+            >
+              <Eye className="h-4 w-4" />
+              View Dashboard
+            </button>
+            <button
+              onClick={startEditing}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              <Edit2 className="h-4 w-4" />
+              Edit Practice
+            </button>
+          </div>
         ) : (
           <div className="flex gap-2">
             <button

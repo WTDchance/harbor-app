@@ -8,6 +8,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
 async function getPractice() {
   const cookieStore = await cookies()
@@ -31,18 +32,13 @@ async function getPractice() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
-  const { data: userData } = await supabaseAdmin
-    .from('users')
-    .select('practice_id')
-    .eq('id', user.id)
-    .single()
-
-  if (!userData?.practice_id) return null
+  const practiceId = await getEffectivePracticeId(supabaseAdmin, user)
+  if (!practiceId) return null
 
   const { data: practice } = await supabaseAdmin
     .from('practices')
     .select('id, name')
-    .eq('id', userData.practice_id)
+    .eq('id', practiceId)
     .single()
 
   return practice

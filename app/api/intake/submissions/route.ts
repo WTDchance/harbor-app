@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getEffectivePracticeId } from "@/lib/active-practice";
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -34,17 +35,8 @@ export async function GET(req: NextRequest) {
   }
 
   // Resolve practice for this user (try multiple methods)
-  let practiceId: string | null = null;
-
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-
-  if (userRecord?.practice_id) {
-    practiceId = userRecord.practice_id;
-  }
+  // Admin may override via act-as cookie
+  let practiceId: string | null = await getEffectivePracticeId(supabase, user);
 
   if (!practiceId) {
     const { data: memberRecord } = await supabase
