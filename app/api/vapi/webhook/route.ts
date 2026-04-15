@@ -687,8 +687,13 @@ async function processEndOfCall(opts: {
     console.error('[Vapi] Email notification error:', err)
   }
 
-  // 7. Auto-send intake forms for NEW patients
-  if (newPatient && patientPhone) {
+  // 7. Auto-send intake forms when we captured *any* contact method.
+  // Previously this required a phone number AND that the patient be new,
+  // which silently dropped email-only captures and any returning caller who
+  // hadn't been sent an intake yet. We now fire whenever we have at least
+  // one reachable channel and a patient record (new or existing).
+  const intakePatientId = newPatient?.id || existingPatient?.id || null
+  if (intakePatientId && (patientPhone || info.patientEmail)) {
     try {
       // Get the call_log record to pass the ID
       const { data: callLogRecord } = await supabaseAdmin
@@ -697,16 +702,20 @@ async function processEndOfCall(opts: {
         .eq('vapi_call_id', vapiCallId)
         .single()
 
-      // Determine delivery method: default to SMS since we always have the phone
-      // If caller provided an email, send via both
-      const deliveryMethod = info.patientEmail ? 'both' : 'sms'
+      // Pick the widest delivery that matches the contact info we have.
+      const deliveryMethod: 'sms' | 'email' | 'both' =
+        patientPhone && info.patientEmail
+          ? 'both'
+          : info.patientEmail
+            ? 'email'
+            : 'sms'
 
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
       const intakePayload = {
         practice_id: practiceId,
-        patient_id: newPatient.id,
+        patient_id: intakePatientId,
         call_log_id: callLogRecord?.id || null,
-        patient_phone: patientPhone,
+        patient_phone: patientPhone || null,
         patient_email: info.patientEmail || null,
         patient_name: info.patientName || null,
         delivery_method: deliveryMethod,

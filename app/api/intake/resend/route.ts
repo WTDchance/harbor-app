@@ -64,7 +64,19 @@ export async function POST(request: NextRequest) {
 
     let smsSent = false;
     let emailSent = false;
-    const method = delivery_method || "sms";
+    // When delivery_method is not specified, use every channel we have
+    // contact info for. Previously this silently defaulted to "sms" and
+    // skipped the email path even when an email address was on file.
+    const method: "sms" | "email" | "both" =
+      delivery_method === "sms" ||
+      delivery_method === "email" ||
+      delivery_method === "both"
+        ? delivery_method
+        : form.patient_phone && form.patient_email
+          ? "both"
+          : form.patient_email
+            ? "email"
+            : "sms";
 
     // Send via SMS
     if ((method === "sms" || method === "both") && form.patient_phone) {
