@@ -23,7 +23,9 @@ export default function TermsPage() {
           <a href="https://harborreceptionist.com" className="text-[#028090] underline">
             harborreceptionist.com
           </a>
-          .
+          . Harbor Receptionist is operated by <strong>Delta Traffic Labs LLC</strong>,
+          an Oregon limited liability company and the legal entity registered as the
+          A2P 10DLC brand for this SMS program.
         </p>
         <p>
           By using our services, you agree to be bound by these Terms. If you do
