@@ -111,11 +111,23 @@ export async function POST(request: NextRequest) {
     const practiceName = practice.name || 'the practice'
     const firstName = patient_name?.split(' ')[0] || 'there'
 
+    // Normalize delivery_method. If the caller didn't specify, send via every
+    // channel we have contact info for. Previously this defaulted to 'sms',
+    // which silently dropped email-only patients.
+    const effectiveMethod: 'sms' | 'email' | 'both' =
+      delivery_method === 'sms' || delivery_method === 'email' || delivery_method === 'both'
+        ? delivery_method
+        : patient_phone && patient_email
+          ? 'both'
+          : patient_email
+            ? 'email'
+            : 'sms'
+
     let smsSent = false
     let emailSent = false
 
     // Send via SMS
-    if ((delivery_method === 'sms' || delivery_method === 'both' || !delivery_method) && patient_phone) {
+    if ((effectiveMethod === 'sms' || effectiveMethod === 'both') && patient_phone) {
       try {
         await sendIntakeSMS(patient_phone, firstName, practiceName, intakeUrl)
         smsSent = true
@@ -126,7 +138,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Send via email
-    if ((delivery_method === 'email' || delivery_method === 'both') && patient_email) {
+    if ((effectiveMethod === 'email' || effectiveMethod === 'both') && patient_email) {
       try {
         await sendIntakeEmail(patient_email, firstName, practiceName, intakeUrl)
         emailSent = true
