@@ -20,7 +20,10 @@ export default function SmsProgramPage() {
         <h2 className="text-xl font-semibold mb-3 text-[#021E26]">1. Program description</h2>
         <p className="mb-4">
           Harbor Receptionist is an AI receptionist platform used by independent
-          therapy practices in the United States. As part of the platform, we
+          therapy practices in the United States. The platform, including this
+          SMS messaging program, is operated by <strong>Delta Traffic Labs LLC</strong>,
+          an Oregon limited liability company and the legal entity registered as
+          the A2P 10DLC brand for this program. As part of the platform, we
           send transactional SMS text messages to patients of these therapy
           practices. Messages include appointment confirmations, appointment
           reminders, intake form delivery links, waitlist offers, and basic
