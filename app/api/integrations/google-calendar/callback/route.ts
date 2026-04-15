@@ -13,6 +13,11 @@ interface GoogleUserInfo {
   name: string
 }
 
+function appUrl(path: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+  return `${base.replace(/\/$/, '')}${path}`
+}
+
 export async function GET(req: NextRequest) {
   try {
     const code = req.nextUrl.searchParams.get('code')
@@ -21,13 +26,13 @@ export async function GET(req: NextRequest) {
 
     if (error) {
       return NextResponse.redirect(
-        new URL(`/dashboard/settings?error=${encodeURIComponent(error)}`, req.url)
+        appUrl(`/dashboard/settings?error=${encodeURIComponent(error)}`)
       )
     }
 
     if (!code || !state) {
       return NextResponse.redirect(
-        new URL('/dashboard/settings?error=missing_parameters', req.url)
+        appUrl('/dashboard/settings?error=missing_parameters')
       )
     }
 
@@ -36,7 +41,7 @@ export async function GET(req: NextRequest) {
       stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'))
     } catch {
       return NextResponse.redirect(
-        new URL('/dashboard/settings?error=invalid_state', req.url)
+        appUrl('/dashboard/settings?error=invalid_state')
       )
     }
 
@@ -46,7 +51,7 @@ export async function GET(req: NextRequest) {
 
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
-        new URL('/dashboard/settings?error=server_misconfigured', req.url)
+        appUrl('/dashboard/settings?error=server_misconfigured')
       )
     }
 
@@ -67,10 +72,7 @@ export async function GET(req: NextRequest) {
       const errorData = await tokenResponse.json()
       console.error('[google-calendar/callback] Token exchange failed:', errorData)
       return NextResponse.redirect(
-        new URL(
-          `/dashboard/settings?error=${encodeURIComponent(errorData.error || 'token_exchange_failed')}`,
-          req.url
-        )
+        appUrl(`/dashboard/settings?error=${encodeURIComponent(errorData.error || 'token_exchange_failed')}`)
       )
     }
 
@@ -84,7 +86,7 @@ export async function GET(req: NextRequest) {
     if (!userResponse.ok) {
       console.error('[google-calendar/callback] Failed to fetch user info')
       return NextResponse.redirect(
-        new URL('/dashboard/settings?error=failed_to_fetch_user_info', req.url)
+        appUrl('/dashboard/settings?error=failed_to_fetch_user_info')
       )
     }
 
@@ -115,17 +117,17 @@ export async function GET(req: NextRequest) {
     if (upsertError) {
       console.error('[google-calendar/callback] Upsert error:', upsertError)
       return NextResponse.redirect(
-        new URL('/dashboard/settings?error=database_error', req.url)
+        appUrl('/dashboard/settings?error=database_error')
       )
     }
 
     return NextResponse.redirect(
-      new URL('/dashboard/settings?success=google_calendar_connected', req.url)
+      appUrl('/dashboard/settings?success=google_calendar_connected')
     )
   } catch (err) {
     console.error('[google-calendar/callback GET]', err)
     return NextResponse.redirect(
-      new URL('/dashboard/settings?error=internal_server_error', req.url)
+      appUrl('/dashboard/settings?error=internal_server_error')
     )
   }
                   }

@@ -41,6 +41,9 @@ export async function GET(req: NextRequest) {
     }
 
     const scopes = [
+      'openid',
+      'email',
+      'profile',
       'https://www.googleapis.com/auth/calendar.readonly',
       'https://www.googleapis.com/auth/calendar.events'
     ]
