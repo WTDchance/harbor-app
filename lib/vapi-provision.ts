@@ -137,8 +137,36 @@ export async function linkVapiPhoneNumber(opts: {
   })
 
   if (!res.ok) {
-    const err = await res.text()
-    throw new Error(`Vapi phone-number link failed: ${res.status} ${err}`)
+    const errText = await res.text()
+
+    // Vapi 400 when the Twilio number is already registered with Vapi:
+    //   "Existing Phone Number <uuid> Has Identical `twilioAccountSid` ... and `number` ..."
+    // In that case, PATCH the existing record to point at our new assistant
+    // instead of failing — this lets us re-attach Vapi to a practice whose
+    // number was previously provisioned (e.g. the Harbor demo line).
+    if (res.status === 400) {
+      const m = errText.match(/Existing Phone Number ([0-9a-f-]{36})/i)
+      if (m) {
+        const existingId = m[1]
+        const patch = await fetch(`${VAPI_BASE_URL}/phone-number/${existingId}`, {
+          method: 'PATCH',
+          headers: {
+            Authorization: `Bearer ${VAPI_API_KEY}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ assistantId: opts.assistantId }),
+        })
+        if (!patch.ok) {
+          const pErr = await patch.text()
+          throw new Error(
+            `Vapi phone-number relink failed: ${patch.status} ${pErr}`
+          )
+        }
+        return existingId
+      }
+    }
+
+    throw new Error(`Vapi phone-number link failed: ${res.status} ${errText}`)
   }
 
   const data = await res.json()
