@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase-browser'
-import { ExternalLink, Phone, Mail } from 'lucide-react'
+import { ExternalLink, Phone, Mail, Eye } from 'lucide-react'
 
 interface Practice {
   id: string
@@ -20,7 +20,28 @@ interface Practice {
 export default function AdminPractices() {
   const [practices, setPractices] = useState<Practice[]>([])
   const [loading, setLoading] = useState(true)
+  const [viewingId, setViewingId] = useState<string | null>(null)
   const supabase = createClient()
+
+  async function actAs(practiceId: string) {
+    setViewingId(practiceId)
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) { setViewingId(null); return }
+    const res = await fetch('/api/admin/act-as', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ practiceId }),
+    })
+    if (!res.ok) {
+      alert('Failed to enter admin view')
+      setViewingId(null)
+      return
+    }
+    window.location.href = '/dashboard'
+  }
 
   useEffect(() => {
     supabase
@@ -109,10 +130,21 @@ export default function AdminPractices() {
                     )}
                   </td>
                   <td className="px-5 py-4 text-right">
-                    <Link href={`/admin/practices/${p.id}`}
-                      className="flex items-center gap-1 text-teal-600 hover:text-teal-700 text-sm font-medium justify-end">
-                      Manage <ExternalLink className="w-3 h-3" />
-                    </Link>
+                    <div className="flex items-center gap-3 justify-end">
+                      <button
+                        onClick={() => actAs(p.id)}
+                        disabled={viewingId === p.id}
+                        className="flex items-center gap-1 text-amber-600 hover:text-amber-700 text-sm font-medium disabled:opacity-60"
+                        title="Open this practice's dashboard as admin"
+                      >
+                        <Eye className="w-4 h-4" />
+                        {viewingId === p.id ? 'Opening…' : 'View dashboard'}
+                      </button>
+                      <Link href={`/admin/practices/${p.id}`}
+                        className="flex items-center gap-1 text-teal-600 hover:text-teal-700 text-sm font-medium">
+                        Manage <ExternalLink className="w-3 h-3" />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}

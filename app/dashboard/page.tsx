@@ -366,7 +366,7 @@ export default function DashboardHome() {
                 <div className="py-10 text-center">
                   <p className="text-gray-400 text-sm">No appointments today</p>
                   <Link href="/dashboard/appointments" className="text-xs text-teal-600 mt-2 inline-block hover:text-teal-700">
-                    Schedule one ->
+                    Schedule one →
                   </Link>
                 </div>
               ) : (

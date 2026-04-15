@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
 async function getAuthenticatedPracticeId() {
   const cookieStore = await cookies()
@@ -23,14 +24,9 @@ async function getAuthenticatedPracticeId() {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
 
-  // Try users table first (dashboard pattern)
-  const { data: userRecord } = await supabaseAdmin
-    .from('users')
-    .select('practice_id')
-    .eq('id', user.id)
-    .single()
-
-  if (userRecord?.practice_id) return userRecord.practice_id
+  // Effective practice (admin may override via act-as cookie)
+  const effective = await getEffectivePracticeId(supabaseAdmin, user)
+  if (effective) return effective
 
   // Fallback: try practices table by email (appointments pattern)
   const { data: practice } = await supabaseAdmin

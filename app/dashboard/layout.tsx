@@ -7,6 +7,7 @@ import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
+import ImpersonationBanner from "@/components/ImpersonationBanner";
 
 const supabase = createClient();
 
@@ -296,6 +297,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </span>
         </div>
 
+        <ImpersonationBanner />
         <main className="flex-1 overflow-auto">
           {children}
         </main>

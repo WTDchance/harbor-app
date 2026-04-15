@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { getEffectivePracticeId } from "@/lib/active-practice";
 
 const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -44,21 +45,14 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    // Get the user's practice_id
-    const { data: userRecord, error: userError } = await supabaseAdmin
-      .from("users")
-      .select("practice_id")
-      .eq("id", user.id)
-      .single();
-
-    if (userError || !userRecord?.practice_id) {
+    // Get the user's practice_id (admin may override via act-as cookie)
+    const practiceId = await getEffectivePracticeId(supabaseAdmin, user);
+    if (!practiceId) {
       return NextResponse.json(
         { error: "No practice found for user" },
         { status: 403 }
       );
     }
-
-    const practiceId = userRecord.practice_id;
 
     // Parse query params
     const { searchParams } = new URL(request.url);
