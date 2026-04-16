@@ -9,6 +9,7 @@ import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
+import { getCalendarRouter } from '@/lib/calendar'
 
 async function getPractice() {
   const cookieStore = await cookies()
@@ -93,12 +94,51 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json()
+
+    // Push to the practice's connected calendar first (if any), so we can
+    // persist the event id on the appointment row. Failure here is
+    // non-blocking — we still save the DB row.
+    let calendarEventId: string | null = body.calendar_event_id || null
+    const startIso =
+      body.scheduled_at ||
+      (body.appointment_date && body.appointment_time
+        ? `${body.appointment_date}T${body.appointment_time}`
+        : null)
+
+    if (!calendarEventId && startIso) {
+      try {
+        const start = new Date(startIso)
+        if (!isNaN(start.getTime())) {
+          const durationMinutes = Number(body.duration_minutes) || 50
+          const end = new Date(start.getTime() + durationMinutes * 60_000)
+          const router = await getCalendarRouter(practice.id)
+          if (router) {
+            const summary = `Therapy: ${body.patient_name || 'Patient'}`
+            const description = [
+              `Booked manually via ${practice.name} dashboard.`,
+              body.patient_phone ? `Phone: ${body.patient_phone}` : null,
+              body.patient_email ? `Email: ${body.patient_email}` : null,
+              body.notes ? `Notes: ${body.notes}` : null,
+            ]
+              .filter(Boolean)
+              .join('\n')
+            const ev = await router.createEvent({ summary, start, end, description })
+            calendarEventId = ev.id
+            console.log(`[appointments] Calendar event created (${router.provider}): ${calendarEventId}`)
+          }
+        }
+      } catch (calErr: any) {
+        console.error('[appointments] Calendar push failed (non-blocking):', calErr?.message || calErr)
+      }
+    }
+
     const { data, error } = await supabaseAdmin
       .from('appointments')
       .insert({
         practice_id: practice.id,
         source: 'manual',
         ...body,
+        calendar_event_id: calendarEventId,
       })
       .select()
       .single()
@@ -121,7 +161,7 @@ export async function PATCH(req: NextRequest) {
 
     const { data: existing } = await supabaseAdmin
       .from('appointments')
-      .select('status, appointment_date, appointment_time, duration_minutes, patient_id')
+      .select('status, appointment_date, appointment_time, duration_minutes, patient_id, calendar_event_id')
       .eq('id', id)
       .eq('practice_id', practice.id)
       .single()
@@ -145,6 +185,19 @@ export async function PATCH(req: NextRequest) {
       existing?.appointment_date &&
       existing?.appointment_time
     ) {
+      // Best-effort: remove the event from the connected calendar.
+      if (existing.calendar_event_id) {
+        try {
+          const router = await getCalendarRouter(practice.id)
+          if (router) {
+            await router.deleteEvent(existing.calendar_event_id)
+            console.log(`[appointments] Calendar event deleted on cancel: ${existing.calendar_event_id}`)
+          }
+        } catch (calErr: any) {
+          console.error('[appointments] Calendar delete failed (non-blocking):', calErr?.message || calErr)
+        }
+      }
+
       try {
         const slotTime = new Date(`${existing.appointment_date}T${existing.appointment_time}`)
         const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
