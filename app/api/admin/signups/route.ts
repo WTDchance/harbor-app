@@ -30,7 +30,7 @@ export async function GET(_request: NextRequest) {
           'status, subscription_status, founding_member, vapi_assistant_id, ' +
           'vapi_phone_number_id, twilio_phone_sid, stripe_customer_id, ' +
           'stripe_subscription_id, provisioning_error, provisioning_attempts, ' +
-          'provisioned_at, created_at'
+          'provisioned_at, created_at, specialties, telehealth'
       )
       .order('created_at', { ascending: false })
       .limit(100)
