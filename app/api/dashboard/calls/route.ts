@@ -98,17 +98,84 @@ export async function GET(req: NextRequest) {
     }
 
     // Full call list mode (for calls page)
-    let query = supabaseAdmin
+    const { data, error } = await supabaseAdmin
       .from('call_logs')
-      .select('id, patient_phone, duration_seconds, summary, transcript, created_at, crisis_detected, caller_name, call_type, insurance_mentioned, session_type, preferred_times, reason_for_calling, patient_id')
+      .select(
+        'id, patient_phone, duration_seconds, summary, transcript, created_at, crisis_detected, caller_name, call_type, insurance_mentioned, session_type, preferred_times, reason_for_calling, patient_id'
+      )
       .eq('practice_id', practiceId)
       .order('created_at', { ascending: false })
       .limit(limit)
 
-    const { data, error } = await query
     if (error) throw error
 
-    return NextResponse.json({ calls: data || [] })
+    const callIds = (data || []).map((c) => c.id)
+
+    // Screenings — enrich with PHQ-2 / GAD-2 so the UI can show inline
+    // badges without a second round-trip.
+    const screeningsByCall: Record<string, { phq2_score?: number; gad2_score?: number }> = {}
+    if (callIds.length > 0) {
+      const { data: screenings } = await supabaseAdmin
+        .from('intake_screenings')
+        .select('call_id, phq2_score, gad2_score')
+        .in('call_id', callIds)
+      if (screenings) {
+        for (const s of screenings) {
+          if (s.call_id) {
+            screeningsByCall[s.call_id] = {
+              phq2_score: s.phq2_score ?? undefined,
+              gad2_score: s.gad2_score ?? undefined,
+            }
+          }
+        }
+      }
+    }
+
+    // Appointments booked near the call time — heuristic: any appointment
+    // created for the same patient within ~10 minutes after the call is
+    // assumed to be the booking outcome. This lets the UI surface a
+    // "Booked" chip and deep-link into the appointment without needing a
+    // schema change.
+    const patientIds = Array.from(
+      new Set((data || []).map((c) => c.patient_id).filter(Boolean) as string[])
+    )
+    const apptByCall: Record<string, { id: string; scheduled_at: string; status: string }> = {}
+    if (patientIds.length > 0) {
+      const { data: appts } = await supabaseAdmin
+        .from('appointments')
+        .select('id, patient_id, scheduled_at, status, created_at')
+        .eq('practice_id', practiceId)
+        .in('patient_id', patientIds)
+        .order('created_at', { ascending: false })
+        .limit(200)
+
+      if (appts) {
+        for (const c of data || []) {
+          if (!c.patient_id || !c.created_at) continue
+          const callMs = new Date(c.created_at).getTime()
+          const match = appts.find((a) => {
+            if (a.patient_id !== c.patient_id) return false
+            const gap = new Date(a.created_at).getTime() - callMs
+            return gap >= -60_000 && gap <= 10 * 60_000
+          })
+          if (match) {
+            apptByCall[c.id] = {
+              id: match.id,
+              scheduled_at: match.scheduled_at,
+              status: match.status,
+            }
+          }
+        }
+      }
+    }
+
+    const enriched = (data || []).map((c) => ({
+      ...c,
+      intake_screenings: screeningsByCall[c.id] ? [screeningsByCall[c.id]] : [],
+      booked_appointment: apptByCall[c.id] || null,
+    }))
+
+    return NextResponse.json({ calls: enriched })
   } catch (e: any) {
     console.error('[Dashboard Calls API] Error:', e)
     return NextResponse.json({ error: e.message }, { status: 500 })
