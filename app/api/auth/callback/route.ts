@@ -2,6 +2,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { cookies } from 'next/headers'
+import { writeAuditLog, extractIp } from '@/lib/audit'
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'chancewonser@gmail.com'
 
@@ -33,9 +34,29 @@ export async function GET(request: NextRequest) {
     if (!error && session?.user) {
       const isAdmin = session.user.email === ADMIN_EMAIL
       const redirectTo = isAdmin ? '/admin' : (next === '/login' ? '/dashboard' : next)
+
+      // Audit: successful login
+      await writeAuditLog({
+        action: 'login',
+        user_id: session.user.id,
+        user_email: session.user.email,
+        ip_address: extractIp(request.headers),
+        user_agent: request.headers.get('user-agent'),
+        details: { method: 'magic_link', redirect: redirectTo },
+      })
+
       return NextResponse.redirect(`${origin}${redirectTo}`)
     }
   }
+
+  // Audit: failed login attempt
+  await writeAuditLog({
+    action: 'login_failed',
+    ip_address: extractIp(request.headers),
+    user_agent: request.headers.get('user-agent'),
+    details: { reason: 'invalid_code' },
+    severity: 'warning',
+  })
 
   return NextResponse.redirect(`${origin}/login?error=auth_failed`)
 }

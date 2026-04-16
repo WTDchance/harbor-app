@@ -8,6 +8,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
+import SessionTimeout from "@/components/SessionTimeout";
 
 const supabase = createClient();
 
@@ -108,6 +109,18 @@ const NAV = [
         <circle cx="9" cy="9" r="7.5" stroke="currentColor" strokeWidth="1.5" />
         <path d="M6.5 6.5a2.5 2.5 0 014.5 1.5c0 1.5-2.5 2-2.5 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         <circle cx="9" cy="13" r="0.75" fill="currentColor" />
+      </svg>
+    ),
+  },
+  {
+    href: "/dashboard/audit-log",
+    label: "Audit Log",
+    exact: false,
+    icon: (
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+        <path d="M3 3h12v12H3V3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+        <path d="M6 7h6M6 10h6M6 13h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        <path d="M14 1v4M4 1v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
     ),
   },
@@ -298,6 +311,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         <ImpersonationBanner />
+        <SessionTimeout />
         <main className="flex-1 overflow-auto">
           {children}
         </main>
