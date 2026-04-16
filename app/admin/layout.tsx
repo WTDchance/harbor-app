@@ -15,6 +15,7 @@ import {
   UserPlus,
   LifeBuoy,
   HeartPulse,
+  Shield,
 } from 'lucide-react'
 
 const navItems = [
@@ -26,6 +27,7 @@ const navItems = [
   { href: '/admin/uptime', label: 'System Health', icon: HeartPulse },
   { href: '/admin/support', label: 'Support Tickets', icon: LifeBuoy },
   { href: '/admin/activity', label: 'Activity Feed', icon: Activity },
+  { href: '/admin/audit', label: 'HIPAA Audit', icon: Shield },
 ]
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
