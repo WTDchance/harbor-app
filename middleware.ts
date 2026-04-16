@@ -47,6 +47,9 @@ export async function middleware(request: NextRequest) {
     '/privacy-policy',
     '/terms',
     '/sms',
+    // Public appointment confirm/cancel pages hit from email reminders —
+    // the appointment UUID itself is the capability token.
+    '/appointments/',
   ]
   const exactPublicPaths = ['/']
   if (exactPublicPaths.includes(pathname) || publicPaths.some(p => pathname.startsWith(p))) {
