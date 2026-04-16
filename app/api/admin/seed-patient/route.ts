@@ -1,26 +1,19 @@
-// Admin-only: seed a patient row under any practice so Ellie / intake /
-// reminder flows have someone to recognize. Used to prep the Harbor Demo
-// practice with Chance as a "known patient" so demo calls don't return
-// "patient not found" and so the 24-hour reminder + intake email paths can
-// be exercised end-to-end.
+// Admin-only: seed or remove a patient row under any practice so Ellie /
+// intake / reminder flows have someone to recognize. Used to prep the
+// Harbor Demo practice with Chance as a "known patient" so demo calls don't
+// return "patient not found" and so the 24-hour reminder + intake email
+// paths can be exercised end-to-end.
 //
 // Auth: Bearer ${CRON_SECRET}
-// POST {
-//   practice_id: string,
-//   first_name: string,
-//   last_name?: string,
-//   phone: string,          // E.164 preferred
-//   email?: string,
-//   date_of_birth?: string, // YYYY-MM-DD
-//   preferred_session_type?: 'telehealth' | 'in-person',
-//   notes?: string,
-// }
+//
+// POST   { practice_id, first_name, phone, ...optional } — create/upsert
+// DELETE { practice_id, patient_id? | phone? }          — remove a stale row
 //
 // Behavior:
-//   - Validates practice exists.
-//   - Upserts by (practice_id, phone): if a row already exists, refreshes
-//     name/email/DOB/notes so re-running is safe.
-//   - Returns the seeded patient row.
+//   - POST validates practice exists, upserts by (practice_id, phone), and
+//     refreshes name/email/DOB/notes so re-running is safe.
+//   - DELETE removes exactly one patient row scoped to practice_id,
+//     matched by patient_id (preferred) or phone.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
@@ -126,4 +119,41 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
   return NextResponse.json({ ok: true, created: true, patient: data })
+}
+
+export async function DELETE(req: NextRequest) {
+  const auth = req.headers.get('authorization') || ''
+  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
+  if (!process.env.CRON_SECRET || auth !== expected) {
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  }
+
+  let body: { practice_id?: string; patient_id?: string; phone?: string }
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
+  }
+
+  const { practice_id, patient_id, phone } = body
+  if (!practice_id) {
+    return NextResponse.json({ error: 'practice_id is required' }, { status: 400 })
+  }
+  if (!patient_id && !phone) {
+    return NextResponse.json(
+      { error: 'patient_id or phone is required to identify the row' },
+      { status: 400 }
+    )
+  }
+
+  let query = supabaseAdmin.from('patients').delete().eq('practice_id', practice_id)
+  if (patient_id) query = query.eq('id', patient_id)
+  else if (phone) query = query.eq('phone', phone)
+
+  const { data, error } = await query.select()
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  return NextResponse.json({ ok: true, deleted: data?.length || 0, rows: data || [] })
 }
