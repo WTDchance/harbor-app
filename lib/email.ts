@@ -1,6 +1,11 @@
 import { Resend } from 'resend'
 
-const resend = new Resend(process.env.RESEND_API_KEY)
+// Lazy init — avoid crashing `next build` when env vars aren't set
+let _resend: Resend | null = null
+function getResend(): Resend {
+  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
+  return _resend
+}
 
 // Named sending addresses — all authorized via verified domain harborreceptionist.com
 export const EMAIL_CHANCE  = process.env.RESEND_CHANCE_EMAIL  || 'Chance@harborreceptionist.com'
@@ -23,7 +28,7 @@ export async function sendEmail(payload: EmailPayload): Promise<boolean> {
           return false
     }
     try {
-          const { error } = await resend.emails.send({
+          const { error } = await getResend().emails.send({
                   from: payload.from || FROM_EMAIL,
                   to: [payload.to],
                   subject: payload.subject,

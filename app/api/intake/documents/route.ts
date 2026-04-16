@@ -6,12 +6,7 @@
 // DELETE: Soft-delete (deactivate) a document
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { supabaseAdmin as supabase } from "@/lib/supabase";
 
 async function getPracticeId(req: NextRequest): Promise<{ practiceId: string | null; error: string | null }> {
   const authHeader = req.headers.get("authorization");
