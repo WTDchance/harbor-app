@@ -33,7 +33,7 @@ export async function GET(req: NextRequest) {
     const ids = (connections || []).map((c) => c.practice_id).filter(Boolean)
     const { data: practices } = await supabaseAdmin
       .from('practices')
-      .select('id, name, notification_email')
+      .select('id, name, notification_email, phone_number, vapi_assistant_id, vapi_phone_number_id')
       .in('id', ids)
 
     const byId = new Map((practices || []).map((p) => [p.id, p]))
