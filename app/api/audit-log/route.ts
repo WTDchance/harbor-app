@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { supabaseAdmin } from "@/lib/supabase";
+import { checkBruteForce } from "@/lib/breach-detection";
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -86,6 +87,14 @@ export async function POST(req: NextRequest) {
       console.error("[audit-log] insert error:", error);
       // Never block the caller — audit failures are logged but non-fatal
       return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
+    }
+
+    // Breach detection: check for brute-force on failed logins
+    if (action === "login_failed") {
+      const clientIp = getClientIp(req);
+      if (clientIp) {
+        checkBruteForce(clientIp, req.headers.get("user-agent")).catch(() => {});
+      }
     }
 
     return NextResponse.json({ ok: true });

@@ -7,6 +7,7 @@ import { useState, useEffect, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase-browser";
+import MFAChallenge from "@/components/MFAChallenge";
 
 const supabase = createClient();
 
@@ -21,6 +22,7 @@ export default function LoginPage() {
   const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [resetSent, setResetSent] = useState(false);
+  const [mfaRequired, setMfaRequired] = useState(false);
 
   // Redirect already-authenticated users straight to dashboard
   useEffect(() => {
@@ -44,7 +46,15 @@ export default function LoginPage() {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
 
-      // Audit: successful login
+      // Check if user has MFA enrolled — if so, require verification
+      const { data: factors } = await supabase.auth.mfa.listFactors();
+      if (factors?.totp && factors.totp.length > 0) {
+        setMfaRequired(true);
+        setLoading(false);
+        return;
+      }
+
+      // Audit: successful login (no MFA)
       fetch("/api/audit-log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -98,6 +108,26 @@ export default function LoginPage() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="w-8 h-8 border-4 border-teal-200 border-t-teal-600 rounded-full animate-spin" />
       </div>
+    );
+  }
+
+  // Show MFA challenge if user has TOTP enrolled
+  if (mfaRequired) {
+    return (
+      <MFAChallenge
+        onVerified={() => {
+          fetch("/api/audit-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "login", details: { method: "password+mfa" } }),
+          }).catch(() => {});
+          router.replace("/dashboard");
+        }}
+        onCancel={async () => {
+          await supabase.auth.signOut();
+          setMfaRequired(false);
+        }}
+      />
     );
   }
 
