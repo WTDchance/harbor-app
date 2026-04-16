@@ -152,7 +152,10 @@ export async function PATCH(req: NextRequest) {
     p.greeting ||
     `Hi, this is ${p.ai_name || 'the receptionist'} at ${p.name}. How can I help today?`
 
+  const aiName = p.ai_name || 'Receptionist'
+
   const vapiPatch: Record<string, any> = {
+    name: `${aiName} - ${p.name}`,
     model: {
       provider: 'anthropic',
       model: 'claude-3-5-haiku-20241022',
@@ -160,6 +163,9 @@ export async function PATCH(req: NextRequest) {
       temperature: 0.7,
     },
     firstMessage: greeting,
+    endCallMessage: `Thank you for calling ${p.name}. Have a wonderful day!`,
+    backgroundSound: 'office',
+    backchannelingEnabled: true,
   }
 
   const res = await fetch(`${VAPI_BASE_URL}/assistant/${p.vapi_assistant_id}`, {

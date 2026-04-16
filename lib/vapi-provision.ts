@@ -85,8 +85,9 @@ export async function createVapiAssistant(p: PracticeContext): Promise<string> {
       endCallMessage: `Thank you for calling ${p.name}. Have a wonderful day!`,
       silenceTimeoutSeconds: 30,
       maxDurationSeconds: 600,
-      backgroundSound: 'off',
-      backchannelingEnabled: false,
+      backgroundSound: 'office',
+      backchannelingEnabled: true,
+      hipaaEnabled: true,
       transcriber: { provider: 'deepgram', model: 'nova-2', language: 'en-US' },
       server: { url: serverUrl },
       metadata: {
