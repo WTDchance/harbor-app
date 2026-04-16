@@ -8,6 +8,8 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { getCalendarRouter } from '@/lib/calendar'
+import { getValidAccessToken } from '@/lib/googleCalendar'
 
 function unauthorized() {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -33,7 +35,7 @@ export async function GET(req: NextRequest) {
     const ids = (connections || []).map((c) => c.practice_id).filter(Boolean)
     const { data: practices } = await supabaseAdmin
       .from('practices')
-      .select('id, name, notification_email')
+      .select('id, name, notification_email, phone_number, vapi_assistant_id, vapi_phone_number_id')
       .in('id', ids)
 
     const byId = new Map((practices || []).map((p) => [p.id, p]))
@@ -178,4 +180,75 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error?.message || 'no row found' }, { status: 500 })
   }
   return NextResponse.json({ ok: true, moved_to: toId, provider, id: data.id })
+}
+
+// PATCH /api/admin/calendar-diag?practice_id=...&mode=ping
+//   → Fetches a fresh access token (refresh if needed), returns whether the
+//     token is usable. No calendar write.
+//
+// PATCH /api/admin/calendar-diag?practice_id=...&mode=test-event
+//   → Creates a 10-minute test event on the connected calendar starting
+//     now, then immediately deletes it. Verifies the full create/delete
+//     round-trip end-to-end.
+export async function PATCH(req: NextRequest) {
+  const auth = req.headers.get('authorization') || ''
+  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
+  if (!process.env.CRON_SECRET || auth !== expected) return unauthorized()
+
+  const practiceId = req.nextUrl.searchParams.get('practice_id')
+  const mode = req.nextUrl.searchParams.get('mode') || 'ping'
+  if (!practiceId) {
+    return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
+  }
+
+  if (mode === 'ping') {
+    const token = await getValidAccessToken(practiceId)
+    if (!token) {
+      return NextResponse.json({ ok: false, reason: 'no-valid-token' }, { status: 200 })
+    }
+    // Verify with a lightweight Google API call
+    const resp = await fetch(
+      'https://www.googleapis.com/calendar/v3/calendars/primary?fields=id,summary,timeZone',
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
+    if (!resp.ok) {
+      return NextResponse.json({ ok: false, reason: `google-${resp.status}`, body: await resp.text().catch(() => '') })
+    }
+    const calInfo = await resp.json()
+    return NextResponse.json({ ok: true, calendar: calInfo })
+  }
+
+  if (mode === 'test-event') {
+    const router = await getCalendarRouter(practiceId)
+    if (!router) {
+      return NextResponse.json({ ok: false, reason: 'no-router' }, { status: 200 })
+    }
+    const start = new Date()
+    const end = new Date(start.getTime() + 10 * 60_000)
+    try {
+      const ev = await router.createEvent({
+        summary: 'Harbor sync test (auto-deleted)',
+        start,
+        end,
+        description: 'This is a Harbor diagnostic event. It is deleted immediately.',
+      })
+      try {
+        await router.deleteEvent(ev.id)
+      } catch (delErr: any) {
+        return NextResponse.json({
+          ok: true,
+          created: true,
+          deleted: false,
+          event_id: ev.id,
+          delete_error: delErr?.message || String(delErr),
+          note: 'Event was created successfully but could not be deleted. You may want to remove it manually.',
+        })
+      }
+      return NextResponse.json({ ok: true, created: true, deleted: true, event_id: ev.id })
+    } catch (err: any) {
+      return NextResponse.json({ ok: false, reason: 'create-failed', error: err?.message || String(err) })
+    }
+  }
+
+  return NextResponse.json({ error: 'unknown mode (use ping or test-event)' }, { status: 400 })
 }
