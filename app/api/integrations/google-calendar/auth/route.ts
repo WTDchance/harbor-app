@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 import { NextRequest, NextResponse } from 'next/server'
 
 async function getPracticeId(): Promise<string | null> {
@@ -19,8 +20,10 @@ async function getPracticeId(): Promise<string | null> {
   )
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
-  return data?.practice_id || null
+  // Honor the admin "act as" cookie so connecting Google Calendar while
+  // viewing another practice's dashboard stores tokens on THAT practice,
+  // not the admin's own.
+  return await getEffectivePracticeId(supabaseAdmin, user)
 }
 
 export async function GET(req: NextRequest) {
