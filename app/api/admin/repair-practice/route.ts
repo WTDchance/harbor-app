@@ -14,6 +14,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
+const VAPI_API_KEY = process.env.VAPI_API_KEY || ''
+const VAPI_BASE_URL = 'https://api.vapi.ai'
+
 function unauthorized() {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }
@@ -98,5 +101,90 @@ export async function POST(req: NextRequest) {
     patched_keys: Object.keys(patch),
     before,
     after,
+  })
+}
+
+// PATCH /api/admin/repair-practice?practice_id=<uuid>&sync_vapi=true
+// Reads the practice's current system_prompt (or auto-generates one from
+// practice fields) and PATCHes the linked Vapi assistant's model.messages
+// so the voice agent matches the DB. Also syncs the firstMessage (greeting).
+export async function PATCH(req: NextRequest) {
+  if (!checkAuth(req)) return unauthorized()
+
+  const practiceId = req.nextUrl.searchParams.get('practice_id')
+  if (!practiceId) {
+    return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
+  }
+
+  const { data: p, error: pErr } = await supabaseAdmin
+    .from('practices')
+    .select('*')
+    .eq('id', practiceId)
+    .single()
+
+  if (pErr || !p) {
+    return NextResponse.json({ error: pErr?.message || 'not found' }, { status: 404 })
+  }
+  if (!p.vapi_assistant_id) {
+    return NextResponse.json({ error: 'no vapi_assistant_id on practice' }, { status: 400 })
+  }
+  if (!VAPI_API_KEY) {
+    return NextResponse.json({ error: 'VAPI_API_KEY not configured' }, { status: 500 })
+  }
+
+  // Use custom system_prompt if present, otherwise build a basic one
+  const systemPrompt =
+    p.system_prompt ||
+    [
+      `You are ${p.ai_name || 'the receptionist'}, the AI receptionist for ${p.name}.`,
+      `${p.therapist_name || 'The therapist'} is the provider.`,
+      p.location ? `Located in ${p.location}.` : '',
+      p.specialties?.length ? `Specialties: ${p.specialties.join(', ')}.` : '',
+      p.insurance_accepted?.length ? `Insurance: ${p.insurance_accepted.join(', ')}.` : '',
+      p.telehealth ? 'Telehealth available.' : 'In-person only.',
+      'Be warm, professional, and HIPAA-conscious.',
+      'If a caller expresses suicidal thoughts or crisis signals, provide 988 immediately.',
+    ]
+      .filter(Boolean)
+      .join(' ')
+
+  const greeting =
+    p.greeting ||
+    `Hi, this is ${p.ai_name || 'the receptionist'} at ${p.name}. How can I help today?`
+
+  const vapiPatch: Record<string, any> = {
+    model: {
+      provider: 'anthropic',
+      model: 'claude-3-5-haiku-20241022',
+      messages: [{ role: 'system', content: systemPrompt }],
+      temperature: 0.7,
+    },
+    firstMessage: greeting,
+  }
+
+  const res = await fetch(`${VAPI_BASE_URL}/assistant/${p.vapi_assistant_id}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${VAPI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(vapiPatch),
+  })
+
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '')
+    return NextResponse.json(
+      { error: `vapi_patch_failed (${res.status})`, body: errBody },
+      { status: 502 }
+    )
+  }
+
+  const vapiResult = await res.json()
+  return NextResponse.json({
+    ok: true,
+    vapi_assistant_id: p.vapi_assistant_id,
+    prompt_length: systemPrompt.length,
+    greeting_length: greeting.length,
+    vapi_name: vapiResult.name,
   })
 }
