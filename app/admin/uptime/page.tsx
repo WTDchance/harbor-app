@@ -5,6 +5,29 @@ import { createClient } from "@/lib/supabase-browser"
 
 const supabase = createClient()
 
+type SentryIssue = {
+  id: string
+  title: string
+  culprit: string
+  level: string
+  count: number
+  firstSeen: string
+  lastSeen: string
+  permalink: string
+}
+
+type SentryData = {
+  configured: boolean
+  errors: {
+    total: number
+    byLevel: { error: number; warning: number; info: number }
+    recent: SentryIssue[]
+  }
+  uptime: { id: string; name: string; url: string; status: string }[]
+  sentryUrl: string
+  fetched_at: string
+}
+
 type ServiceStatus = {
   service: string
   status: "healthy" | "degraded" | "down"
@@ -99,6 +122,7 @@ function formatDate(d: string) {
 export default function UptimeDashboard() {
   const [live, setLive] = useState<LiveCheck | null>(null)
   const [history, setHistory] = useState<HistoryData | null>(null)
+  const [sentry, setSentry] = useState<SentryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [checking, setChecking] = useState(false)
   const [period, setPeriod] = useState(30)
@@ -135,6 +159,19 @@ export default function UptimeDashboard() {
     } catch {}
   }, [getToken, period])
 
+  const fetchSentry = useCallback(async () => {
+    try {
+      const token = await getToken()
+      const res = await fetch("/api/admin/sentry", {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setSentry(data)
+      }
+    } catch {}
+  }, [getToken])
+
   const runCheck = async () => {
     setChecking(true)
     try {
@@ -158,13 +195,14 @@ export default function UptimeDashboard() {
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([fetchLive(), fetchHistory()]).finally(() => setLoading(false))
+    Promise.all([fetchLive(), fetchHistory(), fetchSentry()]).finally(() => setLoading(false))
     const interval = setInterval(() => {
       fetchLive()
       fetchHistory()
+      fetchSentry()
     }, 60000) // refresh every minute
     return () => clearInterval(interval)
-  }, [fetchLive, fetchHistory])
+  }, [fetchLive, fetchHistory, fetchSentry])
 
   if (loading) {
     return (
@@ -309,6 +347,114 @@ export default function UptimeDashboard() {
         </div>
       </div>
 
+      {/* Sentry Error Monitoring */}
+      {sentry?.configured && (
+        <div className="bg-white border rounded-lg p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-semibold text-gray-900">Error Monitoring</h2>
+            <a
+              href={sentry.sentryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-teal-600 hover:text-teal-700 flex items-center gap-1"
+            >
+              Open Sentry
+              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+              </svg>
+            </a>
+          </div>
+
+          {/* Error counts by level */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-red-50 border border-red-100 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-red-700">{sentry.errors.byLevel.error}</div>
+              <div className="text-xs text-red-600">Errors</div>
+            </div>
+            <div className="bg-yellow-50 border border-yellow-100 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-yellow-700">{sentry.errors.byLevel.warning}</div>
+              <div className="text-xs text-yellow-600">Warnings</div>
+            </div>
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-center">
+              <div className="text-2xl font-bold text-blue-700">{sentry.errors.byLevel.info}</div>
+              <div className="text-xs text-blue-600">Info</div>
+            </div>
+          </div>
+
+          {/* Recent unresolved issues */}
+          {sentry.errors.recent.length > 0 ? (
+            <div>
+              <h3 className="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">
+                Recent Unresolved Issues
+              </h3>
+              <div className="space-y-2">
+                {sentry.errors.recent.map((issue) => (
+                  <a
+                    key={issue.id}
+                    href={issue.permalink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block border rounded-lg p-3 hover:bg-gray-50 transition"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+                          issue.level === "error" ? "bg-red-500" :
+                          issue.level === "warning" ? "bg-yellow-500" : "bg-blue-500"
+                        }`} />
+                        <span className="text-sm font-medium text-gray-800 truncate">
+                          {issue.title}
+                        </span>
+                      </div>
+                      <span className="text-xs text-gray-400 shrink-0 ml-2">
+                        {issue.count}x
+                      </span>
+                    </div>
+                    <div className="mt-1 text-xs text-gray-500 flex gap-3">
+                      {issue.culprit && (
+                        <span className="truncate">{issue.culprit}</span>
+                      )}
+                      <span className="shrink-0">Last: {formatDate(issue.lastSeen)}</span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">No unresolved issues. All clear!</p>
+          )}
+        </div>
+      )}
+
+      {/* Sentry Uptime Monitors */}
+      {sentry?.configured && sentry.uptime.length > 0 && (
+        <div className="bg-white border rounded-lg p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-900 mb-3">External Uptime Monitors</h2>
+          <div className="space-y-2">
+            {sentry.uptime.map((monitor) => (
+              <div key={monitor.id} className="flex items-center justify-between border rounded-lg p-3">
+                <div className="flex items-center gap-3">
+                  <StatusDot status={monitor.status === "active" || monitor.status === "ok" ? "healthy" : "down"} />
+                  <div>
+                    <div className="text-sm font-medium text-gray-800">{monitor.name}</div>
+                    {monitor.url && (
+                      <div className="text-xs text-gray-400">{monitor.url}</div>
+                    )}
+                  </div>
+                </div>
+                <span className={`text-xs px-2 py-0.5 rounded-full ${
+                  monitor.status === "active" || monitor.status === "ok"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"
+                }`}>
+                  {monitor.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Period Selector + Call Chart */}
       <div className="bg-white border rounded-lg p-5 shadow-sm">
         <div className="flex items-center justify-between mb-4">
@@ -406,6 +552,57 @@ export default function UptimeDashboard() {
         ) : (
           <p className="text-sm text-gray-500">No incidents recorded. Looking good!</p>
         )}
+      </div>
+
+      {/* Quick Links */}
+      <div className="bg-white border rounded-lg p-5 shadow-sm">
+        <h2 className="font-semibold text-gray-900 mb-3">Quick Links</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {sentry?.configured && (
+            <a
+              href={sentry.sentryUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 border rounded-lg p-3 hover:bg-gray-50 transition text-sm text-gray-700"
+            >
+              <svg className="w-4 h-4 text-purple-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              Sentry Dashboard
+            </a>
+          )}
+          <a
+            href="https://railway.app/dashboard"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 border rounded-lg p-3 hover:bg-gray-50 transition text-sm text-gray-700"
+          >
+            <svg className="w-4 h-4 text-indigo-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
+            </svg>
+            Railway
+          </a>
+          <a
+            href="https://supabase.com/dashboard"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 border rounded-lg p-3 hover:bg-gray-50 transition text-sm text-gray-700"
+          >
+            <svg className="w-4 h-4 text-green-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4" />
+            </svg>
+            Supabase
+          </a>
+          <a
+            href="/admin/hipaa"
+            className="flex items-center gap-2 border rounded-lg p-3 hover:bg-gray-50 transition text-sm text-gray-700"
+          >
+            <svg className="w-4 h-4 text-teal-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+            </svg>
+            HIPAA Audit
+          </a>
+        </div>
       </div>
     </div>
   )
