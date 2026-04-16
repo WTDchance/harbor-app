@@ -44,14 +44,24 @@ export default function AdminPractices() {
   }
 
   useEffect(() => {
-    supabase
-      .from('practices')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .then(({ data }) => {
-        setPractices(data || [])
+    // Use the admin signups API instead of the browser Supabase client so we
+    // bypass RLS and see every practice (including Harbor Demo and anything
+    // not tied to the admin's auth user).
+    ;(async () => {
+      try {
+        const res = await fetch('/api/admin/signups', { credentials: 'include' })
+        if (!res.ok) {
+          setPractices([])
+        } else {
+          const json = await res.json()
+          setPractices(json.practices || [])
+        }
+      } catch {
+        setPractices([])
+      } finally {
         setLoading(false)
-      })
+      }
+    })()
   }, [supabase])
 
   return (
