@@ -43,8 +43,10 @@ export default function SmsProgramPage() {
             <strong>Phone call:</strong> When a patient calls a Harbor practice
             and schedules an appointment with the practice&apos;s AI receptionist,
             the receptionist verbally collects the patient&apos;s mobile number and
-            states: &ldquo;Is it okay if we send appointment confirmations and
-            reminders to this number? Reply STOP at any time to opt out.&rdquo;
+            states: &ldquo;Great, and would you like us to send appointment
+            confirmations and reminders to that number by text? Standard
+            message and data rates may apply, and you can text STOP at any
+            time to opt out, or HELP for help.&rdquo;
           </li>
           <li className="mb-2">
             <strong>Intake form:</strong> When a patient completes a Harbor
