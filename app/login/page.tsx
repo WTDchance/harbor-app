@@ -24,6 +24,12 @@ export default function LoginPage() {
 
   // Redirect already-authenticated users straight to dashboard
   useEffect(() => {
+    // Show timeout message if redirected from session expiry
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("reason") === "timeout") {
+      setError("Your session expired due to inactivity. Please sign in again.");
+    }
+
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session) router.replace("/dashboard");
       else setCheckingSession(false);
@@ -35,10 +41,29 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+
+      // Audit: successful login
+      fetch("/api/audit-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "login", details: { method: "password" } }),
+      }).catch(() => {});
+
       router.replace("/dashboard");
     } catch (err: unknown) {
+      // Audit: failed login attempt
+      fetch("/api/audit-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "login_failed",
+          details: { method: "password", email },
+          severity: "warning",
+        }),
+      }).catch(() => {});
+
       setError(
         err instanceof Error
           ? err.message === "Invalid login credentials"
