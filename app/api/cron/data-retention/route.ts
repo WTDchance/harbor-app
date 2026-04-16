@@ -29,9 +29,13 @@ const SMS_RETENTION_DAYS = 90;
 const AUDIT_LOG_RETENTION_DAYS = 365;
 
 export async function GET(req: NextRequest) {
-  // Auth check — same pattern as reconciler
-  const secret = req.headers.get('x-cron-secret');
-  if (process.env.RECONCILER_SECRET && secret !== process.env.RECONCILER_SECRET) {
+  // Auth check — accepts either x-cron-secret (reconciler pattern) or
+  // Authorization: Bearer (admin cron pattern) for flexibility.
+  const cronSecret = req.headers.get('x-cron-secret');
+  const bearerToken = req.headers.get('authorization')?.replace('Bearer ', '');
+  const validCron = process.env.RECONCILER_SECRET && cronSecret === process.env.RECONCILER_SECRET;
+  const validBearer = process.env.CRON_SECRET && bearerToken === process.env.CRON_SECRET;
+  if (!validCron && !validBearer) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
