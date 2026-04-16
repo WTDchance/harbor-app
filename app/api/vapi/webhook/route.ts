@@ -7,6 +7,7 @@ import { generateCallSummary, extractCallInformation, detectCrisisIndicators } f
 import { getCallSummaryPrompt } from '@/lib/ai-prompts'
 import { sendEmail, buildCallSummaryEmail } from '@/lib/email'
 import { buildSystemPrompt } from '@/lib/systemPrompt'
+import { getCalendarRouter } from '@/lib/calendar'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 
@@ -750,6 +751,45 @@ async function processEndOfCall(opts: {
   if (info.appointmentScheduled && info.appointmentTime) {
     try {
       const appointmentPatientId = existingPatient?.id || newPatient?.id
+      const parsedDate = parseAppointmentDate(info.appointmentTime)
+      const durationMinutes = 60
+
+      // 8a. Push to the practice's connected calendar first, so we can store
+      // the event id on the appointment row. If no calendar is connected, or
+      // the push fails, we still save the DB row so the booking is not lost.
+      let calendarEventId: string | null = null
+      if (parsedDate) {
+        try {
+          const router = await getCalendarRouter(practiceId)
+          if (router) {
+            const endDate = new Date(parsedDate.getTime() + durationMinutes * 60_000)
+            const summary = `Therapy: ${info.patientName || 'New patient'}`
+            const description = [
+              `Booked via phone (${practiceName}).`,
+              info.patientPhone ? `Phone: ${info.patientPhone}` : null,
+              info.patientEmail ? `Email: ${info.patientEmail}` : null,
+              info.reasonForSeeking ? `Reason: ${info.reasonForSeeking}` : null,
+            ]
+              .filter(Boolean)
+              .join('\n')
+            const ev = await router.createEvent({
+              summary,
+              start: parsedDate,
+              end: endDate,
+              description,
+            })
+            calendarEventId = ev.id
+            console.log(`[Vapi] Calendar event created (${router.provider}): ${calendarEventId}`)
+          } else {
+            console.log('[Vapi] No calendar connection for practice — skipping calendar push')
+          }
+        } catch (calErr: any) {
+          console.error('[Vapi] Calendar push failed (non-blocking):', calErr?.message || calErr)
+        }
+      } else {
+        console.log('[Vapi] Could not parse appointmentTime — skipping calendar push')
+      }
+
       const appointmentData: any = {
         practice_id: practiceId,
         patient_id: appointmentPatientId || null,
@@ -759,10 +799,10 @@ async function processEndOfCall(opts: {
         appointment_time: info.appointmentTime,
         status: 'scheduled',
         source: 'ai_call',
-        duration_minutes: 60,
+        duration_minutes: durationMinutes,
+        calendar_event_id: calendarEventId,
       }
 
-      const parsedDate = parseAppointmentDate(info.appointmentTime)
       if (parsedDate) {
         appointmentData.scheduled_at = parsedDate.toISOString()
         appointmentData.appointment_date = parsedDate.toISOString().split('T')[0]
@@ -775,7 +815,7 @@ async function processEndOfCall(opts: {
       if (apptError) {
         console.error('[Vapi] Failed to create appointment:', apptError.message)
       } else {
-        console.log(`[Vapi] Appointment created: ${info.appointmentTime} for ${info.patientName || patientPhone}`)
+        console.log(`[Vapi] Appointment created: ${info.appointmentTime} for ${info.patientName || patientPhone} (calendar_event_id=${calendarEventId || 'none'})`)
       }
     } catch (err) {
       console.error('[Vapi] Appointment creation error:', err)
