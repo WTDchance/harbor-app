@@ -3,12 +3,7 @@
 // POST creates intake_documents records for a practice from a curated set of templates
 
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { supabaseAdmin as supabase } from '@/lib/supabase';
 
 type Template = {
   slug: string;

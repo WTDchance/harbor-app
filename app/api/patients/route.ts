@@ -5,13 +5,8 @@
 // GET /api/patients?search=&page=&limit=
 
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
+import { supabaseAdmin as supabase } from "@/lib/supabase";
 import { resolvePracticeIdForApi } from "@/lib/active-practice";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
 
 async function getAuthenticatedUser(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
