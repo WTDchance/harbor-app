@@ -85,7 +85,22 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json({ ok: true, counts });
+    // Piggyback data retention on the reconciler schedule. The retention
+    // endpoint dedupes via daily event key, so this is safe to call every
+    // 5 minutes — it only actually deletes once per day.
+    let retentionResult: any = null;
+    try {
+      const base = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com';
+      const headers: Record<string, string> = {};
+      if (process.env.CRON_SECRET) headers['Authorization'] = `Bearer ${process.env.CRON_SECRET}`;
+      else if (process.env.RECONCILER_SECRET) headers['x-cron-secret'] = process.env.RECONCILER_SECRET;
+      const res = await fetch(`${base}/api/cron/data-retention`, { headers });
+      retentionResult = await res.json();
+    } catch (err) {
+      console.error('[reconciler] data-retention call failed', err);
+    }
+
+    return NextResponse.json({ ok: true, counts, retention: retentionResult });
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[reconciler] fatal', err);

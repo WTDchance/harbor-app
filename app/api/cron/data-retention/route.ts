@@ -40,8 +40,21 @@ export async function GET(req: NextRequest) {
   }
 
   const results: Record<string, number> = {};
+  const today = new Date().toISOString().slice(0, 10);
 
   try {
+    // Gate: only run once per day — check if today's event already exists
+    const { data: existing } = await supabaseAdmin
+      .from('harbor_events')
+      .select('id')
+      .eq('event_type', 'system.data_retention_run')
+      .gte('created_at', `${today}T00:00:00Z`)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      return NextResponse.json({ ok: true, skipped: true, reason: 'Already ran today' });
+    }
+
     // 1. Delete call_logs older than 90 days
     const callCutoff = new Date();
     callCutoff.setDate(callCutoff.getDate() - CALL_LOG_RETENTION_DAYS);
