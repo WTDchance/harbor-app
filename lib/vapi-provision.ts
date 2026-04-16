@@ -87,7 +87,9 @@ export async function createVapiAssistant(p: PracticeContext): Promise<string> {
       maxDurationSeconds: 600,
       backgroundSound: 'office',
       backchannelingEnabled: true,
-      hipaaEnabled: true,
+      // hipaaEnabled requires Vapi's $1k/mo HIPAA plan + BAA.
+      // Enable once the plan is active — do NOT set without it.
+      // hipaaEnabled: true,
       transcriber: { provider: 'deepgram', model: 'nova-2', language: 'en-US' },
       server: { url: serverUrl },
       metadata: {
