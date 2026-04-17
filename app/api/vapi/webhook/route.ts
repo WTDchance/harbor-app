@@ -564,7 +564,10 @@ async function processEndOfCall(opts: {
     // Backfill any missing fields from this call (e.g. email collected for first time)
     const backfill: Record<string, any> = {}
     if (info.patientEmail) backfill.email = info.patientEmail
-    if (info.patientInsurance) backfill.insurance = info.patientInsurance
+    if (info.patientInsurance) {
+      backfill.insurance = info.patientInsurance
+      backfill.insurance_provider = info.patientInsurance
+    }
     if (info.reasonForSeeking) backfill.reason_for_seeking = info.reasonForSeeking
     if (Object.keys(backfill).length > 0) {
       backfill.updated_at = new Date().toISOString()
@@ -592,6 +595,7 @@ async function processEndOfCall(opts: {
           phone: patientPhone || null,
           email: info.patientEmail || null,
           insurance: info.patientInsurance || null,
+          insurance_provider: info.patientInsurance || null,
           reason_for_seeking: info.reasonForSeeking || null,
         })
         .select('id')
