@@ -70,10 +70,37 @@ export async function GET(req: NextRequest) {
     } catch { /* swallow */ }
   }
 
+  // Check Vapi phone number config
+  let vapiPhoneConfig: any = null
+  const { data: practicePhone } = await supabaseAdmin
+    .from('practices')
+    .select('vapi_phone_number_id')
+    .eq('id', practiceId)
+    .single()
+
+  if (practicePhone?.vapi_phone_number_id && process.env.VAPI_API_KEY) {
+    try {
+      const phoneRes = await fetch(`https://api.vapi.ai/phone-number/${practicePhone.vapi_phone_number_id}`, {
+        headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+      })
+      if (phoneRes.ok) {
+        const ph = await phoneRes.json()
+        vapiPhoneConfig = {
+          id: ph.id,
+          number: ph.number,
+          assistantId: ph.assistantId || '(not set)',
+          serverUrl: ph.serverUrl || ph.server?.url || '(not set)',
+          squadId: ph.squadId || null,
+        }
+      }
+    } catch { /* swallow */ }
+  }
+
   return NextResponse.json({
     call_logs: { data: calls, error: callErr?.message },
     intake_forms: { data: intakes, error: intakeErr?.message },
     patients: { data: patients, error: patErr?.message },
     vapi_assistant: vapiAssistant,
+    vapi_phone: vapiPhoneConfig,
   })
 }
