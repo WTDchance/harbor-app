@@ -43,9 +43,37 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(10)
 
+  // Check Vapi assistant config if practice has one
+  let vapiAssistant: any = null
+  const { data: practice } = await supabaseAdmin
+    .from('practices')
+    .select('vapi_assistant_id')
+    .eq('id', practiceId)
+    .single()
+
+  if (practice?.vapi_assistant_id && process.env.VAPI_API_KEY) {
+    try {
+      const vapiRes = await fetch(`https://api.vapi.ai/assistant/${practice.vapi_assistant_id}`, {
+        headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+      })
+      if (vapiRes.ok) {
+        const full = await vapiRes.json()
+        vapiAssistant = {
+          id: full.id,
+          name: full.name,
+          model_provider: full.model?.provider,
+          model_name: full.model?.model,
+          server_url: full.server?.url || full.serverUrl || '(not set)',
+          firstMessage: full.firstMessage?.substring(0, 100),
+        }
+      }
+    } catch { /* swallow */ }
+  }
+
   return NextResponse.json({
     call_logs: { data: calls, error: callErr?.message },
     intake_forms: { data: intakes, error: intakeErr?.message },
     patients: { data: patients, error: patErr?.message },
+    vapi_assistant: vapiAssistant,
   })
 }
