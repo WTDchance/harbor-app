@@ -269,7 +269,7 @@ export async function PATCH(req: NextRequest) {
       model: 'eleven_turbo_v2_5',
       stability: 0.5,
       similarityBoost: 0.8,
-      speed: 0.9,
+      speed: 0.85,
       style: 0.2,
       useSpeakerBoost: true,
     },
