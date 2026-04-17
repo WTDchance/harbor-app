@@ -19,10 +19,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
   }
 
-  // Recent call logs
+  // Recent call logs (use * to avoid column name mismatches)
   const { data: calls, error: callErr } = await supabaseAdmin
     .from('call_logs')
-    .select('id, vapi_call_id, patient_phone, call_summary, created_at, practice_id')
+    .select('*')
     .eq('practice_id', practiceId)
     .order('created_at', { ascending: false })
     .limit(10)
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
   // Recent intake forms
   const { data: intakes, error: intakeErr } = await supabaseAdmin
     .from('intake_forms')
-    .select('id, practice_id, patient_id, call_log_id, delivery_method, sms_sent, email_sent, status, created_at, patient_phone, patient_email')
+    .select('*')
     .eq('practice_id', practiceId)
     .order('created_at', { ascending: false })
     .limit(10)
