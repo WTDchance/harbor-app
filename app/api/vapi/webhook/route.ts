@@ -236,6 +236,7 @@ async function handleAssistantRequest(message: any) {
         model: 'nova-2',
       },
       backgroundSound: 'office',
+      server: { url: serverUrl },
       serverUrl: serverUrl,
       endCallFunctionEnabled: true,
       recordingEnabled: true,
