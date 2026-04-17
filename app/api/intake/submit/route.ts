@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-service'
+import { logCommunication } from '@/lib/patientCommunications'
 
 // PHQ-9 scoring
 function scorePHQ9(answers: number[]): { score: number; severity: string; recommendation: string } {
@@ -118,6 +119,41 @@ export async function POST(req: NextRequest) {
     // FIX: Update the PATIENT record with demographics from intake
     await updatePatientFromIntake(supabase, intake, demographics, insurance, phq9Result, gad7Result)
 
+    // Tier 2A: Write PHQ-9 and GAD-7 to patient_assessments for longitudinal tracking
+    const resolvedPatientId = intake.patient_id || null
+    if (phq9Result) {
+      await supabase.from('patient_assessments').insert({
+        practice_id: intake.practice_id,
+        patient_id: resolvedPatientId,
+        patient_name: patientName || null,
+        assessment_type: 'phq9',
+        score: phq9Result.score,
+        severity: phq9Result.severity?.toLowerCase().replace(/ /g, '_'),
+        responses_json: { answers: phq9_answers },
+        administered_by: 'intake_form',
+        intake_form_id: intake.id,
+        completed_at: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) console.error('[Intake] patient_assessments PHQ-9 insert error:', error.message)
+      })
+    }
+    if (gad7Result) {
+      await supabase.from('patient_assessments').insert({
+        practice_id: intake.practice_id,
+        patient_id: resolvedPatientId,
+        patient_name: patientName || null,
+        assessment_type: 'gad7',
+        score: gad7Result.score,
+        severity: gad7Result.severity?.toLowerCase().replace(/ /g, '_'),
+        responses_json: { answers: gad7_answers },
+        administered_by: 'intake_form',
+        intake_form_id: intake.id,
+        completed_at: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) console.error('[Intake] patient_assessments GAD-7 insert error:', error.message)
+      })
+    }
+
     // Save document signatures/acknowledgments
     if (document_acknowledgments && typeof document_acknowledgments === 'object') {
       const docIds = Object.keys(document_acknowledgments).filter(id => document_acknowledgments[id])
@@ -135,6 +171,18 @@ export async function POST(req: NextRequest) {
           })
       }
     }
+
+    // Tier 2B: Log intake form completion as inbound communication
+    logCommunication({
+      practiceId: intake.practice_id,
+      patientId: resolvedPatientId || null,
+      patientPhone: intake.patient_phone || null,
+      patientEmail: demographics?.email || intake.patient_email || null,
+      channel: 'intake_form',
+      direction: 'inbound',
+      contentSummary: `Intake form completed by ${patientName || 'patient'}${phq9Result ? ` (PHQ-9: ${phq9Result.score})` : ''}${gad7Result ? ` (GAD-7: ${gad7Result.score})` : ''}`,
+      metadata: { intake_form_id: intake.id, token },
+    })
 
     return NextResponse.json({
       success: true,

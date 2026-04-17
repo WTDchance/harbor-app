@@ -11,6 +11,7 @@ import { getCalendarRouter, findFreeSlots } from '@/lib/calendar'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 import { analyzeTranscript } from '@/lib/transcriptAnalyzer'
+import { logCommunication } from '@/lib/patientCommunications'
 
 // ---- Shared practice resolution ----
 // Resolves the practice ID from Vapi webhook payloads using a robust fallback chain:
@@ -687,6 +688,23 @@ async function processEndOfCall(opts: {
     }
   }
 
+  // 4d. Tier 2B: Log this call to patient_communications
+  logCommunication({
+    practiceId,
+    patientId: resolvedPatientId || null,
+    patientPhone: customerPhone || null,
+    channel: 'call',
+    direction: 'inbound',
+    contentSummary: callSummary?.slice(0, 500) || null,
+    durationSeconds: Math.round(duration) || null,
+    metadata: {
+      vapi_call_id: vapiCallId,
+      call_outcome: metrics?.callOutcome || null,
+      is_new_patient: metrics?.isNewPatient ?? null,
+      ended_reason: endedReason,
+    },
+  })
+
   // 5. Crisis alert â save and SMS the therapist
   if (crisisDetected) {
     try {
@@ -1277,6 +1295,22 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
       })
 
       console.log(`[Vapi] Phone screening saved for patient ${patientId || '(unknown)'}: PHQ-2=${phq2Score}, GAD-2=${gad2Score}`)
+
+      // Tier 2A: Also write to patient_assessments for longitudinal tracking
+      await supabaseAdmin.from('patient_assessments').insert({
+        practice_id: practiceId,
+        patient_id: patientId,
+        patient_name: patientName || null,
+        assessment_type: 'phq2_gad2_phone',
+        score: totalScore,
+        severity: severity,
+        responses_json: { phq2: parseInt(phq2Score) || 0, gad2: parseInt(gad2Score) || 0 },
+        administered_by: 'ai_call',
+        completed_at: new Date().toISOString(),
+      }).then(({ error }) => {
+        if (error) console.error('[Vapi] patient_assessments insert error:', error.message)
+        else console.log(`[Vapi] patient_assessments: PHQ-2/GAD-2 logged for ${patientId || patientName}`)
+      })
     } catch (err) {
       console.error('[Vapi] Screening save error:', err)
     }

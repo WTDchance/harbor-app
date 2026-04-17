@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { sendSMS } from '@/lib/twilio'
+import { logCommunication } from '@/lib/patientCommunications'
 import type { TwilioSendSMSRequest } from '@/types'
 
 /**
@@ -99,6 +100,16 @@ export async function POST(request: NextRequest) {
           created_at: new Date().toISOString(),
         })
     }
+
+    // Tier 2B: Log outbound SMS to patient_communications
+    logCommunication({
+      practiceId,
+      patientPhone: to,
+      channel: 'sms',
+      direction: 'outbound',
+      contentSummary: messageBody.slice(0, 500),
+      metadata: { message_sid: messageSid },
+    })
 
     console.log(`✓ SMS sent to ${to}: ${messageSid}`)
 

@@ -15,6 +15,7 @@ import {
   helpMessage,
 } from '@/lib/sms-optout'
 import { runSmsAgent } from '@/lib/sms-ai-agent'
+import { logCommunication } from '@/lib/patientCommunications'
 import type { SMSMessage } from '@/types'
 
 /**
@@ -195,6 +196,26 @@ export async function POST(request: NextRequest) {
 
       conversationId = newConv?.id
     }
+
+    // Tier 2B: Log both inbound + outbound SMS to patient_communications
+    logCommunication({
+      practiceId,
+      patientId: patient?.id || null,
+      patientPhone: from,
+      channel: 'sms',
+      direction: 'inbound',
+      contentSummary: body.slice(0, 500),
+      metadata: { message_sid: messageSid, conversation_id: conversationId },
+    })
+    logCommunication({
+      practiceId,
+      patientId: patient?.id || null,
+      patientPhone: from,
+      channel: 'sms',
+      direction: 'outbound',
+      contentSummary: aiResponse.slice(0, 500),
+      metadata: { conversation_id: conversationId },
+    })
 
     console.log(`✓ Message logged and response generated`)
 

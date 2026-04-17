@@ -8,6 +8,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import twilio from 'twilio'
 import crypto from 'crypto'
 import { sendEmail, buildIntakeEmail } from '@/lib/email'
+import { logCommunication } from '@/lib/patientCommunications'
 
 // POST /api/intake/send
 // Called by the webhook after a new patient call, or manually from dashboard
@@ -176,6 +177,30 @@ export async function POST(request: NextRequest) {
           intake_email: patient_email || null,
         })
         .eq('id', call_log_id)
+    }
+
+    // Tier 2B: Log intake delivery to patient_communications
+    if (smsSent) {
+      logCommunication({
+        practiceId: practice_id,
+        patientId: patient_id || null,
+        patientPhone: patient_phone || null,
+        channel: 'sms',
+        direction: 'outbound',
+        contentSummary: `Intake form sent via SMS to ${firstName}`,
+        metadata: { intake_form_id: formData.id, delivery_type: 'intake' },
+      })
+    }
+    if (emailSent) {
+      logCommunication({
+        practiceId: practice_id,
+        patientId: patient_id || null,
+        patientEmail: patient_email || null,
+        channel: 'email',
+        direction: 'outbound',
+        contentSummary: `Intake form sent via email to ${firstName}`,
+        metadata: { intake_form_id: formData.id, delivery_type: 'intake' },
+      })
     }
 
     console.log(`[Intake] Delivery complete: sms=${smsSent}, email=${emailSent}, form_id=${formData.id}, patient_id=${patient_id || '(none)'}`)
