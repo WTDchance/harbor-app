@@ -10,6 +10,7 @@ import { buildSystemPrompt } from '@/lib/systemPrompt'
 import { getCalendarRouter, findFreeSlots } from '@/lib/calendar'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
+import { analyzeTranscript } from '@/lib/transcriptAnalyzer'
 
 // ---- Shared practice resolution ----
 // Resolves the practice ID from Vapi webhook payloads using a robust fallback chain:
@@ -450,10 +451,19 @@ async function processEndOfCall(opts: {
     }
   }
 
-  // 3. Save call log to Supabase
+  // 3. Analyze transcript for Tier 1 data moat metrics
+  let metrics: ReturnType<typeof analyzeTranscript> | null = null
+  try {
+    metrics = analyzeTranscript(transcriptText)
+    console.log(`[Vapi] Transcript metrics: outcome=${metrics.callOutcome}, turns=${metrics.turnCount}, topics=[${metrics.topicsDiscussed.join(',')}], booking=${metrics.bookingAttempted}/${metrics.bookingSucceeded}`)
+  } catch (metricsErr: any) {
+    console.error('[Vapi] Transcript analysis failed (non-blocking):', metricsErr?.message)
+  }
+
+  // 4. Save call log to Supabase
   // FIX: Check Supabase {error} return instead of relying on try/catch
   // (Supabase JS v2 does NOT throw on errors â it returns {data, error})
-  const { error: callLogError } = await supabaseAdmin.from('call_logs').upsert({
+  const callLogData: Record<string, any> = {
     practice_id: practiceId,
     vapi_call_id: vapiCallId || null,
     patient_phone: customerPhone || 'unknown',
@@ -463,22 +473,30 @@ async function processEndOfCall(opts: {
     ended_reason: endedReason,
     crisis_detected: crisisDetected,
     created_at: new Date().toISOString(),
-  }, { onConflict: 'vapi_call_id' })
+  }
+
+  // Tier 1 data moat: attach transcript metrics to call log
+  if (metrics) {
+    callLogData.call_outcome = metrics.callOutcome
+    callLogData.is_new_patient = metrics.isNewPatient
+    callLogData.booking_attempted = metrics.bookingAttempted
+    callLogData.booking_succeeded = metrics.bookingSucceeded
+    callLogData.topics_discussed = metrics.topicsDiscussed
+    callLogData.caller_talk_seconds = metrics.callerTalkSeconds
+    callLogData.ai_talk_seconds = metrics.aiTalkSeconds
+    callLogData.turn_count = metrics.turnCount
+    callLogData.enriched_at = new Date().toISOString()
+  }
+
+  const { error: callLogError } = await supabaseAdmin.from('call_logs').upsert(
+    callLogData,
+    { onConflict: 'vapi_call_id' }
+  )
 
   if (callLogError) {
     console.error('[Vapi] Failed to upsert call log:', callLogError.message, callLogError.details)
     // Fallback: try plain insert (in case upsert conflict on empty/null vapi_call_id)
-    const { error: insertError } = await supabaseAdmin.from('call_logs').insert({
-      practice_id: practiceId,
-      vapi_call_id: vapiCallId || null,
-      patient_phone: customerPhone || 'unknown',
-      duration_seconds: Math.round(duration),
-      transcript: transcriptText,
-      summary: callSummary,
-      ended_reason: endedReason,
-      crisis_detected: crisisDetected,
-      created_at: new Date().toISOString(),
-    })
+    const { error: insertError } = await supabaseAdmin.from('call_logs').insert(callLogData)
     if (insertError) {
       console.error('[Vapi] Fallback insert also failed:', insertError.message)
     } else {
@@ -631,6 +649,41 @@ async function processEndOfCall(opts: {
       console.error('[Vapi] Failed to update call log with patient info:', linkError.message)
     } else {
       console.log(`[Vapi] Call log updated: patient_id=${resolvedPatientId}, caller_name=${info.patientName}, call_type=${updateData.call_type}`)
+    }
+  }
+
+  // 4c. Tier 1 data moat: update patient aggregate counters
+  if (resolvedPatientId) {
+    try {
+      const now = new Date().toISOString()
+      const patientUpdate: Record<string, any> = {
+        last_call_at: now,
+        updated_at: now,
+      }
+      // For new patients, set first_contact_at and acquisition_source
+      if (newPatient) {
+        patientUpdate.first_contact_at = now
+        patientUpdate.acquisition_source = 'ai_call'
+        patientUpdate.total_calls = 1
+      }
+      // For existing patients, increment total_calls using raw SQL-like approach
+      // (Supabase JS doesn't support atomic increment, so we fetch + update)
+      if (existingPatient) {
+        const { data: currentPatient } = await supabaseAdmin
+          .from('patients')
+          .select('total_calls')
+          .eq('id', resolvedPatientId)
+          .maybeSingle()
+        patientUpdate.total_calls = (currentPatient?.total_calls || 0) + 1
+      }
+
+      await supabaseAdmin
+        .from('patients')
+        .update(patientUpdate)
+        .eq('id', resolvedPatientId)
+      console.log(`[Vapi] Patient counters updated: ${resolvedPatientId} (total_calls=${patientUpdate.total_calls})`)
+    } catch (counterErr: any) {
+      console.error('[Vapi] Patient counter update failed (non-blocking):', counterErr?.message)
     }
   }
 
@@ -813,6 +866,12 @@ async function processEndOfCall(opts: {
         source: 'ai_call',
         duration_minutes: durationMinutes,
         calendar_event_id: calendarEventId,
+      }
+
+      // Tier 1: booking lead time (hours between now and appointment)
+      if (parsedDate) {
+        const leadTimeMs = parsedDate.getTime() - Date.now()
+        appointmentData.booking_lead_time_hours = Math.max(0, Math.round(leadTimeMs / (1000 * 60 * 60)))
       }
 
       if (parsedDate) {
@@ -1058,6 +1117,7 @@ async function handleBookAppointment(params: any, practiceId: string | null): Pr
     }
 
     // Save appointment to DB
+    const leadTimeMs = parsedDate.getTime() - Date.now()
     const appointmentData: any = {
       practice_id: practiceId,
       patient_name: patientName || null,
@@ -1070,6 +1130,7 @@ async function handleBookAppointment(params: any, practiceId: string | null): Pr
       source: 'ai_call',
       duration_minutes: durationMinutes,
       calendar_event_id: calendarEventId,
+      booking_lead_time_hours: Math.max(0, Math.round(leadTimeMs / (1000 * 60 * 60))),
     }
 
     // Try to link to existing patient
