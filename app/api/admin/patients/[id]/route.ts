@@ -2,6 +2,56 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 
+// GET /api/admin/patients/:id — fetch a single patient (or use id=search with query params)
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const authHeader = request.headers.get('authorization') || ''
+  const cronSecret = process.env.CRON_SECRET
+  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const patientId = params.id
+
+  // Special case: id=search — look up by practice_id + phone
+  if (patientId === 'search') {
+    const practiceId = request.nextUrl.searchParams.get('practice_id')
+    const phone = request.nextUrl.searchParams.get('phone')
+    if (!practiceId) {
+      return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
+    }
+
+    let query = supabaseAdmin
+      .from('patients')
+      .select('id, first_name, last_name, phone, email, created_at')
+      .eq('practice_id', practiceId)
+      .order('created_at', { ascending: false })
+      .limit(20)
+
+    if (phone) {
+      const normalized = phone.replace(/\D/g, '').slice(-10)
+      query = query.ilike('phone', `%${normalized}`)
+    }
+
+    const { data, error } = await query
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ patients: data })
+  }
+
+  // Normal case: fetch by ID
+  const { data, error } = await supabaseAdmin
+    .from('patients')
+    .select('*')
+    .eq('id', patientId)
+    .maybeSingle()
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json(data)
+}
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
