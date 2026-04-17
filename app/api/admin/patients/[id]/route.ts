@@ -7,17 +7,21 @@ export async function DELETE(
   { params }: { params: { id: string } }
 ) {
   try {
-    // Auth check — must be logged in
-    const supabase = await createClient()
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+    // Auth: accept either CRON_SECRET bearer token or logged-in admin session
+    const authHeader = request.headers.get('authorization') || ''
+    const cronSecret = process.env.CRON_SECRET
+    const isCronAuth = cronSecret && authHeader === `Bearer ${cronSecret}`
 
-    // Admin check — only ADMIN_EMAIL can hard-delete patients
-    const adminEmail = process.env.ADMIN_EMAIL
-    if (!adminEmail || user.email !== adminEmail) {
-      return NextResponse.json({ error: 'Forbidden \u2014 admin only' }, { status: 403 })
+    if (!isCronAuth) {
+      const supabase = await createClient()
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError || !user) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      const adminEmail = process.env.ADMIN_EMAIL
+      if (!adminEmail || user.email !== adminEmail) {
+        return NextResponse.json({ error: 'Forbidden \u2014 admin only' }, { status: 403 })
+      }
     }
 
     const patientId = params.id
