@@ -158,7 +158,7 @@ export async function PATCH(req: NextRequest) {
     name: `${aiName} - ${p.name}`,
     model: {
       provider: 'anthropic',
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5-20251001',
       messages: [{ role: 'system', content: systemPrompt }],
       temperature: 0.7,
     },
