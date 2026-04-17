@@ -1110,7 +1110,7 @@ function buildFallbackAssistant() {
       model: 'eleven_turbo_v2_5',
       stability: 0.5,
       similarityBoost: 0.8,
-      speed: 1.0,
+      speed: 0.9,
       style: 0.2,
       useSpeakerBoost: true,
     },
