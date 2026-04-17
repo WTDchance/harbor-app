@@ -104,14 +104,16 @@ export async function POST(req: NextRequest) {
   })
 }
 
-// PATCH /api/admin/repair-practice?practice_id=<uuid>&sync_vapi=true
-// Reads the practice's current system_prompt (or auto-generates one from
-// practice fields) and PATCHes the linked Vapi assistant's model.messages
-// so the voice agent matches the DB. Also syncs the firstMessage (greeting).
+// PATCH /api/admin/repair-practice?practice_id=<uuid>
+// Actions (via query params):
+//   sync_vapi=true   — sync system prompt + greeting to static Vapi assistant
+//   enable_dynamic=true — remove assistantId from Vapi phone config so calls
+//                         trigger assistant-request webhook (dynamic config)
 export async function PATCH(req: NextRequest) {
   if (!checkAuth(req)) return unauthorized()
 
   const practiceId = req.nextUrl.searchParams.get('practice_id')
+  const enableDynamic = req.nextUrl.searchParams.get('enable_dynamic') === 'true'
   if (!practiceId) {
     return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
   }
@@ -125,11 +127,51 @@ export async function PATCH(req: NextRequest) {
   if (pErr || !p) {
     return NextResponse.json({ error: pErr?.message || 'not found' }, { status: 404 })
   }
-  if (!p.vapi_assistant_id) {
-    return NextResponse.json({ error: 'no vapi_assistant_id on practice' }, { status: 400 })
-  }
   if (!VAPI_API_KEY) {
     return NextResponse.json({ error: 'VAPI_API_KEY not configured' }, { status: 500 })
+  }
+
+  // ---- enable_dynamic: clear assistantId from Vapi phone config ----
+  if (enableDynamic) {
+    if (!p.vapi_phone_number_id) {
+      return NextResponse.json({ error: 'no vapi_phone_number_id on practice' }, { status: 400 })
+    }
+    const VAPI_WEBHOOK_SECRET = process.env.VAPI_WEBHOOK_SECRET || ''
+    const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+    const serverUrl = VAPI_WEBHOOK_SECRET
+      ? `${APP_URL}/api/vapi/webhook?secret=${encodeURIComponent(VAPI_WEBHOOK_SECRET)}`
+      : `${APP_URL}/api/vapi/webhook`
+
+    const phoneRes = await fetch(`${VAPI_BASE_URL}/phone-number/${p.vapi_phone_number_id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${VAPI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ assistantId: null, serverUrl }),
+    })
+
+    if (!phoneRes.ok) {
+      const errBody = await phoneRes.text().catch(() => '')
+      return NextResponse.json(
+        { error: `vapi_phone_patch_failed (${phoneRes.status})`, body: errBody },
+        { status: 502 }
+      )
+    }
+
+    const phoneResult = await phoneRes.json()
+    return NextResponse.json({
+      ok: true,
+      action: 'enable_dynamic',
+      vapi_phone_number_id: p.vapi_phone_number_id,
+      assistantId: phoneResult.assistantId ?? '(cleared)',
+      serverUrl: phoneResult.serverUrl,
+    })
+  }
+
+  // ---- sync_vapi: push system prompt + greeting to static assistant ----
+  if (!p.vapi_assistant_id) {
+    return NextResponse.json({ error: 'no vapi_assistant_id on practice' }, { status: 400 })
   }
 
   // Use custom system_prompt if present, otherwise build a basic one

@@ -136,12 +136,17 @@ export async function linkVapiPhoneNumber(opts: {
       Authorization: `Bearer ${VAPI_API_KEY}`,
       'Content-Type': 'application/json',
     },
+    // NOTE: We intentionally omit assistantId on the phone config.
+    // When assistantId is set, Vapi uses the static assistant and NEVER
+    // fires assistant-request to our webhook. By omitting it, every inbound
+    // call triggers assistant-request → handleAssistantRequest builds a
+    // dynamic, practice-specific assistant config with the latest system
+    // prompt and voice settings. The serverUrl is all Vapi needs.
     body: JSON.stringify({
       provider: 'twilio',
       number: opts.twilioPhoneNumber,
       twilioAccountSid: accountSid,
       twilioAuthToken: authToken,
-      assistantId: opts.assistantId,
       serverUrl: serverUrl,
       name: `${opts.practiceName}`.substring(0, 40),
     }),
@@ -165,7 +170,7 @@ export async function linkVapiPhoneNumber(opts: {
             Authorization: `Bearer ${VAPI_API_KEY}`,
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ assistantId: opts.assistantId }),
+          body: JSON.stringify({ assistantId: null, serverUrl }),
         })
         if (!patch.ok) {
           const pErr = await patch.text()
