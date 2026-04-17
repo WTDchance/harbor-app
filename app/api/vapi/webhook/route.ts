@@ -130,11 +130,12 @@ async function handleAssistantRequest(message: any) {
       name: `${aiName} - ${practice.name}`,
       firstMessage: greeting,
       model: {
-        provider: 'openai',
-        model: 'gpt-4o-mini',
+        provider: 'anthropic',
+        model: 'claude-haiku-4-5-20251001',
         messages: [
           { role: 'system', content: systemPrompt },
         ],
+        temperature: 0.7,
       },
       voice: {
         provider: '11labs',
@@ -1105,14 +1106,15 @@ function buildFallbackAssistant() {
     name: 'Harbor Receptionist',
     firstMessage: 'Thank you for calling. How can I help you today?',
     model: {
-      provider: 'openai',
-      model: 'gpt-4o-mini',
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
       messages: [
         {
           role: 'system',
           content: 'You are a friendly receptionist for a therapy practice. Help callers with basic questions and offer to take a message. If someone is in crisis, direct them to call 988 or 911.',
         },
       ],
+      temperature: 0.7,
     },
     voice: {
       provider: '11labs',
