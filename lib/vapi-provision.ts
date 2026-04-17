@@ -123,6 +123,13 @@ export async function linkVapiPhoneNumber(opts: {
   const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
   const authToken = process.env.TWILIO_AUTH_TOKEN || ''
 
+  // Include the webhook secret on the phone-level serverUrl so Vapi
+  // can reach our webhook regardless of whether it uses the phone's
+  // or the assistant's server config for post-call events.
+  const serverUrl = VAPI_WEBHOOK_SECRET
+    ? `${APP_URL}/api/vapi/webhook?secret=${encodeURIComponent(VAPI_WEBHOOK_SECRET)}`
+    : `${APP_URL}/api/vapi/webhook`
+
   const res = await fetch(`${VAPI_BASE_URL}/phone-number`, {
     method: 'POST',
     headers: {
@@ -135,6 +142,7 @@ export async function linkVapiPhoneNumber(opts: {
       twilioAccountSid: accountSid,
       twilioAuthToken: authToken,
       assistantId: opts.assistantId,
+      serverUrl: serverUrl,
       name: `${opts.practiceName}`.substring(0, 40),
     }),
   })

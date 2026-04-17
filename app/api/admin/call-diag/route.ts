@@ -104,3 +104,58 @@ export async function GET(req: NextRequest) {
     vapi_phone: vapiPhoneConfig,
   })
 }
+
+// POST /api/admin/call-diag — fix Vapi phone number serverUrl mismatch
+// Body: { practice_id, action: 'fix-phone-server-url' }
+export async function POST(req: NextRequest) {
+  const auth = req.headers.get('authorization') || ''
+  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
+  if (!process.env.CRON_SECRET || auth !== expected) return unauthorized()
+
+  const body = await req.json()
+  const { practice_id, action } = body
+
+  if (action !== 'fix-phone-server-url') {
+    return NextResponse.json({ error: 'unknown action' }, { status: 400 })
+  }
+
+  const { data: p } = await supabaseAdmin
+    .from('practices')
+    .select('vapi_phone_number_id, vapi_assistant_id')
+    .eq('id', practice_id)
+    .single()
+
+  if (!p?.vapi_phone_number_id || !process.env.VAPI_API_KEY) {
+    return NextResponse.json({ error: 'missing vapi_phone_number_id or VAPI_API_KEY' }, { status: 400 })
+  }
+
+  // Build the correct serverUrl with secret
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+  const webhookSecret = process.env.VAPI_WEBHOOK_SECRET
+  const correctServerUrl = webhookSecret
+    ? `${baseUrl}/api/vapi/webhook?secret=${encodeURIComponent(webhookSecret)}`
+    : `${baseUrl}/api/vapi/webhook`
+
+  // PATCH the Vapi phone number to use the correct serverUrl
+  const patchRes = await fetch(`https://api.vapi.ai/phone-number/${p.vapi_phone_number_id}`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ serverUrl: correctServerUrl }),
+  })
+
+  if (!patchRes.ok) {
+    const errText = await patchRes.text()
+    return NextResponse.json({ error: `vapi patch failed: ${patchRes.status}`, body: errText }, { status: 502 })
+  }
+
+  const result = await patchRes.json()
+  return NextResponse.json({
+    ok: true,
+    phone_id: p.vapi_phone_number_id,
+    new_server_url: correctServerUrl,
+    vapi_response_server_url: result.serverUrl,
+  })
+}
