@@ -64,7 +64,7 @@ export async function POST(request: NextRequest) {
         name: `${elliesName} — ${practice_name}`,
         model: {
           provider: 'anthropic',
-          model: 'claude-3-5-haiku-20241022',
+          model: 'claude-haiku-4-5-20251001',
           systemPrompt,
           temperature: 0.7,
         },

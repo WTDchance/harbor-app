@@ -72,7 +72,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
                         body: JSON.stringify({
                                     model: {
                                                   provider: 'anthropic',
-                                                  model: 'claude-3-5-haiku-20241022',
+                                                  model: 'claude-haiku-4-5-20251001',
                                                   systemPrompt: newSystemPrompt,
                                                   temperature: 0.7,
                                     },
