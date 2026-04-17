@@ -11,6 +11,79 @@ import { getCalendarRouter } from '@/lib/calendar'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 
+// ---- Shared practice resolution ----
+// Resolves the practice ID from Vapi webhook payloads using a robust fallback chain:
+// 1. Metadata (set by handleAssistantRequest on outbound config)
+// 2. Phone number lookup (the Twilio number that was called)
+// 3. Vapi assistant ID → practices.vapi_assistant_id
+// 4. Vapi phone number ID → practices.vapi_phone_number_id
+async function resolvePracticeId(
+  call: any,
+  message: any
+): Promise<{ practiceId: string | null; practiceName: string; resolvedBy: string }> {
+  // Strategy 1: metadata injected by handleAssistantRequest
+  const metaPracticeId = call.assistant?.metadata?.practiceId || message.assistant?.metadata?.practiceId || null
+  const metaPracticeName = call.assistant?.metadata?.practiceName || message.assistant?.metadata?.practiceName || 'Unknown Practice'
+  if (metaPracticeId) {
+    return { practiceId: metaPracticeId, practiceName: metaPracticeName, resolvedBy: 'metadata' }
+  }
+
+  // Strategy 2: look up by the called phone number
+  const calledNumber =
+    call.phoneNumber?.number ||
+    call.phoneNumber?.twilioPhoneNumber ||
+    (typeof call.phoneNumber === 'string' && call.phoneNumber.startsWith('+') ? call.phoneNumber : '') ||
+    message.phoneNumber?.number ||
+    ''
+  if (calledNumber) {
+    const normalized = calledNumber.replace(/\D/g, '').slice(-10)
+    const { data } = await supabaseAdmin
+      .from('practices')
+      .select('id, name')
+      .or(`phone_number.ilike.%${normalized},phone_number.ilike.%${calledNumber}`)
+      .limit(1)
+      .maybeSingle()
+    if (data) {
+      return { practiceId: data.id, practiceName: data.name, resolvedBy: `phone:${calledNumber}` }
+    }
+  }
+
+  // Strategy 3: look up by Vapi assistant ID
+  const assistantId = call.assistantId || call.assistant?.id || message.assistant?.id || ''
+  if (assistantId) {
+    const { data } = await supabaseAdmin
+      .from('practices')
+      .select('id, name')
+      .eq('vapi_assistant_id', assistantId)
+      .limit(1)
+      .maybeSingle()
+    if (data) {
+      return { practiceId: data.id, practiceName: data.name, resolvedBy: `assistant:${assistantId}` }
+    }
+  }
+
+  // Strategy 4: look up by Vapi phone number ID
+  const phoneNumberId = call.phoneNumberId || message.phoneNumberId || ''
+  if (phoneNumberId) {
+    const { data } = await supabaseAdmin
+      .from('practices')
+      .select('id, name')
+      .eq('vapi_phone_number_id', phoneNumberId)
+      .limit(1)
+      .maybeSingle()
+    if (data) {
+      return { practiceId: data.id, practiceName: data.name, resolvedBy: `phoneId:${phoneNumberId}` }
+    }
+  }
+
+  console.warn('[Vapi] resolvePracticeId: all strategies exhausted', {
+    calledNumber: calledNumber || '(none)',
+    assistantId: assistantId || '(none)',
+    phoneNumberId: phoneNumberId || '(none)',
+  })
+  return { practiceId: null, practiceName: 'Unknown Practice', resolvedBy: 'none' }
+}
+
 // ---- Crisis keyword lists ----
 const IMMEDIATE_CRISIS = [
   'kill myself', 'end my life', 'take my own life', 'suicide', 'suicidal',
@@ -80,16 +153,16 @@ async function handleAssistantRequest(message: any) {
   const phoneNumber = call.phoneNumber?.number || call.phoneNumberId || ''
   console.log(`[Vapi] Inbound call to: ${phoneNumber}`)
 
-  // Look up practice by phone number
+  // Resolve practice using shared fallback chain
+  const { practiceId, practiceName, resolvedBy } = await resolvePracticeId(call, message)
+
   let practice: any = null
-  if (phoneNumber) {
-    const normalized = phoneNumber.replace(/\D/g, '').slice(-10)
+  if (practiceId) {
     const { data } = await supabaseAdmin
       .from('practices')
       .select('*')
-      .or(`phone_number.ilike.%${normalized}`)
-      .limit(1)
-      .single()
+      .eq('id', practiceId)
+      .maybeSingle()
     practice = data
   }
 
@@ -101,7 +174,7 @@ async function handleAssistantRequest(message: any) {
     })
   }
 
-  console.log(`[Vapi] Matched practice: ${practice.name} (${practice.id})`)
+  console.log(`[Vapi] Matched practice: ${practice.name} (${practice.id}) via ${resolvedBy}`)
 
   // Build dynamic system prompt from practice config
   const systemPrompt = buildSystemPrompt({
@@ -170,21 +243,11 @@ async function handleAssistantRequest(message: any) {
 async function handleToolCalls(message: any) {
   const toolCallList = message.toolWithToolCallList || []
   const call = message.call || {}
-  let practiceId = call.assistant?.metadata?.practiceId || null
 
-  // Fallback: look up practice by phone number if metadata missing
-  if (!practiceId) {
-    const calledNumber = call.phoneNumber?.number || call.phoneNumberId || ''
-    if (calledNumber) {
-      const normalized = calledNumber.replace(/\D/g, '').slice(-10)
-      const { data } = await supabaseAdmin
-        .from('practices')
-        .select('id')
-        .or(`phone_number.ilike.%${normalized}`)
-        .limit(1)
-        .single()
-      if (data) practiceId = data.id
-    }
+  // Resolve practice using shared fallback chain
+  const { practiceId, resolvedBy } = await resolvePracticeId(call, message)
+  if (resolvedBy !== 'none') {
+    console.log(`[Vapi] Tool calls resolved practice via ${resolvedBy}`)
   }
 
   const results = []
@@ -238,21 +301,11 @@ async function handleFunctionCall(message: any) {
   const toolName = fn.name || ''
   const params = fn.parameters || {}
   const call = message.call || {}
-  let practiceId = call.assistant?.metadata?.practiceId || null
 
-  // Fallback: look up practice by phone number if metadata missing
-  if (!practiceId) {
-    const calledNumber = call.phoneNumber?.number || call.phoneNumberId || ''
-    if (calledNumber) {
-      const normalized = calledNumber.replace(/\D/g, '').slice(-10)
-      const { data } = await supabaseAdmin
-        .from('practices')
-        .select('id')
-        .or(`phone_number.ilike.%${normalized}`)
-        .limit(1)
-        .single()
-      if (data) practiceId = data.id
-    }
+  // Resolve practice using shared fallback chain
+  const { practiceId, resolvedBy } = await resolvePracticeId(call, message)
+  if (resolvedBy !== 'none') {
+    console.log(`[Vapi] Function call resolved practice via ${resolvedBy}`)
   }
 
   console.log(`[Vapi] Function call: ${toolName}`, params)
@@ -292,8 +345,6 @@ async function handleEndOfCallReport(message: any) {
 
   const call = message.call || {}
   const artifact = message.artifact || {}
-  let practiceId = call.assistant?.metadata?.practiceId || null
-  let practiceName = call.assistant?.metadata?.practiceName || 'Unknown Practice'
   const transcript = artifact.transcript || ''
   const messages = artifact.messages || []
   const vapiCallId = call.id || message.callId || ''
@@ -312,91 +363,18 @@ async function handleEndOfCallReport(message: any) {
 
   console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s | caller: ${customerPhone || '(unknown)'}`)
 
-  // Fallback 1: look up practice by the called phone number if metadata is missing
+  // Resolve practice using shared fallback chain
+  const { practiceId, practiceName, resolvedBy } = await resolvePracticeId(call, message)
   if (!practiceId) {
-    // Try multiple locations where phone number might be in the payload
-    const calledNumber = call.phoneNumber?.number
-      || call.phoneNumber?.twilioPhoneNumber
-      || message.phoneNumber?.number
-      || message.phoneNumber?.twilioPhoneNumber
-      || (typeof call.phoneNumber === 'string' && call.phoneNumber.startsWith('+') ? call.phoneNumber : '')
-      || ''
-    console.log(`[Vapi] No practice ID in metadata, looking up by phone: ${calledNumber || '(none)'}`)
-
-    if (calledNumber) {
-      const normalized = calledNumber.replace(/\D/g, '').slice(-10)
-      const { data } = await supabaseAdmin
-        .from('practices')
-        .select('id, name')
-        .or(`phone_number.ilike.%${normalized},phone_number.ilike.%${calledNumber}`)
-        .limit(1)
-        .maybeSingle()
-      if (data) {
-        practiceId = data.id
-        practiceName = data.name
-        console.log(`[Vapi] Resolved practice by phone: ${data.name} (${data.id})`)
-      }
-    }
+    console.error('[Vapi] end-of-call-report: practice resolution FAILED — call log will not be created', { vapiCallId })
+    return NextResponse.json({ ok: true })
   }
-
-  // Fallback 2: look up practice by Vapi assistant ID
-  if (!practiceId) {
-    const assistantId = call.assistantId || call.assistant?.id || message.assistant?.id || ''
-    console.log(`[Vapi] Trying assistant ID lookup: ${assistantId || '(none)'}`)
-    if (assistantId) {
-      const { data } = await supabaseAdmin
-        .from('practices')
-        .select('id, name')
-        .eq('vapi_assistant_id', assistantId)
-        .limit(1)
-        .maybeSingle()
-      if (data) {
-        practiceId = data.id
-        practiceName = data.name
-        console.log(`[Vapi] Resolved practice by assistant ID: ${data.name} (${data.id})`)
-      }
-    }
-  }
-
-  // Fallback 3: look up practice by Vapi phone number ID
-  if (!practiceId) {
-    const phoneNumberId = call.phoneNumberId || message.phoneNumberId || ''
-    console.log(`[Vapi] Trying phone number ID lookup: ${phoneNumberId || '(none)'}`)
-    if (phoneNumberId) {
-      const { data } = await supabaseAdmin
-        .from('practices')
-        .select('id, name')
-        .eq('vapi_phone_id', phoneNumberId)
-        .limit(1)
-        .maybeSingle()
-      if (data) {
-        practiceId = data.id
-        practiceName = data.name
-        console.log(`[Vapi] Resolved practice by phone number ID: ${data.name} (${data.id})`)
-      }
-    }
-  }
-
-  // Final fallback: if still no practice ID, try single-practice lookup
-  if (!practiceId) {
-    const { data: practices } = await supabaseAdmin
-      .from('practices')
-      .select('id, name')
-      .limit(2)
-    if (practices && practices.length === 1) {
-      practiceId = practices[0].id
-      practiceName = practices[0].name
-      console.log(`[Vapi] Resolved practice by single-practice fallback: ${practices[0].name} (${practices[0].id})`)
-    } else {
-      console.warn(`[Vapi] No practice ID found by any method (${practices?.length || 0} practices exist), skipping post-processing`)
-      return NextResponse.json({ ok: true })
-    }
-  }
+  console.log(`[Vapi] end-of-call-report resolved practice: ${practiceName} (${practiceId}) via ${resolvedBy}`)
 
   // Build transcript text from messages if not provided directly
   const transcriptText = transcript || messages
-    .filter((m: any) => m.role !== 'system') // Skip system messages
-    .map((m: any) => `${(m.role === 'assistant' || m.role === 'bot') ? 'AI' : 'User'}: ${m.message || m.content || ''}`)
+    .filter((m: any) => m.role !== 'system')
+    .map((m: any) => `${(m.role === 'assistant' || m.role === 'bot') ? 'AI' : 'Caller'}: ${m.message || m.content || ''}`)
     .join('\n')
 
   if (!transcriptText || transcriptText.length < 20) {
