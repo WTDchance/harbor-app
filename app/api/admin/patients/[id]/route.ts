@@ -25,7 +25,7 @@ export async function GET(
 
     let query = supabaseAdmin
       .from('patients')
-      .select('id, first_name, last_name, phone, email, created_at')
+      .select('*')
       .eq('practice_id', practiceId)
       .order('created_at', { ascending: false })
       .limit(20)
