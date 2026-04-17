@@ -158,7 +158,14 @@ export async function GET() {
 
 // ---- assistant-request ----
 // Vapi sends this when an inbound call arrives. We look up the practice
-// by phone number and return a transient assistant config.
+// and return its static Vapi assistantId. The static assistant is kept
+// in sync via /api/admin/repair-practice PATCH (sync_vapi) which pushes
+// the latest system prompt, voice settings, and server URL to Vapi's API.
+//
+// Why not transient assistants? Vapi's transient assistant-request response
+// format is fragile and underdocumented — field names and structure differ
+// from the Assistant API, causing silent failures ("couldn't get voice
+// assistant"). Returning { assistantId } is the guaranteed-working path.
 async function handleAssistantRequest(message: any) {
   const call = message.call || {}
   const phoneNumber = call.phoneNumber?.number || call.phoneNumberId || ''
@@ -167,87 +174,31 @@ async function handleAssistantRequest(message: any) {
   // Resolve practice using shared fallback chain
   const { practiceId, practiceName, resolvedBy } = await resolvePracticeId(call, message)
 
-  let practice: any = null
-  if (practiceId) {
-    const { data } = await supabaseAdmin
-      .from('practices')
-      .select('*')
-      .eq('id', practiceId)
-      .maybeSingle()
-    practice = data
-  }
-
-  // Fallback if no practice found
-  if (!practice) {
+  if (!practiceId) {
     console.warn('[Vapi] No practice found for number:', phoneNumber)
     return NextResponse.json({
       assistant: buildFallbackAssistant(),
     })
   }
 
-  console.log(`[Vapi] Matched practice: ${practice.name} (${practice.id}) via ${resolvedBy}`)
+  // Get the practice's Vapi assistant ID
+  const { data: practice } = await supabaseAdmin
+    .from('practices')
+    .select('vapi_assistant_id, name')
+    .eq('id', practiceId)
+    .maybeSingle()
 
-  // Build dynamic system prompt from practice config
-  const systemPrompt = buildSystemPrompt({
-    therapist_name: practice.provider_name || practice.name,
-    practice_name: practice.name,
-    ai_name: practice.ai_name || 'Ellie',
-    specialties: practice.specialties || [],
-    hours: formatHours(practice.hours_json),
-    location: practice.location || '',
-    telehealth: practice.telehealth_available || false,
-    insurance_accepted: practice.insurance_accepted || [],
-    system_prompt_notes: practice.system_prompt || '',
-    emotional_support_enabled: true,
-  })
+  if (!practice?.vapi_assistant_id) {
+    console.warn(`[Vapi] Practice ${practiceId} has no vapi_assistant_id, using fallback`)
+    return NextResponse.json({
+      assistant: buildFallbackAssistant(),
+    })
+  }
 
-  const aiName = practice.ai_name || 'Ellie'
-  const greeting = practice.greeting || `Hi there, thank you for calling ${practice.name}. This is ${aiName}. How can I help you today?`
-
-  // Build the webhook URL for tool call callbacks
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  const webhookSecret = process.env.VAPI_WEBHOOK_SECRET
-  const serverUrl = `${baseUrl}/api/vapi/webhook${webhookSecret ? '?secret=' + webhookSecret : ''}`
+  console.log(`[Vapi] Matched practice: ${practice.name} (${practiceId}) via ${resolvedBy} → assistant ${practice.vapi_assistant_id}`)
 
   return NextResponse.json({
-    assistant: {
-      name: `${aiName} - ${practice.name}`,
-      firstMessage: greeting,
-      model: {
-        provider: 'anthropic',
-        model: 'claude-haiku-4-5-20251001',
-        messages: [
-          { role: 'system', content: systemPrompt },
-        ],
-        temperature: 0.7,
-      },
-      voice: {
-        provider: '11labs',
-        voiceId: 'EXAVITQu4vr4xnSDxMaL',
-        model: 'eleven_turbo_v2_5',
-        stability: 0.5,
-        similarityBoost: 0.8,
-        speed: 0.65,
-        style: 0.2,
-        useSpeakerBoost: true,
-      },
-      transcriber: {
-        provider: 'deepgram',
-        model: 'nova-2',
-      },
-      backgroundSound: 'office',
-      server: { url: serverUrl },
-      serverUrl: serverUrl,
-      endCallFunctionEnabled: true,
-      recordingEnabled: true,
-      silenceTimeoutSeconds: 30,
-      maxDurationSeconds: 1800,
-      tools: buildTools(serverUrl),
-      metadata: {
-        practiceId: practice.id,
-        practiceName: practice.name,
-      },
-    },
+    assistantId: practice.vapi_assistant_id,
   })
 }
 

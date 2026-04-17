@@ -17,6 +17,40 @@ import { supabaseAdmin } from '@/lib/supabase'
 const VAPI_API_KEY = process.env.VAPI_API_KEY || ''
 const VAPI_BASE_URL = 'https://api.vapi.ai'
 
+function formatHoursSync(hoursJson: any): string {
+  if (!hoursJson) return 'Monday through Friday, 9am to 5pm'
+  if (typeof hoursJson === 'string') return hoursJson
+  try {
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    const labels: Record<string, string> = {
+      monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday',
+      thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+    }
+    const parts: string[] = []
+    for (const day of days) {
+      const h = hoursJson[day]
+      if (!h) continue
+      if (typeof h === 'object' && 'enabled' in h) {
+        if (h.enabled && h.openTime && h.closeTime) {
+          const open = fmtT(h.openTime), close = fmtT(h.closeTime)
+          parts.push(`${labels[day]}: ${open} - ${close}`)
+        }
+      } else if (typeof h === 'string' && h !== 'closed') {
+        parts.push(`${labels[day]}: ${h}`)
+      }
+    }
+    return parts.length > 0 ? parts.join(', ') : 'Monday through Friday, 9am to 5pm'
+  } catch { return 'Monday through Friday, 9am to 5pm' }
+}
+
+function fmtT(t: string): string {
+  const [hh, mm] = t.split(':').map(Number)
+  if (isNaN(hh)) return t
+  const suffix = hh >= 12 ? 'PM' : 'AM'
+  const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh
+  return mm === 0 ? `${h12} ${suffix}` : `${h12}:${mm.toString().padStart(2, '0')} ${suffix}`
+}
+
 function unauthorized() {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }
@@ -106,14 +140,15 @@ export async function POST(req: NextRequest) {
 
 // PATCH /api/admin/repair-practice?practice_id=<uuid>
 // Actions (via query params):
-//   sync_vapi=true   — sync system prompt + greeting to static Vapi assistant
-//   enable_dynamic=true — remove assistantId from Vapi phone config so calls
-//                         trigger assistant-request webhook (dynamic config)
+//   (default)           — sync system prompt, voice, greeting to static Vapi assistant
+//   enable_dynamic=true — remove assistantId from Vapi phone config
+//   restore_static=true — put assistantId back on Vapi phone config
 export async function PATCH(req: NextRequest) {
   if (!checkAuth(req)) return unauthorized()
 
   const practiceId = req.nextUrl.searchParams.get('practice_id')
   const enableDynamic = req.nextUrl.searchParams.get('enable_dynamic') === 'true'
+  const restoreStatic = req.nextUrl.searchParams.get('restore_static') === 'true'
   if (!practiceId) {
     return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
   }
@@ -169,32 +204,62 @@ export async function PATCH(req: NextRequest) {
     })
   }
 
-  // ---- sync_vapi: push system prompt + greeting to static assistant ----
+  // ---- restore_static: put assistantId back on Vapi phone config ----
+  if (restoreStatic) {
+    if (!p.vapi_phone_number_id || !p.vapi_assistant_id) {
+      return NextResponse.json({ error: 'practice missing vapi_phone_number_id or vapi_assistant_id' }, { status: 400 })
+    }
+    const phoneRes = await fetch(`${VAPI_BASE_URL}/phone-number/${p.vapi_phone_number_id}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${VAPI_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ assistantId: p.vapi_assistant_id }),
+    })
+    if (!phoneRes.ok) {
+      const errBody = await phoneRes.text().catch(() => '')
+      return NextResponse.json({ error: `vapi_phone_patch_failed (${phoneRes.status})`, body: errBody }, { status: 502 })
+    }
+    const phoneResult = await phoneRes.json()
+    return NextResponse.json({
+      ok: true,
+      action: 'restore_static',
+      vapi_phone_number_id: p.vapi_phone_number_id,
+      assistantId: phoneResult.assistantId,
+    })
+  }
+
+  // ---- sync_vapi: push system prompt, voice, greeting to static assistant ----
   if (!p.vapi_assistant_id) {
     return NextResponse.json({ error: 'no vapi_assistant_id on practice' }, { status: 400 })
   }
 
-  // Use custom system_prompt if present, otherwise build a basic one
-  const systemPrompt =
-    p.system_prompt ||
-    [
-      `You are ${p.ai_name || 'the receptionist'}, the AI receptionist for ${p.name}.`,
-      `${p.therapist_name || 'The therapist'} is the provider.`,
-      p.location ? `Located in ${p.location}.` : '',
-      p.specialties?.length ? `Specialties: ${p.specialties.join(', ')}.` : '',
-      p.insurance_accepted?.length ? `Insurance: ${p.insurance_accepted.join(', ')}.` : '',
-      p.telehealth ? 'Telehealth available.' : 'In-person only.',
-      'Be warm, professional, and HIPAA-conscious.',
-      'If a caller expresses suicidal thoughts or crisis signals, provide 988 immediately.',
-    ]
-      .filter(Boolean)
-      .join(' ')
+  // Build the full system prompt using the same builder as handleAssistantRequest
+  const { buildSystemPrompt } = await import('@/lib/systemPrompt')
+  const systemPrompt = buildSystemPrompt({
+    therapist_name: p.provider_name || p.name,
+    practice_name: p.name,
+    ai_name: p.ai_name || 'Ellie',
+    specialties: p.specialties || [],
+    hours: formatHoursSync(p.hours_json),
+    location: p.location || '',
+    telehealth: p.telehealth_available || false,
+    insurance_accepted: p.insurance_accepted || [],
+    system_prompt_notes: p.system_prompt || '',
+    emotional_support_enabled: true,
+  })
 
+  const aiName = p.ai_name || 'Ellie'
   const greeting =
     p.greeting ||
-    `Hi, this is ${p.ai_name || 'the receptionist'} at ${p.name}. How can I help today?`
+    `Hi, this is ${aiName} at ${p.name}. How can I help today?`
 
-  const aiName = p.ai_name || 'Receptionist'
+  const VAPI_WEBHOOK_SECRET = process.env.VAPI_WEBHOOK_SECRET || ''
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+  const serverUrl = VAPI_WEBHOOK_SECRET
+    ? `${APP_URL}/api/vapi/webhook?secret=${encodeURIComponent(VAPI_WEBHOOK_SECRET)}`
+    : `${APP_URL}/api/vapi/webhook`
 
   const vapiPatch: Record<string, any> = {
     name: `${aiName} - ${p.name}`,
@@ -204,10 +269,25 @@ export async function PATCH(req: NextRequest) {
       messages: [{ role: 'system', content: systemPrompt }],
       temperature: 0.7,
     },
+    voice: {
+      provider: '11labs',
+      voiceId: 'EXAVITQu4vr4xnSDxMaL',
+      model: 'eleven_turbo_v2_5',
+      stability: 0.5,
+      similarityBoost: 0.8,
+      speed: 0.65,
+      style: 0.2,
+      useSpeakerBoost: true,
+    },
     firstMessage: greeting,
     endCallMessage: `Thank you for calling ${p.name}. Have a wonderful day!`,
     backgroundSound: 'office',
     backchannelingEnabled: true,
+    server: { url: serverUrl },
+    metadata: {
+      practiceId: p.id,
+      practiceName: p.name,
+    },
   }
 
   const res = await fetch(`${VAPI_BASE_URL}/assistant/${p.vapi_assistant_id}`, {
