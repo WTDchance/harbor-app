@@ -7,7 +7,7 @@ import { generateCallSummary, extractCallInformation, detectCrisisIndicators } f
 import { getCallSummaryPrompt } from '@/lib/ai-prompts'
 import { sendEmail, buildCallSummaryEmail } from '@/lib/email'
 import { buildSystemPrompt } from '@/lib/systemPrompt'
-import { getCalendarRouter } from '@/lib/calendar'
+import { getCalendarRouter, findFreeSlots } from '@/lib/calendar'
 import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 
@@ -234,6 +234,9 @@ async function handleToolCalls(message: any) {
         case 'checkAvailability':
           result = await handleCheckAvailability(params, practiceId)
           break
+        case 'bookAppointment':
+          result = await handleBookAppointment(params, practiceId)
+          break
         case 'takeMessage':
           result = await handleTakeMessage(params, practiceId)
           break
@@ -281,6 +284,9 @@ async function handleFunctionCall(message: any) {
         break
       case 'checkAvailability':
         result = await handleCheckAvailability(params, practiceId)
+        break
+      case 'bookAppointment':
+        result = await handleBookAppointment(params, practiceId)
         break
       case 'takeMessage':
         result = await handleTakeMessage(params, practiceId)
@@ -818,7 +824,7 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
   const { name, phone, insurance, telehealthPreference, reason, preferredTimes } = params
 
   if (!practiceId) {
-    return 'Intake information has been recorded. The practice team will follow up within one business day to confirm the appointment.'
+    return 'Intake information has been recorded. Now let me check the calendar for available appointment times.'
   }
 
   try {
@@ -885,12 +891,208 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
     console.error('[Vapi] Intake tool handler error:', err)
   }
 
-  return 'Intake information has been recorded. The practice team will follow up within one business day to confirm the appointment.'
+  return 'Intake information has been recorded. Now let me check the calendar for available appointment times.'
 }
 
 async function handleCheckAvailability(params: any, practiceId: string | null): Promise<string> {
   const { preferredDay, preferredTime } = params
-  return `I have noted your preference for ${preferredDay || 'a convenient day'} ${preferredTime ? `around ${preferredTime}` : ''}. The scheduling team will check availability and get back to you within one business day to confirm a time.`
+
+  if (!practiceId) {
+    return 'I was not able to look up the calendar right now. Let me take down your preferred times and the office will confirm shortly.'
+  }
+
+  try {
+    const router = await getCalendarRouter(practiceId)
+    if (!router) {
+      return 'The calendar is not connected for this practice yet. Let me take down your preferred times and someone will confirm your appointment.'
+    }
+
+    // Build a search window based on the preferred day
+    const now = new Date()
+    let searchStart = new Date(now)
+    let searchEnd = new Date(now)
+
+    // Try to parse the preferred day into an actual date range
+    const dayLower = (preferredDay || '').toLowerCase()
+    const dayMap: Record<string, number> = {
+      sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
+      thursday: 4, friday: 5, saturday: 6,
+    }
+
+    if (dayLower === 'today') {
+      searchStart = new Date(now)
+      searchEnd = new Date(now)
+      searchEnd.setHours(23, 59, 59)
+    } else if (dayLower === 'tomorrow') {
+      searchStart = new Date(now.getTime() + 24 * 60 * 60 * 1000)
+      searchStart.setHours(0, 0, 0)
+      searchEnd = new Date(searchStart)
+      searchEnd.setHours(23, 59, 59)
+    } else if (dayMap[dayLower] !== undefined) {
+      const targetDay = dayMap[dayLower]
+      const currentDay = now.getDay()
+      let daysAhead = targetDay - currentDay
+      if (daysAhead <= 0) daysAhead += 7
+      searchStart = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000)
+      searchStart.setHours(0, 0, 0)
+      searchEnd = new Date(searchStart)
+      searchEnd.setHours(23, 59, 59)
+    } else {
+      // No specific day — search the next 7 days
+      searchEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
+    }
+
+    // Determine business hours filter from preferred time
+    let businessHours = { startHour: 9, endHour: 17 }
+    const timeLower = (preferredTime || '').toLowerCase()
+    if (timeLower.includes('morning')) {
+      businessHours = { startHour: 9, endHour: 12 }
+    } else if (timeLower.includes('afternoon')) {
+      businessHours = { startHour: 12, endHour: 17 }
+    } else if (timeLower.includes('evening')) {
+      businessHours = { startHour: 16, endHour: 20 }
+    }
+
+    const events = await router.listEvents(searchStart, searchEnd)
+    const slots = findFreeSlots(events, searchStart, searchEnd, 60, businessHours)
+
+    if (slots.length === 0) {
+      const dayLabel = dayLower || 'that time frame'
+      return `I checked the calendar and unfortunately there are no open slots ${dayLabel}${preferredTime ? ` in the ${preferredTime}` : ''}. Would you like me to check a different day or time?`
+    }
+
+    // Format up to 3 slots for the caller
+    const formatted = slots.slice(0, 3).map((s) => {
+      return s.start.toLocaleString('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+      })
+    })
+
+    if (formatted.length === 1) {
+      return `I have an opening on ${formatted[0]}. Would that work for you?`
+    }
+    const last = formatted.pop()
+    return `I have a few openings: ${formatted.join(', ')}, and ${last}. Which of those works best for you?`
+  } catch (err: any) {
+    console.error('[Vapi] checkAvailability error:', err?.message || err)
+    return 'I had a little trouble checking the calendar just now. Let me take down your preferred times and we will confirm your appointment shortly.'
+  }
+}
+
+async function handleBookAppointment(params: any, practiceId: string | null): Promise<string> {
+  const { patientName, appointmentDateTime, patientPhone, patientEmail, reason } = params
+
+  if (!practiceId) {
+    return 'I was unable to book the appointment right now. The office will follow up to confirm your time.'
+  }
+
+  try {
+    // Parse the appointment date/time
+    const parsedDate = parseAppointmentDate(appointmentDateTime)
+    if (!parsedDate) {
+      return `I could not understand the date "${appointmentDateTime}". Could you tell me the day and time again?`
+    }
+
+    const durationMinutes = 60
+    const endDate = new Date(parsedDate.getTime() + durationMinutes * 60_000)
+
+    // Get practice name for the calendar event
+    const { data: practice } = await supabaseAdmin
+      .from('practices')
+      .select('name, provider_name')
+      .eq('id', practiceId)
+      .maybeSingle()
+
+    const practiceName = practice?.name || 'the practice'
+
+    // Push to the practice's connected calendar
+    let calendarEventId: string | null = null
+    try {
+      const router = await getCalendarRouter(practiceId)
+      if (router) {
+        const summary = `Therapy: ${patientName || 'New patient'}`
+        const description = [
+          `Booked via phone (${practiceName}).`,
+          patientPhone ? `Phone: ${patientPhone}` : null,
+          patientEmail ? `Email: ${patientEmail}` : null,
+          reason ? `Reason: ${reason}` : null,
+        ].filter(Boolean).join('\n')
+
+        const ev = await router.createEvent({
+          summary,
+          start: parsedDate,
+          end: endDate,
+          description,
+        })
+        calendarEventId = ev.id
+        console.log(`[Vapi] bookAppointment: calendar event created (${router.provider}): ${calendarEventId}`)
+      } else {
+        console.log('[Vapi] bookAppointment: no calendar connection — saving DB record only')
+      }
+    } catch (calErr: any) {
+      console.error('[Vapi] bookAppointment: calendar push failed:', calErr?.message || calErr)
+    }
+
+    // Save appointment to DB
+    const appointmentData: any = {
+      practice_id: practiceId,
+      patient_name: patientName || null,
+      patient_phone: patientPhone || null,
+      patient_email: patientEmail || null,
+      appointment_time: appointmentDateTime,
+      scheduled_at: parsedDate.toISOString(),
+      appointment_date: parsedDate.toISOString().split('T')[0],
+      status: 'scheduled',
+      source: 'ai_call',
+      duration_minutes: durationMinutes,
+      calendar_event_id: calendarEventId,
+    }
+
+    // Try to link to existing patient
+    if (patientPhone) {
+      const normalizedPhone = patientPhone.replace(/\D/g, '').slice(-10)
+      if (normalizedPhone.length >= 10) {
+        const { data: existing } = await supabaseAdmin
+          .from('patients')
+          .select('id')
+          .eq('practice_id', practiceId)
+          .ilike('phone', `%${normalizedPhone}`)
+          .limit(1)
+          .maybeSingle()
+        if (existing) appointmentData.patient_id = existing.id
+      }
+    }
+
+    const { error: apptError } = await supabaseAdmin
+      .from('appointments')
+      .insert(appointmentData)
+
+    if (apptError) {
+      console.error('[Vapi] bookAppointment: DB insert failed:', apptError.message)
+      return 'I had trouble saving that appointment. Let me take a note and the office will confirm your booking.'
+    }
+
+    // Format confirmation
+    const confirmTime = parsedDate.toLocaleString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+    })
+
+    console.log(`[Vapi] bookAppointment: confirmed ${confirmTime} for ${patientName || patientPhone}`)
+    return `Your appointment is confirmed for ${confirmTime}. ${calendarEventId ? 'It has been added to the calendar.' : ''} Is there anything else I can help you with?`
+  } catch (err: any) {
+    console.error('[Vapi] bookAppointment error:', err?.message || err)
+    return 'I had trouble booking that appointment. Let me take a note and the office will confirm your time.'
+  }
 }
 
 async function handleTakeMessage(params: any, practiceId: string | null): Promise<string> {
@@ -1038,13 +1240,33 @@ function buildTools(serverUrl: string) {
       type: 'function',
       function: {
         name: 'checkAvailability',
-        description: 'Check appointment availability for a given day and time preference',
+        description: 'Check the practice calendar for available appointment slots on a given day and time. Returns real open time slots.',
         parameters: {
           type: 'object',
           properties: {
-            preferredDay: { type: 'string', description: 'Preferred day of the week' },
-            preferredTime: { type: 'string', description: 'Preferred time (morning, afternoon, evening)' },
+            preferredDay: { type: 'string', description: 'Day to check — e.g. "Monday", "tomorrow", "today", or a date like "April 20"' },
+            preferredTime: { type: 'string', description: 'Time preference: "morning", "afternoon", "evening", or a specific time like "2pm"' },
           },
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'bookAppointment',
+        description: 'Book a confirmed appointment on the practice calendar. Use this after the caller has chosen a specific date and time.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Full name of the patient' },
+            appointmentDateTime: { type: 'string', description: 'The chosen appointment date and time, e.g. "Monday April 21 at 2pm" or "2026-04-21T14:00:00"' },
+            patientPhone: { type: 'string', description: 'Patient phone number' },
+            patientEmail: { type: 'string', description: 'Patient email address' },
+            reason: { type: 'string', description: 'Brief reason for the appointment' },
+          },
+          required: ['patientName', 'appointmentDateTime'],
         },
       },
       async: false,

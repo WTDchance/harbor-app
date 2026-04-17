@@ -263,12 +263,6 @@ export async function PATCH(req: NextRequest) {
 
   const vapiPatch: Record<string, any> = {
     name: `${aiName} - ${p.name}`,
-    model: {
-      provider: 'anthropic',
-      model: 'claude-haiku-4-5-20251001',
-      messages: [{ role: 'system', content: systemPrompt }],
-      temperature: 0.7,
-    },
     voice: {
       provider: '11labs',
       voiceId: 'EXAVITQu4vr4xnSDxMaL',
@@ -289,6 +283,114 @@ export async function PATCH(req: NextRequest) {
       practiceName: p.name,
     },
   }
+
+  // Build tools array for the Vapi assistant
+  const vapiTools = [
+    {
+      type: 'function',
+      function: {
+        name: 'collectIntakeInfo',
+        description: 'Save patient intake information when they want to schedule an appointment',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Patient full name' },
+            phone: { type: 'string', description: 'Patient phone number' },
+            insurance: { type: 'string', description: 'Insurance provider or self-pay' },
+            telehealthPreference: { type: 'string', description: 'telehealth or in-person' },
+            reason: { type: 'string', description: 'Brief reason for seeking therapy' },
+            preferredTimes: { type: 'string', description: 'Preferred days and times' },
+          },
+          required: ['name', 'phone'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'checkAvailability',
+        description: 'Check the practice calendar for available appointment slots on a given day and time. Returns real open time slots.',
+        parameters: {
+          type: 'object',
+          properties: {
+            preferredDay: { type: 'string', description: 'Day to check — e.g. "Monday", "tomorrow", "today", or a date like "April 20"' },
+            preferredTime: { type: 'string', description: 'Time preference: "morning", "afternoon", "evening", or a specific time like "2pm"' },
+          },
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'bookAppointment',
+        description: 'Book a confirmed appointment on the practice calendar. Use this after the caller has chosen a specific date and time.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Full name of the patient' },
+            appointmentDateTime: { type: 'string', description: 'The chosen appointment date and time, e.g. "Monday April 21 at 2pm"' },
+            patientPhone: { type: 'string', description: 'Patient phone number' },
+            patientEmail: { type: 'string', description: 'Patient email address' },
+            reason: { type: 'string', description: 'Brief reason for the appointment' },
+          },
+          required: ['patientName', 'appointmentDateTime'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'takeMessage',
+        description: 'Record a message for the therapist when the caller wants to leave a message',
+        parameters: {
+          type: 'object',
+          properties: {
+            callerName: { type: 'string', description: 'Name of the caller' },
+            phone: { type: 'string', description: 'Callback phone number' },
+            message: { type: 'string', description: 'The message for the therapist' },
+          },
+          required: ['callerName'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'submitIntakeScreening',
+        description: 'Submit PHQ-2 and GAD-2 screening scores after asking the 4 screening questions',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Patient name' },
+            phq2Score: { type: 'number', description: 'PHQ-2 depression score (0-6)' },
+            gad2Score: { type: 'number', description: 'GAD-2 anxiety score (0-6)' },
+          },
+          required: ['phq2Score', 'gad2Score'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+  ]
+
+  // Set model and tools on the Vapi assistant
+  vapiPatch.model = {
+    provider: 'anthropic',
+    model: 'claude-haiku-4-5-20251001',
+    messages: [{ role: 'system', content: systemPrompt }],
+    temperature: 0.7,
+    tools: vapiTools,
+  }
+  // Also set tools at top level — Vapi reads them from both locations
+  vapiPatch.tools = vapiTools
 
   const res = await fetch(`${VAPI_BASE_URL}/assistant/${p.vapi_assistant_id}`, {
     method: 'PATCH',
