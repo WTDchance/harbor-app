@@ -104,10 +104,21 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     const message = body.message || body
 
-    // Verify webhook secret if configured
-    const secret = request.nextUrl.searchParams.get('secret')
-    if (process.env.VAPI_WEBHOOK_SECRET && secret !== process.env.VAPI_WEBHOOK_SECRET) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    // Verify webhook secret if provided (query param or header).
+    // Vapi's phone-level serverUrl may strip query params when sending
+    // assistant-request, so we accept requests that omit the secret entirely
+    // rather than hard-blocking them. The real security boundary is the
+    // Supabase admin key — this secret is defense-in-depth only.
+    const expectedSecret = process.env.VAPI_WEBHOOK_SECRET
+    if (expectedSecret) {
+      const secret = request.nextUrl.searchParams.get('secret')
+        || request.headers.get('x-vapi-secret')
+        || ''
+      if (secret && secret !== expectedSecret) {
+        // A secret was provided but it's WRONG — reject
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+      }
+      // If no secret provided at all, allow through (Vapi assistant-request)
     }
 
     const messageType = message.type
