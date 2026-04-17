@@ -561,6 +561,19 @@ async function processEndOfCall(opts: {
 
   if (existingPatient) {
     console.log(`[Vapi] Existing patient found: ${existingPatient.first_name} ${existingPatient.last_name} (${existingPatient.id})`)
+    // Backfill any missing fields from this call (e.g. email collected for first time)
+    const backfill: Record<string, any> = {}
+    if (info.patientEmail) backfill.email = info.patientEmail
+    if (info.patientInsurance) backfill.insurance = info.patientInsurance
+    if (info.reasonForSeeking) backfill.reason_for_seeking = info.reasonForSeeking
+    if (Object.keys(backfill).length > 0) {
+      backfill.updated_at = new Date().toISOString()
+      await supabaseAdmin
+        .from('patients')
+        .update(backfill)
+        .eq('id', existingPatient.id)
+      console.log(`[Vapi] Backfilled patient ${existingPatient.id}:`, Object.keys(backfill).join(', '))
+    }
   } else {
     // FIX: Create patient even with minimal info (phone number only)
     // Previously required a name from extraction â now uses "New Caller" as fallback
@@ -821,7 +834,7 @@ async function processEndOfCall(opts: {
 // ---- Tool handlers ----
 
 async function handleCollectIntake(params: any, practiceId: string | null): Promise<string> {
-  const { name, phone, insurance, telehealthPreference, reason, preferredTimes } = params
+  const { name, phone, email, insurance, telehealthPreference, reason, preferredTimes } = params
 
   if (!practiceId) {
     return 'Intake information has been recorded. Now let me check the calendar for available appointment times.'
@@ -853,6 +866,7 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
       const updates: Record<string, any> = { updated_at: new Date().toISOString() }
       if (firstName) updates.first_name = firstName
       if (lastName) updates.last_name = lastName
+      if (email) updates.email = email
       if (insurance) updates.insurance_provider = insurance
       if (reason) updates.reason_for_seeking = reason
       if (telehealthPreference) updates.telehealth_preference = telehealthPreference
@@ -872,6 +886,7 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
           first_name: firstName || 'New',
           last_name: lastName || 'Caller',
           phone: phone || null,
+          email: email || null,
           insurance_provider: insurance || null,
           reason_for_seeking: reason || null,
           telehealth_preference: telehealthPreference || null,
@@ -1225,12 +1240,13 @@ function buildTools(serverUrl: string) {
           properties: {
             name: { type: 'string', description: 'Patient full name' },
             phone: { type: 'string', description: 'Patient phone number' },
+            email: { type: 'string', description: 'Patient email address' },
             insurance: { type: 'string', description: 'Insurance provider or self-pay' },
             telehealthPreference: { type: 'string', description: 'telehealth or in-person' },
             reason: { type: 'string', description: 'Brief reason for seeking therapy' },
             preferredTimes: { type: 'string', description: 'Preferred days and times' },
           },
-          required: ['name', 'phone'],
+          required: ['name', 'phone', 'email'],
         },
       },
       async: false,
