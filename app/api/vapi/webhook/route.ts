@@ -285,14 +285,19 @@ async function handleFunctionCall(message: any) {
 
 // ---- end-of-call-report ----
 async function handleEndOfCallReport(message: any) {
+  // Diagnostic: log the top-level payload structure
+  console.log(`[Vapi] end-of-call-report keys: ${Object.keys(message).join(', ')}`)
+  if (message.call) console.log(`[Vapi] message.call keys: ${Object.keys(message.call).join(', ')}`)
+  if (message.artifact) console.log(`[Vapi] message.artifact keys: ${Object.keys(message.artifact).join(', ')}`)
+
   const call = message.call || {}
   const artifact = message.artifact || {}
   let practiceId = call.assistant?.metadata?.practiceId || null
   let practiceName = call.assistant?.metadata?.practiceName || 'Unknown Practice'
   const transcript = artifact.transcript || ''
   const messages = artifact.messages || []
-  const vapiCallId = call.id || ''
-  const endedReason = message.endedReason || 'unknown'
+  const vapiCallId = call.id || message.callId || ''
+  const endedReason = message.endedReason || call.endedReason || 'unknown'
   // FIX: Calculate duration from Vapi timestamps if call.duration is 0
   let duration = call.duration || 0
   if (!duration && call.startedAt && call.endedAt) {
@@ -303,14 +308,17 @@ async function handleEndOfCallReport(message: any) {
     duration = message.durationSeconds
     console.log(`[Vapi] Duration from message.durationSeconds: ${duration}s`)
   }
-  const customerPhone = call.customer?.number || ''
+  const customerPhone = call.customer?.number || message.customer?.number || ''
 
   console.log(`[Vapi] Call ended: ${vapiCallId} | reason: ${endedReason} | duration: ${duration}s | caller: ${customerPhone || '(unknown)'}`)
 
-  // Fallback: look up practice by the called phone number if metadata is missing
+  // Fallback 1: look up practice by the called phone number if metadata is missing
   if (!practiceId) {
+    // Try multiple locations where phone number might be in the payload
     const calledNumber = call.phoneNumber?.number
       || call.phoneNumber?.twilioPhoneNumber
+      || message.phoneNumber?.number
+      || message.phoneNumber?.twilioPhoneNumber
       || (typeof call.phoneNumber === 'string' && call.phoneNumber.startsWith('+') ? call.phoneNumber : '')
       || ''
     console.log(`[Vapi] No practice ID in metadata, looking up by phone: ${calledNumber || '(none)'}`)
@@ -331,6 +339,44 @@ async function handleEndOfCallReport(message: any) {
     }
   }
 
+  // Fallback 2: look up practice by Vapi assistant ID
+  if (!practiceId) {
+    const assistantId = call.assistantId || call.assistant?.id || message.assistant?.id || ''
+    console.log(`[Vapi] Trying assistant ID lookup: ${assistantId || '(none)'}`)
+    if (assistantId) {
+      const { data } = await supabaseAdmin
+        .from('practices')
+        .select('id, name')
+        .eq('vapi_assistant_id', assistantId)
+        .limit(1)
+        .maybeSingle()
+      if (data) {
+        practiceId = data.id
+        practiceName = data.name
+        console.log(`[Vapi] Resolved practice by assistant ID: ${data.name} (${data.id})`)
+      }
+    }
+  }
+
+  // Fallback 3: look up practice by Vapi phone number ID
+  if (!practiceId) {
+    const phoneNumberId = call.phoneNumberId || message.phoneNumberId || ''
+    console.log(`[Vapi] Trying phone number ID lookup: ${phoneNumberId || '(none)'}`)
+    if (phoneNumberId) {
+      const { data } = await supabaseAdmin
+        .from('practices')
+        .select('id, name')
+        .eq('vapi_phone_id', phoneNumberId)
+        .limit(1)
+        .maybeSingle()
+      if (data) {
+        practiceId = data.id
+        practiceName = data.name
+        console.log(`[Vapi] Resolved practice by phone number ID: ${data.name} (${data.id})`)
+      }
+    }
+  }
+
   // Final fallback: if still no practice ID, try single-practice lookup
   if (!practiceId) {
     const { data: practices } = await supabaseAdmin
@@ -342,14 +388,15 @@ async function handleEndOfCallReport(message: any) {
       practiceName = practices[0].name
       console.log(`[Vapi] Resolved practice by single-practice fallback: ${practices[0].name} (${practices[0].id})`)
     } else {
-      console.warn('[Vapi] No practice ID found by any method, skipping post-processing')
+      console.warn(`[Vapi] No practice ID found by any method (${practices?.length || 0} practices exist), skipping post-processing`)
       return NextResponse.json({ ok: true })
     }
   }
 
   // Build transcript text from messages if not provided directly
   const transcriptText = transcript || messages
-    .map((m: any) => `${m.role === 'assistant' ? 'AI' : 'Caller'}: ${m.message || m.content || ''}`)
+    .filter((m: any) => m.role !== 'system') // Skip system messages
+    .map((m: any) => `${(m.role === 'assistant' || m.role === 'bot') ? 'AI' : 'User'}: ${m.message || m.content || ''}`)
     .join('\n')
 
   if (!transcriptText || transcriptText.length < 20) {
