@@ -20,6 +20,25 @@ type AppleCalStatus = { connected: boolean; username: string | null; calendarCou
 type SchedulingMode = 'harbor_driven' | 'notification'
 type RecapMethod = 'email' | 'sms' | 'both'
 
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
+const DAY_LABELS: Record<string, string> = {
+  monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday',
+  friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+}
+
+interface HoursDay { enabled: boolean; openTime: string; closeTime: string }
+type HoursMap = Record<string, HoursDay>
+
+const DEFAULT_HOURS: HoursMap = {
+  monday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+  tuesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+  wednesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+  thursday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+  friday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+  saturday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
+  sunday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
+}
+
 // --- MFA Settings Section (HIPAA §164.312(d)) --------------------------------
 function MFASection() {
   const supabase = createClient()
@@ -156,6 +175,16 @@ export default function SettingsPage() {
   const [appleCalForm, setAppleCalForm] = useState({ appleId: '', appPassword: '' })
   const [showAppleCalForm, setShowAppleCalForm] = useState(false)
 
+  // Hours state
+  const [hours, setHours] = useState<HoursMap>(DEFAULT_HOURS)
+  const [hoursSaving, setHoursSaving] = useState(false)
+  const [hoursSaved, setHoursSaved] = useState(false)
+
+  // Greeting state
+  const [greeting, setGreeting] = useState('')
+  const [greetingSaving, setGreetingSaving] = useState(false)
+  const [greetingSaved, setGreetingSaved] = useState(false)
+
   // Intake config state
   const [intakeConfig, setIntakeConfig] = useState<Record<string, boolean>>({
     demographics: true,
@@ -221,6 +250,22 @@ export default function SettingsPage() {
         setDailyRecapEnabled(p.daily_recap_enabled !== false)
         setDailyRecapTime(p.daily_recap_time || '19:00')
         setDailyRecapMethod(p.daily_recap_method || 'email')
+        // Load hours from hours_json
+        if (p.hours_json) {
+          const loaded: HoursMap = { ...DEFAULT_HOURS }
+          for (const day of DAYS) {
+            if (p.hours_json[day]) {
+              loaded[day] = {
+                enabled: p.hours_json[day].enabled ?? true,
+                openTime: p.hours_json[day].openTime || '09:00',
+                closeTime: p.hours_json[day].closeTime || '17:00',
+              }
+            }
+          }
+          setHours(loaded)
+        }
+        // Load greeting
+        setGreeting(p.greeting || '')
         if (p.intake_config?.sections) {
           setIntakeConfig(prev => ({ ...prev, ...p.intake_config.sections }))
         }
@@ -351,6 +396,51 @@ export default function SettingsPage() {
       setIntakeSaved(true)
       setTimeout(() => setIntakeSaved(false), 3000)
     }
+  }
+
+  const handleHoursSave = async () => {
+    if (!practice) return
+    setHoursSaving(true)
+    const hours_json: Record<string, any> = {}
+    for (const day of DAYS) {
+      hours_json[day] = {
+        enabled: hours[day].enabled,
+        openTime: hours[day].openTime,
+        closeTime: hours[day].closeTime,
+      }
+    }
+    const res = await fetch(`/api/practices/${practice.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hours_json }),
+    })
+    setHoursSaving(false)
+    if (res.ok) {
+      setHoursSaved(true)
+      setTimeout(() => setHoursSaved(false), 3000)
+    }
+  }
+
+  const handleGreetingSave = async () => {
+    if (!practice) return
+    setGreetingSaving(true)
+    const res = await fetch(`/api/practices/${practice.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ greeting }),
+    })
+    setGreetingSaving(false)
+    if (res.ok) {
+      setGreetingSaved(true)
+      setTimeout(() => setGreetingSaved(false), 3000)
+    }
+  }
+
+  const updateHours = (day: string, field: string, value: any) => {
+    setHours(prev => ({
+      ...prev,
+      [day]: { ...prev[day], [field]: value },
+    }))
   }
 
   const disconnectGcal = async () => {
@@ -657,6 +747,98 @@ export default function SettingsPage() {
             className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving...' : saved ? '\u2713 Saved' : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+
+      {/* Office Hours */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Office Hours</h2>
+          <p className="text-xs text-gray-400 mt-1">{practice?.ai_name || 'Your receptionist'} will tell callers your hours and adjust behavior for after-hours calls</p>
+        </div>
+        <div className="p-5 space-y-2">
+          {DAYS.map((day) => (
+            <div key={day} className="flex items-center gap-3">
+              <button
+                onClick={() => updateHours(day, 'enabled', !hours[day].enabled)}
+                className={`relative w-10 h-5 rounded-full transition-colors shrink-0 cursor-pointer ${
+                  hours[day].enabled ? 'bg-teal-600' : 'bg-gray-300'
+                }`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform ${
+                  hours[day].enabled ? 'translate-x-5' : ''
+                }`} />
+              </button>
+              <span className={`text-sm font-medium w-24 ${hours[day].enabled ? 'text-gray-900' : 'text-gray-400'}`}>
+                {DAY_LABELS[day]}
+              </span>
+              {hours[day].enabled ? (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="time"
+                    value={hours[day].openTime}
+                    onChange={(e) => updateHours(day, 'openTime', e.target.value)}
+                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                  <span className="text-gray-400 text-sm">to</span>
+                  <input
+                    type="time"
+                    value={hours[day].closeTime}
+                    onChange={(e) => updateHours(day, 'closeTime', e.target.value)}
+                    className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
+              ) : (
+                <span className="text-gray-400 text-sm">Closed</span>
+              )}
+            </div>
+          ))}
+        </div>
+        <div className="p-5 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={handleHoursSave}
+            disabled={hoursSaving}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+          >
+            {hoursSaving ? 'Saving...' : hoursSaved ? '\u2713 Saved' : 'Save Hours'}
+          </button>
+        </div>
+      </div>
+
+      {/* AI Greeting */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">AI Greeting</h2>
+          <p className="text-xs text-gray-400 mt-1">The first thing callers hear when {practice?.ai_name || 'your receptionist'} picks up</p>
+        </div>
+        <div className="p-5 space-y-3">
+          <textarea
+            value={greeting}
+            onChange={e => setGreeting(e.target.value)}
+            rows={3}
+            placeholder={`Thank you for calling ${practice?.name || 'our practice'}. This is ${practice?.ai_name || 'Ellie'}, how can I help you today?`}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+          />
+          <p className="text-xs text-gray-400">
+            Tip: Keep it warm and natural. Include your practice name and {practice?.ai_name || 'your receptionist'}&apos;s name so callers know who they&apos;re talking to.
+          </p>
+          {!greeting && (
+            <button
+              onClick={() => setGreeting(`Thank you for calling ${practice?.name || 'our practice'}. This is ${practice?.ai_name || 'Ellie'}, how can I help you today?`)}
+              className="text-xs text-teal-600 hover:text-teal-700 font-medium"
+            >
+              Use default greeting
+            </button>
+          )}
+        </div>
+        <div className="p-5 border-t border-gray-100 flex justify-end">
+          <button
+            onClick={handleGreetingSave}
+            disabled={greetingSaving}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+          >
+            {greetingSaving ? 'Saving...' : greetingSaved ? '\u2713 Saved' : 'Save Greeting'}
           </button>
         </div>
       </div>

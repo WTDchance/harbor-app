@@ -1140,17 +1140,35 @@ function formatHours(hoursJson: any): string {
   if (typeof hoursJson === 'string') return hoursJson
   try {
     const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    const dayLabels: Record<string, string> = {
+      monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday',
+      thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+    }
     const parts: string[] = []
     for (const day of days) {
-      const hours = hoursJson[day]
-      if (hours && hours !== 'closed') {
-        parts.push(`${day.charAt(0).toUpperCase() + day.slice(1)}: ${hours}`)
+      const h = hoursJson[day]
+      if (!h) continue
+      // Handle structured format: { enabled, openTime, closeTime }
+      if (typeof h === 'object' && 'enabled' in h) {
+        if (h.enabled && h.openTime && h.closeTime) {
+          parts.push(`${dayLabels[day]}: ${fmtTime(h.openTime)} - ${fmtTime(h.closeTime)}`)
+        }
+      } else if (typeof h === 'string' && h !== 'closed') {
+        parts.push(`${dayLabels[day]}: ${h}`)
       }
     }
     return parts.length > 0 ? parts.join(', ') : 'Monday through Friday, 9am to 5pm'
   } catch {
     return 'Monday through Friday, 9am to 5pm'
   }
+}
+
+function fmtTime(t: string): string {
+  const [hh, mm] = t.split(':').map(Number)
+  if (isNaN(hh)) return t
+  const suffix = hh >= 12 ? 'PM' : 'AM'
+  const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh
+  return mm === 0 ? `${h12} ${suffix}` : `${h12}:${mm.toString().padStart(2, '0')} ${suffix}`
 }
 
 function parseAppointmentDate(timeStr: string): Date | null {
