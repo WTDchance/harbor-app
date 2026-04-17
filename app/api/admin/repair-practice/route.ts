@@ -389,8 +389,7 @@ export async function PATCH(req: NextRequest) {
     temperature: 0.7,
     tools: vapiTools,
   }
-  // Also set tools at top level — Vapi reads them from both locations
-  vapiPatch.tools = vapiTools
+  // Note: Vapi reads tools from model.tools, NOT top-level tools on PATCH
 
   const res = await fetch(`${VAPI_BASE_URL}/assistant/${p.vapi_assistant_id}`, {
     method: 'PATCH',
