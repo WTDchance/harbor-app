@@ -4,7 +4,7 @@
 // FIX: Uses patient UUID for detail links (not base64-encoded email/phone).
 // Shows intake_status badge so practitioners see who needs intake forms.
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 
@@ -118,6 +118,7 @@ export default function PatientsPage() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
+  const [showCreate, setShowCreate] = useState(false);
 
   // Debounce search
   useEffect(() => {
@@ -175,7 +176,23 @@ export default function PatientsPage() {
           <h1 className="text-2xl font-bold text-gray-900">Patients</h1>
           <p className="text-sm text-gray-500">{total} patient{total !== 1 ? "s" : ""}</p>
         </div>
+        <button
+          onClick={() => setShowCreate(true)}
+          className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg shadow-sm"
+        >
+          + New patient
+        </button>
       </div>
+
+      {showCreate && (
+        <NewPatientModal
+          onClose={() => setShowCreate(false)}
+          onCreated={(id) => {
+            setShowCreate(false);
+            router.push(`/dashboard/patients/${id}`);
+          }}
+        />
+      )}
 
       {/* Search + Sort */}
       <div className="flex gap-3 mb-4">
@@ -280,5 +297,206 @@ export default function PatientsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+function NewPatientModal({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const [form, setForm] = useState({
+    first_name: "",
+    last_name: "",
+    phone: "",
+    email: "",
+    date_of_birth: "",
+    insurance_provider: "",
+    insurance_member_id: "",
+    insurance_group_number: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function update<K extends keyof typeof form>(key: K, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!form.first_name.trim() || !form.last_name.trim() || !form.phone.trim()) {
+      setError("First name, last name, and phone are required.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        setError("Session expired. Please log in again.");
+        setSubmitting(false);
+        return;
+      }
+      const res = await fetch("/api/patients", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(form),
+      });
+      const body = await res.json().catch(() => null);
+      if (res.status === 409 && body?.existing_patient_id) {
+        // Patient with this phone already exists — jump to their profile.
+        onCreated(body.existing_patient_id);
+        return;
+      }
+      if (!res.ok) {
+        setError(body?.error || `Failed to create patient (${res.status})`);
+        setSubmitting(false);
+        return;
+      }
+      if (body?.patient?.id) {
+        onCreated(body.patient.id);
+      }
+    } catch (err: any) {
+      setError(err?.message || "Request failed");
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b">
+          <h2 className="text-lg font-semibold text-gray-900">New patient</h2>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+        <form onSubmit={handleSubmit} className="px-6 py-4 space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <LabeledInput
+              label="First name *"
+              value={form.first_name}
+              onChange={(v) => update("first_name", v)}
+              autoFocus
+            />
+            <LabeledInput
+              label="Last name *"
+              value={form.last_name}
+              onChange={(v) => update("last_name", v)}
+            />
+          </div>
+          <LabeledInput
+            label="Phone *"
+            type="tel"
+            value={form.phone}
+            onChange={(v) => update("phone", v)}
+            placeholder="+1 555 555 5555"
+          />
+          <div className="grid grid-cols-2 gap-3">
+            <LabeledInput
+              label="Email"
+              type="email"
+              value={form.email}
+              onChange={(v) => update("email", v)}
+            />
+            <LabeledInput
+              label="Date of birth"
+              type="date"
+              value={form.date_of_birth}
+              onChange={(v) => update("date_of_birth", v)}
+            />
+          </div>
+          <div className="pt-2 border-t">
+            <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+              Insurance (optional)
+            </div>
+            <div className="space-y-3">
+              <LabeledInput
+                label="Carrier"
+                value={form.insurance_provider}
+                onChange={(v) => update("insurance_provider", v)}
+                placeholder="e.g. Oregon Medicaid"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <LabeledInput
+                  label="Member ID"
+                  value={form.insurance_member_id}
+                  onChange={(v) => update("insurance_member_id", v)}
+                />
+                <LabeledInput
+                  label="Group number"
+                  value={form.insurance_group_number}
+                  onChange={(v) => update("insurance_group_number", v)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {error && (
+            <div className="text-sm text-red-700 bg-red-50 rounded-md p-3">
+              {error}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border rounded-lg hover:bg-gray-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700 disabled:opacity-50"
+            >
+              {submitting ? "Creating…" : "Create patient"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function LabeledInput({
+  label,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  autoFocus,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  type?: string;
+  placeholder?: string;
+  autoFocus?: boolean;
+}) {
+  return (
+    <label className="block">
+      <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        className="w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
+      />
+    </label>
   );
 }
