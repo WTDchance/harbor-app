@@ -6,19 +6,28 @@ import Anthropic from '@anthropic-ai/sdk'
 
 // ── Tier 1: Immediate escalation (no LLM needed) ──────────────────────────
 // These are unambiguous crisis signals. If detected, skip Sonnet and escalate immediately.
+// IMPORTANT: Keep this list in sync with lib/crisis-phrases.ts IMMEDIATE_CRISIS_PHRASES
 const IMMEDIATE_CRISIS_PHRASES = [
+  // Direct suicidal ideation
   'kill myself', 'end my life', 'take my own life', 'suicide',
   'suicidal', 'want to die', 'rather be dead', 'better off dead',
-  'ending it all', 'going to hurt myself', 'going to harm myself',
-  'overdose', 'slit my wrist', 'jump off', 'hang myself',
-  'shoot myself', 'not going to be around', 'final goodbye',
+  'ending it all', 'planning to end',
+
+  // Self-harm intent
+  'going to hurt myself', 'going to harm myself',
+  'hurt myself', 'harm myself', 'cut myself',
+  'slit my wrist', 'shoot myself', 'hang myself', 'jump off', 'overdose',
+
+  // Finality signals
+  'not going to be around', 'final goodbye', 'goodbye forever',
   "won't be here tomorrow", 'no reason to live', 'nothing to live for',
-  'planning to end', 'goodbye forever',
+  'not worth living',
 ]
 
 // ── Tier 2: Tripwire phrases (trigger Sonnet analysis) ─────────────────────
 // These are ambiguous but concerning. Could be crisis, could be normal conversation.
 // When detected, we send the full transcript to Sonnet for contextual analysis.
+// IMPORTANT: Keep this list in sync with lib/crisis-phrases.ts CONCERN_PHRASES
 const TRIPWIRE_PHRASES = [
   // Indirect crisis language
   "don't want to be here", "can't do this anymore", "can't go on",
@@ -26,7 +35,7 @@ const TRIPWIRE_PHRASES = [
   'tired of trying', 'given up', 'no hope', 'hopeless', 'worthless',
   'no one cares', 'no one would miss me', "doesn't matter anymore",
   'just want it to stop', 'just want the pain to stop',
-  'make it stop', "can't take it",
+  'make it stop', "can't take it", 'want it to end',
 
   // Behavioral warning signs (receptionist context)
   'cancel all my appointments', 'cancel everything',

@@ -1,21 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
-
-const CRISIS_PHRASES = [
-  'suicide', 'suicidal', 'kill myself', 'end my life', 'want to die',
-  "don't want to be here", 'not worth living', 'hurt myself', 'harm myself',
-  'self harm', 'self-harm', 'cut myself', 'overdose', 'no reason to live',
-  "can't go on", 'hopeless', 'worthless', 'nothing to live for',
-  'goodbye forever', 'ending it all', "won't be around", 'final goodbye',
-  'take my own life', 'rather be dead', 'better off dead', 'want it to end'
-]
-
-export function detectCrisis(text: string): { detected: boolean; phrases: string[] } {
-  const lower = text.toLowerCase()
-  const phrases = CRISIS_PHRASES.filter(p => lower.includes(p))
-  return { detected: phrases.length > 0, phrases }
-}
+import { detectCrisis } from '@/lib/crisis-phrases'
 
 export async function POST(req: NextRequest) {
   try {
@@ -30,9 +16,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'transcript is required' }, { status: 400 })
     }
 
-    const { detected, phrases } = detectCrisis(transcript)
+    const { immediateCrisis, concernDetected, immediateMatches, concernMatches } = detectCrisis(transcript)
 
-    if (!detected) {
+    if (!immediateCrisis && !concernDetected) {
       return NextResponse.json({ crisis_detected: false, phrases: [], alert_sent: false })
     }
 
@@ -46,15 +32,18 @@ export async function POST(req: NextRequest) {
     let alertSent = false
     const alertPhone = practice?.crisis_phone || practice?.phone_number
 
-    if (alertPhone) {
+    // Only send SMS for Tier 1 (immediate crisis) — unambiguous signals only.
+    // Tier 2 (concern) phrases are logged but don't trigger SMS alerts,
+    // because without contextual analysis they could be false positives.
+    if (immediateCrisis && alertPhone) {
       const patientLabel = patient_name || caller_phone || 'Unknown caller'
       const snippet = transcript.length > 200 ? transcript.substring(0, 200) + '...' : transcript
-      
+
       const alertMsg = [
         '🚨 HARBOR CRISIS ALERT 🚨',
         `Practice: ${practice?.name || 'Your practice'}`,
         `Caller: ${patientLabel}`,
-        `Phrases detected: ${phrases.join(', ')}`,
+        `Crisis phrases detected: ${immediateMatches.join(', ')}`,
         '',
         `Transcript snippet: "${snippet}"`,
         '',
@@ -70,7 +59,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Log to crisis_alerts table (non-fatal if table doesn't exist yet)
+    // Log ALL detections (both tiers) to crisis_alerts table for therapist review
     try {
       await supabase.from('crisis_alerts').insert({
         practice_id: practice?.id,
@@ -78,9 +67,10 @@ export async function POST(req: NextRequest) {
         patient_name: patient_name || null,
         appointment_id: appointment_id || null,
         transcript_snippet: transcript.substring(0, 500),
-        detected_phrases: phrases,
+        detected_phrases: [...immediateMatches, ...concernMatches],
         alert_sent: alertSent,
         alert_sent_to: alertSent ? alertPhone : null,
+        crisis_level: immediateCrisis ? 'crisis' : 'concern',
         created_at: new Date().toISOString()
       })
     } catch (dbError) {
@@ -88,8 +78,9 @@ export async function POST(req: NextRequest) {
     }
 
     return NextResponse.json({
-      crisis_detected: true,
-      phrases,
+      crisis_detected: immediateCrisis,
+      concern_detected: concernDetected,
+      phrases: [...immediateMatches, ...concernMatches],
       alert_sent: alertSent
     })
 
