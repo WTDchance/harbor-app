@@ -150,6 +150,37 @@ export async function GET(
     ).slice(0, 20);
   }
 
+  // 6b. Latest insurance_records row for this patient + its latest eligibility_check.
+  const { data: insRows } = await supabase
+    .from("insurance_records")
+    .select(
+      `id, insurance_company, member_id, group_number,
+       subscriber_name, subscriber_dob, relationship_to_subscriber,
+       last_verified_at, last_verification_status, next_verify_due, updated_at`
+    )
+    .eq("practice_id", practiceId)
+    .eq("patient_id", patientId)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  const latestInsurance = insRows?.[0] || null;
+  let latestCheck: any = null;
+  if (latestInsurance?.id) {
+    const { data: checks } = await supabase
+      .from("eligibility_checks")
+      .select(
+        `id, status, is_active, mental_health_covered, copay_amount,
+         coinsurance_percent, deductible_total, deductible_met,
+         session_limit, sessions_used, prior_auth_required,
+         plan_name, coverage_start_date, coverage_end_date,
+         payer_id, trigger_source, error_message, checked_at`
+      )
+      .eq("insurance_record_id", latestInsurance.id)
+      .order("checked_at", { ascending: false })
+      .limit(1);
+    latestCheck = checks?.[0] || null;
+  }
+
   // 7. Build outcome trend data from completed intake forms
   const outcomeTrend = intakeForms
     .filter((f) => f.status === "completed" && f.completed_at)
@@ -222,6 +253,21 @@ export async function GET(
     crisis_alerts: crisisAlerts || [],
     tasks: tasks || [],
     outcome_trend: outcomeTrend,
+    eligibility: latestInsurance
+      ? {
+          record_id: latestInsurance.id,
+          insurance_company: latestInsurance.insurance_company,
+          member_id: latestInsurance.member_id,
+          group_number: latestInsurance.group_number,
+          subscriber_name: latestInsurance.subscriber_name,
+          subscriber_dob: latestInsurance.subscriber_dob,
+          relationship_to_subscriber: latestInsurance.relationship_to_subscriber,
+          last_verified_at: latestInsurance.last_verified_at,
+          last_verification_status: latestInsurance.last_verification_status,
+          next_verify_due: latestInsurance.next_verify_due,
+          latest_check: latestCheck,
+        }
+      : null,
   });
 }
 

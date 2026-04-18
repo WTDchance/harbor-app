@@ -10,6 +10,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import IntakeProgress from "@/components/IntakeProgress";
+import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 
 const supabase = createClient();
 
@@ -94,6 +95,7 @@ type PatientData = {
     phq9_score: number | null;
     gad7_score: number | null;
   }[];
+  eligibility: EligibilityData | null;
 };
 
 function formatDate(d: string | null) {
@@ -783,6 +785,20 @@ export default function PatientDetailPage() {
                 value={patient.insurance_group_number}
               />
             </div>
+            <EligibilityPanel
+              eligibility={data.eligibility}
+              patient={{
+                id: patient.id,
+                first_name: patient.first_name,
+                last_name: patient.last_name,
+                phone: patient.phone,
+                date_of_birth: patient.date_of_birth,
+                insurance_provider: patient.insurance_provider,
+                insurance_member_id: patient.insurance_member_id,
+                insurance_group_number: patient.insurance_group_number,
+              }}
+              onChanged={fetchPatient}
+            />
           </div>
 
           <div className="bg-white border rounded-lg p-5 shadow-sm">

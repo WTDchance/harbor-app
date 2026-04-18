@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase-service'
 import { logCommunication } from '@/lib/patientCommunications'
+import { runAndPersistEligibilityCheck } from '@/lib/stedi/eligibility'
 
 // PHQ-9 scoring
 function scorePHQ9(answers: number[]): { score: number; severity: string; recommendation: string } {
@@ -118,6 +119,13 @@ export async function POST(req: NextRequest) {
 
     // FIX: Update the PATIENT record with demographics from intake
     await updatePatientFromIntake(supabase, intake, demographics, insurance, phq9Result, gad7Result)
+
+    // Eligibility pre-check: create/update insurance_records and fire a Stedi
+    // 270. Non-blocking on failure — intake submission must always succeed.
+    if (insurance?.has_insurance === true) {
+      await syncInsuranceAndVerify(supabase, intake, demographics, insurance)
+        .catch(err => console.error('[Intake] insurance sync/verify failed:', err))
+    }
 
     // Tier 2A: Write PHQ-9 and GAD-7 to patient_assessments for longitudinal tracking
     const resolvedPatientId = intake.patient_id || null
@@ -254,8 +262,13 @@ async function updatePatientFromIntake(
       updates.referral_source = demographics.referral_source
     }
 
-    if (insurance?.provider) updates.insurance_provider = insurance.provider
-    if (insurance?.member_id) updates.insurance_member_id = insurance.member_id
+    // Intake form sends carrier as `insurance_provider` and the member ID as
+    // `policy_number` (see app/intake/[token]/page.tsx). Older callers used
+    // `provider` / `member_id`, so accept both shapes.
+    const carrier = insurance?.insurance_provider || insurance?.provider
+    const memberId = insurance?.policy_number || insurance?.member_id
+    if (carrier) updates.insurance_provider = carrier
+    if (memberId) updates.insurance_member_id = memberId
     if (insurance?.group_number) updates.insurance_group_number = insurance.group_number
 
     updates.intake_completed = true
@@ -283,6 +296,112 @@ async function updatePatientFromIntake(
   } catch (err) {
     console.error('[Intake] Error updating patient from intake:', err)
   }
+}
+
+// Create or update the insurance_records row for this patient based on intake,
+// then run a Stedi 270 via the shared lib. Safe to call even when Stedi is not
+// configured or data is missing — the lib will persist a manual_pending /
+// missing_data row so the dashboard shows a useful state.
+async function syncInsuranceAndVerify(
+  supabase: any,
+  intake: any,
+  demographics: any,
+  insurance: any
+) {
+  // We need a patient_id to link the insurance record cleanly. If the intake
+  // wasn't linked to one yet, updatePatientFromIntake above handles that — re-read.
+  const { data: freshIntake } = await supabase
+    .from('intake_forms')
+    .select('patient_id, practice_id, patient_name, patient_phone, patient_dob')
+    .eq('id', intake.id)
+    .single()
+  const patientId = freshIntake?.patient_id
+  if (!patientId) {
+    console.log('[Intake] no patient_id after sync, skipping insurance verify')
+    return
+  }
+
+  const carrier = insurance?.insurance_provider || insurance?.provider || null
+  if (!carrier) return
+
+  const memberId = insurance?.policy_number || insurance?.member_id || null
+  const groupNumber = insurance?.group_number || null
+  const subscriberName = insurance?.subscriber_name || null
+  const subscriberDob = insurance?.subscriber_dob || null
+  const patientName =
+    (demographics?.first_name && demographics?.last_name
+      ? `${demographics.first_name} ${demographics.last_name}`
+      : null) ||
+    freshIntake.patient_name ||
+    ''
+  const patientDob = demographics?.date_of_birth || freshIntake.patient_dob || null
+  const patientPhone = demographics?.phone || freshIntake.patient_phone || null
+
+  // One insurance_records row per (patient, carrier). If the therapist later
+  // updates the carrier, we insert a second row rather than mutate history.
+  const { data: existing } = await supabase
+    .from('insurance_records')
+    .select('id')
+    .eq('practice_id', freshIntake.practice_id)
+    .eq('patient_id', patientId)
+    .eq('insurance_company', carrier)
+    .limit(1)
+    .maybeSingle()
+
+  let recordId = existing?.id
+  if (recordId) {
+    await supabase
+      .from('insurance_records')
+      .update({
+        patient_name: patientName,
+        patient_dob: patientDob,
+        patient_phone: patientPhone,
+        member_id: memberId,
+        group_number: groupNumber,
+        subscriber_name: subscriberName || patientName,
+        subscriber_dob: subscriberDob || patientDob,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', recordId)
+  } else {
+    const { data: newRow, error: insErr } = await supabase
+      .from('insurance_records')
+      .insert({
+        practice_id: freshIntake.practice_id,
+        patient_id: patientId,
+        patient_name: patientName,
+        patient_dob: patientDob,
+        patient_phone: patientPhone,
+        insurance_company: carrier,
+        member_id: memberId,
+        group_number: groupNumber,
+        subscriber_name: subscriberName || patientName,
+        subscriber_dob: subscriberDob || patientDob,
+      })
+      .select('id')
+      .single()
+    if (insErr || !newRow) {
+      console.error('[Intake] failed to create insurance_records', insErr)
+      return
+    }
+    recordId = newRow.id
+  }
+
+  const { data: practice } = await supabase
+    .from('practices')
+    .select('id, name, npi')
+    .eq('id', freshIntake.practice_id)
+    .single()
+  if (!practice) return
+
+  await runAndPersistEligibilityCheck(supabase, {
+    insuranceRecordId: recordId,
+    practice: { id: practice.id, name: practice.name, npi: practice.npi },
+    patient: { name: patientName, dob: patientDob, phone: patientPhone },
+    insurance: { company: carrier, memberId, groupNumber },
+    subscriber: { name: subscriberName, dob: subscriberDob },
+    triggerSource: 'intake',
+  })
 }
 
 export async function GET(req: NextRequest) {
