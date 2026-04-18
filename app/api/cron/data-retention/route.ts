@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { logEvent } from '@/lib/events';
+import { assertCronAuthorized } from '@/lib/cron-auth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,15 +30,8 @@ const SMS_RETENTION_DAYS = 90;
 const AUDIT_LOG_RETENTION_DAYS = 365;
 
 export async function GET(req: NextRequest) {
-  // Auth check — accepts either x-cron-secret (reconciler pattern) or
-  // Authorization: Bearer (admin cron pattern) for flexibility.
-  const cronSecret = req.headers.get('x-cron-secret');
-  const bearerToken = req.headers.get('authorization')?.replace('Bearer ', '');
-  const validCron = process.env.RECONCILER_SECRET && cronSecret === process.env.RECONCILER_SECRET;
-  const validBearer = process.env.CRON_SECRET && bearerToken === process.env.CRON_SECRET;
-  if (!validCron && !validBearer) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const unauthorized = assertCronAuthorized(req);
+  if (unauthorized) return unauthorized;
 
   const results: Record<string, number> = {};
   const today = new Date().toISOString().slice(0, 10);

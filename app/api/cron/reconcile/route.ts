@@ -14,13 +14,15 @@
  *      (rate-limited via dedupe key).
  *   7. Emits `system.reconciler_run` with the totals.
  *
- * Protected by a shared secret in the `x-cron-secret` header (set
- * RECONCILER_SECRET in Railway env).
+ * Protected by the shared cron auth helper — accepts either an
+ * `Authorization: Bearer <secret>` or `x-cron-secret: <secret>` header
+ * matching either `CRON_SECRET` or (legacy) `RECONCILER_SECRET`.
  */
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { logEvent, hasEventWithDedupeKey } from '@/lib/events';
+import { assertCronAuthorized } from '@/lib/cron-auth';
 import twilio from 'twilio';
 
 export const runtime = 'nodejs';
@@ -45,11 +47,8 @@ interface ReconcileCounts {
 }
 
 export async function GET(req: NextRequest) {
-  // Auth: cron secret header
-  const secret = req.headers.get('x-cron-secret');
-  if (process.env.RECONCILER_SECRET && secret !== process.env.RECONCILER_SECRET) {
-    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 });
-  }
+  const unauthorized = assertCronAuthorized(req);
+  if (unauthorized) return unauthorized;
 
   const counts: ReconcileCounts = {
     orphan_patients: 0,

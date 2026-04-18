@@ -1,6 +1,7 @@
 // app/api/cron/intake-reminders/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { assertCronAuthorized } from '@/lib/cron-auth'
 
 /**
  * Called by an external cron (cron-job.org) every hour.
@@ -37,11 +38,8 @@ async function sendReminder(form: any) {
 }
 
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
-  if (!process.env.CRON_SECRET || auth !== expected) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const unauthorized = assertCronAuthorized(req)
+  if (unauthorized) return unauthorized
 
   try {
     const now = Date.now()
