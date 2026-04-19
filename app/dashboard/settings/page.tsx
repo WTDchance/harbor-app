@@ -150,6 +150,8 @@ export default function SettingsPage() {
     timezone: 'America/Los_Angeles',
     insurance_accepted: '',
     notification_emails: '',
+    npi: '',
+    tax_id: '',
   })
 
   // Scheduling mode state
@@ -245,6 +247,8 @@ export default function SettingsPage() {
           timezone: p.timezone || 'America/Los_Angeles',
           insurance_accepted: (p.insurance_accepted || []).join(', '),
           notification_emails: (p.notification_emails || []).join(', '),
+          npi: p.npi || '',
+          tax_id: p.tax_id || '',
         })
         setSchedulingMode(p.scheduling_mode || 'notification')
         setDailyRecapEnabled(p.daily_recap_enabled !== false)
@@ -349,6 +353,8 @@ export default function SettingsPage() {
         timezone: form.timezone,
         insurance_accepted: form.insurance_accepted.split(',').map((s: string) => s.trim()).filter(Boolean),
         notification_emails: form.notification_emails.split(',').map((s: string) => s.trim()).filter(Boolean),
+        npi: form.npi.replace(/\D/g, '') || null,
+        tax_id: form.tax_id.replace(/\D/g, '') || null,
       }),
     })
 
@@ -723,6 +729,43 @@ export default function SettingsPage() {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
             <p className="text-xs text-gray-400 mt-1">Comma-separated — your AI receptionist will mention these to callers who ask</p>
+          </div>
+          <div className="pt-4 mt-4 border-t border-gray-100">
+            <div className="text-sm font-semibold text-gray-900">Billing identifiers</div>
+            <p className="text-xs text-gray-500 mt-1 mb-3">
+              Required for insurance eligibility checks and any future claim submission. Ask your biller or check your NPPES record if you're unsure.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Billing NPI</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={10}
+              value={form.npi}
+              onChange={e => setForm(f => ({ ...f, npi: e.target.value.replace(/\D/g, '').slice(0, 10) }))}
+              placeholder="10-digit NPI"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              Used as the billing provider on every Stedi eligibility request.
+              {form.npi && form.npi.length !== 10 && (
+                <span className="ml-1 text-amber-700">NPI must be 10 digits.</span>
+              )}
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Tax ID (EIN)</label>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={9}
+              value={form.tax_id}
+              onChange={e => setForm(f => ({ ...f, tax_id: e.target.value.replace(/\D/g, '').slice(0, 9) }))}
+              placeholder="9-digit EIN (optional for eligibility)"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 font-mono"
+            />
+            <p className="text-xs text-gray-400 mt-1">Required when we add claim submission. Optional today.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Call Summary Notification Emails</label>
