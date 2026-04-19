@@ -1347,4 +1347,17 @@ export default function PatientDetailPage() {
                       : appt.status === "cancelled"
                       ? "bg-red-100 text-red-800"
                       : "bg-gray-100 text-gray-600"
-          
+                  }`}
+                >
+                  {appt.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No appointments scheduled.</p>
+        )}
+      </div>
+    </div>
+  );
+}
