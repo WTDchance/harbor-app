@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { createServerSupabase } from '@/lib/supabase-server'
+import { resolvePracticeIdForApi } from '@/lib/active-practice'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -14,13 +15,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { data: userRecord } = await supabaseAdmin
-      .from('users')
-      .select('practice_id')
-      .eq('id', user.id)
-      .single()
-
-    if (!userRecord?.practice_id) {
+    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user)
+    if (!practiceId) {
       return NextResponse.json({ error: 'No practice found' }, { status: 403 })
     }
 
@@ -37,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .from('schedule_changes')
       .select('*')
       .eq('id', id)
-      .eq('practice_id', userRecord.practice_id)
+      .eq('practice_id', practiceId)
       .single()
 
     if (fetchError || !change) {

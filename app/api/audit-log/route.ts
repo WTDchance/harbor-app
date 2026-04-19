@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 import { supabaseAdmin } from "@/lib/supabase";
 import { checkBruteForce } from "@/lib/breach-detection";
+import { resolvePracticeIdForApi } from "@/lib/active-practice";
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -56,13 +57,8 @@ export async function POST(req: NextRequest) {
       userId = user.id;
       userEmail = user.email ?? null;
 
-      // Look up practice_id
-      const { data: userRecord } = await supabaseAdmin
-        .from("users")
-        .select("practice_id")
-        .eq("id", user.id)
-        .single();
-      practiceId = userRecord?.practice_id ?? null;
+      // Look up practice_id (respects admin act-as cookie)
+      practiceId = await resolvePracticeIdForApi(supabaseAdmin, user);
     }
 
     // Allow callers to override practice_id (admin endpoints acting on behalf)
@@ -128,14 +124,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Find practice
-  const { data: userRecord } = await supabaseAdmin
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-
-  if (!userRecord?.practice_id) {
+  // Find practice (respects admin act-as cookie)
+  const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user);
+  if (!practiceId) {
     return NextResponse.json({ error: "No practice found" }, { status: 404 });
   }
 
@@ -147,7 +138,7 @@ export async function GET(req: NextRequest) {
   let query = supabaseAdmin
     .from("audit_logs")
     .select("*", { count: "exact" })
-    .eq("practice_id", userRecord.practice_id)
+    .eq("practice_id", practiceId)
     .order("timestamp", { ascending: false })
     .range(offset, offset + limit - 1);
 

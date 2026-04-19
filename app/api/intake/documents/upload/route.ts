@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
+import { resolvePracticeIdForApi } from "@/lib/active-practice";
 
 async function getPracticeId(req: NextRequest): Promise<{ practiceId: string | null; error: string | null }> {
   const authHeader = req.headers.get("authorization");
@@ -14,12 +15,8 @@ async function getPracticeId(req: NextRequest): Promise<{ practiceId: string | n
   const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) return { practiceId: null, error: "Unauthorized" };
 
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-  if (userRecord?.practice_id) return { practiceId: userRecord.practice_id, error: null };
+  const resolved = await resolvePracticeIdForApi(supabase, user);
+  if (resolved) return { practiceId: resolved, error: null };
 
   const { data: memberRecord } = await supabase
     .from("practice_members")

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { resolvePracticeIdForApi } from '@/lib/active-practice'
 
 // GET /api/support — list tickets for the authenticated practice
 export async function GET(request: NextRequest) {
@@ -11,14 +12,9 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Get practice_id from user
-    const { data: user } = await supabaseAdmin
-      .from('users')
-      .select('practice_id')
-      .eq('id', session.user.id)
-      .single()
-
-    if (!user?.practice_id) {
+    // Get practice_id from user (respects admin act-as cookie)
+    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, session.user)
+    if (!practiceId) {
       return NextResponse.json({ error: 'No practice found' }, { status: 404 })
     }
 
@@ -31,7 +27,7 @@ export async function GET(request: NextRequest) {
     let query = supabaseAdmin
       .from('support_tickets')
       .select('*', { count: 'exact' })
-      .eq('practice_id', user.practice_id)
+      .eq('practice_id', practiceId)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1)
 
@@ -65,13 +61,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    const { data: user } = await supabaseAdmin
-      .from('users')
-      .select('practice_id')
-      .eq('id', session.user.id)
-      .single()
-
-    if (!user?.practice_id) {
+    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, session.user)
+    if (!practiceId) {
       return NextResponse.json({ error: 'No practice found' }, { status: 404 })
     }
 
@@ -88,7 +79,7 @@ export async function POST(request: NextRequest) {
     const { data: ticket, error } = await supabaseAdmin
       .from('support_tickets')
       .insert({
-        practice_id: user.practice_id,
+        practice_id: practiceId,
         user_id: session.user.id,
         subject,
         description,

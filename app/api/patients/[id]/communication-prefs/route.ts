@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
+import { resolvePracticeIdForApi } from "@/lib/active-practice";
 import { isOptedOut as isSmsOptedOut, clearOptOut as clearSmsOptOut } from "@/lib/sms-optout";
 import { isEmailOptedOut, recordEmailOptOut, clearEmailOptOut } from "@/lib/email-optout";
 import { isCallOptedOut, recordCallOptOut, clearCallOptOut } from "@/lib/call-optout";
@@ -54,16 +55,12 @@ export async function GET(
   const { user, error } = await getAuthenticatedUser(req);
   if (error || !user) return NextResponse.json({ error }, { status: 401 });
 
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-  if (!userRecord?.practice_id) {
+  const practiceId = await resolvePracticeIdForApi(supabase, user);
+  if (!practiceId) {
     return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   }
 
-  const patient = await resolvePatient(params.id, userRecord.practice_id);
+  const patient = await resolvePatient(params.id, practiceId);
   if (!patient) {
     return NextResponse.json({ error: "Patient not found" }, { status: 404 });
   }
@@ -82,16 +79,12 @@ export async function PATCH(
   const { user, error } = await getAuthenticatedUser(req);
   if (error || !user) return NextResponse.json({ error }, { status: 401 });
 
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-  if (!userRecord?.practice_id) {
+  const practiceId = await resolvePracticeIdForApi(supabase, user);
+  if (!practiceId) {
     return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   }
 
-  const patient = await resolvePatient(params.id, userRecord.practice_id);
+  const patient = await resolvePatient(params.id, practiceId);
   if (!patient) {
     return NextResponse.json({ error: "Patient not found" }, { status: 404 });
   }

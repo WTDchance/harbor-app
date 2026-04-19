@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
+import { resolvePracticeIdForApi } from '@/lib/active-practice';
 export async function POST(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer ')) {
@@ -9,11 +10,11 @@ export async function POST(req: NextRequest) {
   if (error || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
-  const { data: rec } = await supabase.from('users').select('practice_id').eq('id', user.id).single();
-  if (!rec?.practice_id) {
+  const practiceId = await resolvePracticeIdForApi(supabase, user);
+  if (!practiceId) {
     return NextResponse.json({ error: 'No practice found' }, { status: 404 });
   }
-  const { error: ue } = await supabase.from('practices').update({ onboarding_dismissed: true }).eq('id', rec.practice_id);
+  const { error: ue } = await supabase.from('practices').update({ onboarding_dismissed: true }).eq('id', practiceId);
   if (ue) {
     return NextResponse.json({ error: ue.message }, { status: 500 });
   }

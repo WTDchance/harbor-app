@@ -5,6 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
+import { resolvePracticeIdForApi } from "@/lib/active-practice";
 
 async function getAuthenticatedUser(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -31,21 +32,10 @@ export async function GET(
     return NextResponse.json({ error }, { status: 401 });
   }
 
-  // Try multiple ways to resolve practice_id for this user
-  let practiceId: string | null = null;
+  // Resolve practice_id via act-as cookie (admin) or users table fallback
+  let practiceId = await resolvePracticeIdForApi(supabase, user);
 
-  // Method 1: Check users table
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-
-  if (userRecord?.practice_id) {
-    practiceId = userRecord.practice_id;
-  }
-
-  // Method 2: Check practice_members table (group practice support)
+  // Fallback: Check practice_members table (group practice support)
   if (!practiceId) {
     const { data: memberRecord } = await supabase
       .from("practice_members")
@@ -58,7 +48,7 @@ export async function GET(
     }
   }
 
-  // Method 3: Check practices table by notification_email
+  // Fallback: Check practices table by notification_email
   if (!practiceId && user.email) {
     const { data: practiceRecord } = await supabase
       .from("practices")

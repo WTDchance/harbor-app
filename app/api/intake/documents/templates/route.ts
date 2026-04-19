@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
+import { resolvePracticeIdForApi } from '@/lib/active-practice';
 
 type Template = {
   slug: string;
@@ -55,13 +56,9 @@ async function getPracticeId(req: NextRequest): Promise<string | null> {
   const { data: { user }, error } = await supabase.auth.getUser(authHeader.slice(7));
   if (error || !user) return null;
 
-  // Try users.practice_id first
-  const { data: userRecord } = await supabase
-    .from('users')
-    .select('practice_id')
-    .eq('id', user.id)
-    .single();
-  if (userRecord?.practice_id) return userRecord.practice_id;
+  // Try act-as cookie (admin) then users.practice_id
+  const resolved = await resolvePracticeIdForApi(supabase, user);
+  if (resolved) return resolved;
 
   // Fallback: practice_members
   const { data: member } = await supabase

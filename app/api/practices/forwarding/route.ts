@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import twilio from 'twilio'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { resolvePracticeIdForApi } from '@/lib/active-practice'
 
 export async function GET(req: NextRequest) {
   try {
@@ -17,14 +18,9 @@ export async function GET(req: NextRequest) {
     }
 
     // Get user's practice
-    const { data: userData, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('practice_id')
-      .eq('id', user.id)
-      .single()
-
-    if (userError || !userData) {
-      console.error('[Forwarding GET] User lookup error:', userError)
+    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user)
+    if (!practiceId) {
+      console.error('[Forwarding GET] No practice found for user')
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
@@ -32,7 +28,7 @@ export async function GET(req: NextRequest) {
     const { data: practice, error: practiceError } = await supabaseAdmin
       .from('practices')
       .select('id, forwarding_enabled, call_forwarding_number')
-      .eq('id', userData.practice_id)
+      .eq('id', practiceId)
       .single()
 
     if (practiceError || !practice) {
@@ -93,14 +89,9 @@ export async function POST(req: NextRequest) {
     }
 
     // Get user's practice
-    const { data: userData, error: userError } = await supabaseAdmin
-      .from('users')
-      .select('practice_id')
-      .eq('id', user.id)
-      .single()
-
-    if (userError || !userData) {
-      console.error('[Forwarding POST] User lookup error:', userError)
+    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user)
+    if (!practiceId) {
+      console.error('[Forwarding POST] No practice found for user')
       return NextResponse.json({ error: 'User not found' }, { status: 404 })
     }
 
@@ -108,7 +99,7 @@ export async function POST(req: NextRequest) {
     const { data: practice, error: practiceError } = await supabaseAdmin
       .from('practices')
       .select('id, twilio_phone_sid, call_forwarding_number')
-      .eq('id', userData.practice_id)
+      .eq('id', practiceId)
       .single()
 
     if (practiceError || !practice) {

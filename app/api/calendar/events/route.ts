@@ -1,8 +1,9 @@
- import { createServerClient } from '@supabase/ssr'   
+ import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase'
 import { NextRequest, NextResponse } from 'next/server'
 import { createDAVClient } from 'tsdav'
+import { resolvePracticeIdForApi } from '@/lib/active-practice'
 
 async function getPracticeId(): Promise<string | null> {
   const cookieStore = await cookies()
@@ -20,8 +21,7 @@ async function getPracticeId(): Promise<string | null> {
   )
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabaseAdmin.from('users').select('practice_id').eq('id', user.id).single()
-  return data?.practice_id || null
+  return resolvePracticeIdForApi(supabaseAdmin, user)
 }
 
 interface CalDAVEvent {

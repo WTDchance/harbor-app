@@ -6,6 +6,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
+import { resolvePracticeIdForApi } from "@/lib/active-practice";
 import { isOptedOut as isSmsOptedOut } from "@/lib/sms-optout";
 import { isEmailOptedOut } from "@/lib/email-optout";
 import { isCallOptedOut } from "@/lib/call-optout";
@@ -33,18 +34,11 @@ export async function GET(
     return NextResponse.json({ error }, { status: 401 });
   }
 
-  // Look up practice
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-
-  if (!userRecord?.practice_id) {
+  // Look up practice (respects admin act-as cookie)
+  const practiceId = await resolvePracticeIdForApi(supabase, user);
+  if (!practiceId) {
     return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   }
-
-  const practiceId = userRecord.practice_id;
   const patientId = params.id;
 
   // 1. Get patient from patients table
@@ -299,13 +293,8 @@ export async function PATCH(
     return NextResponse.json({ error }, { status: 401 });
   }
 
-  const { data: userRecord } = await supabase
-    .from("users")
-    .select("practice_id")
-    .eq("id", user.id)
-    .single();
-
-  if (!userRecord?.practice_id) {
+  const practiceId = await resolvePracticeIdForApi(supabase, user);
+  if (!practiceId) {
     return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   }
 
@@ -326,38 +315,4 @@ export async function PATCH(
     "pronouns",
     "emergency_contact_name",
     "emergency_contact_phone",
-    "referral_source",
-    "reason_for_seeking",
-    "telehealth_preference",
-  ];
-
-  const updates: Record<string, any> = {};
-  for (const field of allowedFields) {
-    if (field in body) {
-      updates[field] = body[field];
-    }
-  }
-
-  if (Object.keys(updates).length === 0) {
-    return NextResponse.json(
-      { error: "No valid fields to update" },
-      { status: 400 }
-    );
-  }
-
-  updates.updated_at = new Date().toISOString();
-
-  const { data, error: updateError } = await supabase
-    .from("patients")
-    .update(updates)
-    .eq("id", params.id)
-    .eq("practice_id", userRecord.practice_id)
-    .select()
-    .single();
-
-  if (updateError) {
-    return NextResponse.json({ error: updateError.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ patient: data });
-}
+    "referral_source"
