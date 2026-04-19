@@ -18,18 +18,22 @@ export const PAYER_IDS: Record<string, string> = {
   'Tricare': 'TRICR',
   'Medicaid': '77003',
   'Medicare': '00120',
-  'Oregon Health Plan': 'OREMD',
-  'OHP': 'OREMD',
-  'Oregon Medicaid': 'OREMD',
-  'Cascade Health Alliance': '93688',
-  'CHA': '93688',
+  'Oregon Health Plan': 'ZRTGI',
+  'OHP': 'ZRTGI',
+  'Oregon Medicaid': 'ZRTGI',
+  'Oregon Health Authority': 'ZRTGI',
+  'Cascade Health Alliance': 'JZSAE',
+  'CHA': 'JZSAE',
+  'CareOregon': 'JYMNM',
 }
 
 // Payers where we can attempt an eligibility check with just name + DOB (no member ID).
 // Mostly government payers where the member ID is derived from SSN or the payer will
 // match by demographics. Commercial payers require a member ID.
 const NAME_DOB_ELIGIBLE = new Set<string>([
-  'OREMD',  // Oregon Medicaid / OHP
+  'ZRTGI',  // Oregon Medicaid / OHP (Stedi ID)
+  'JZSAE',  // Cascade Health Alliance (Klamath Falls CCO)
+  'JYMNM',  // CareOregon (CCO)
   '77003',  // Medicaid (generic)
   '00120',  // Medicare
 ])
