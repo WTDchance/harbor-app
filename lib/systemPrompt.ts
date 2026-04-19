@@ -12,6 +12,10 @@ export interface SystemPromptData {
   insurance_accepted?: string[]
   system_prompt_notes?: string
   emotional_support_enabled?: boolean
+  // Default self-pay session rate in cents. When set, Ellie can quote a specific
+  // number; when unset, she defers pricing to the therapist and offers to take
+  // a message.
+  self_pay_rate_cents?: number | null
 }
 
 export function buildSystemPrompt(data: SystemPromptData): string {
@@ -131,7 +135,19 @@ PHQ-2 = questions 1 + 2. GAD-2 = questions 3 + 4.
 After the screening, use the submitIntakeScreening function to save the scores.
 
 AFTER HOURS:
-If the call is outside ${hours}, let them know the office is currently closed and you'll make sure their message gets to ${data.therapist_name}. Still collect their name and number.`
+If the call is outside ${hours}, let them know the office is currently closed and you'll make sure their message gets to ${data.therapist_name}. Still collect their name and number.
+
+BILLING:
+Many callers have insurance; some prefer to pay out of pocket. Respect whichever they choose - do NOT push insurance on someone who says they're paying cash, and do NOT push cash-pay on someone who wants to use insurance.
+- If a caller mentions a carrier or says they want to use insurance, go through normal insurance intake: collect carrier name, member ID, and group number. Let them know the practice will verify coverage before their first session, so they don't need to call their carrier themselves.
+- If a caller says they are "self-pay," "paying cash," "paying out of pocket," or "not using insurance," thank them, confirm it warmly ("Absolutely, we can do self-pay."), and do NOT ask for insurance details. ${
+  typeof data.self_pay_rate_cents === 'number' && data.self_pay_rate_cents >= 0
+    ? `The practice's standard self-pay rate is $${(data.self_pay_rate_cents / 100).toFixed(2)} per session - you can share that if they ask.`
+    : `If they ask about the rate, let them know ${data.therapist_name} sets pricing and offer to include that question in the message so the therapist can follow up.`
+}
+- If a caller asks about sliding-scale or reduced-rate sessions, let them know that's a conversation with ${data.therapist_name} directly. Offer to take their contact info and a brief note so the therapist can reach out.
+- If a returning caller indicates they've switched how they're paying (e.g. "I lost my insurance" or "I'd rather just pay cash now"), acknowledge the change, note it in the message for the therapist, and proceed with whichever path they chose.
+- Never invent a dollar amount or quote a rate that isn't listed above.`
 
   if (data.system_prompt_notes) {
     prompt += `
