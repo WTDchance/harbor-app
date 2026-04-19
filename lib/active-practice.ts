@@ -13,6 +13,7 @@
 
 import { cookies } from "next/headers";
 import type { SupabaseClient, User } from "@supabase/supabase-js";
+import { supabaseAdmin } from "@/lib/supabase";
 
 export const ACT_AS_COOKIE = "harbor_act_as_practice";
 
@@ -26,6 +27,9 @@ function isAdmin(user: User | null | undefined): boolean {
 /**
  * Resolve the effective practice_id for this request.
  * Returns null if no practice can be resolved.
+ *
+ * Uses supabaseAdmin (service role) for the act-as practice verification
+ * to bypass RLS — the admin may be acting as a practice they don't own.
  */
 export async function getEffectivePracticeId(
   supabase: SupabaseClient,
@@ -39,8 +43,8 @@ export async function getEffectivePracticeId(
       const cookieStore = await cookies();
       const override = cookieStore.get(ACT_AS_COOKIE)?.value;
       if (override) {
-        // Verify the practice exists to avoid acting on bad data
-        const { data: practice } = await supabase
+        // Verify the practice exists — use supabaseAdmin to bypass RLS
+        const { data: practice } = await supabaseAdmin
           .from("practices")
           .select("id")
           .eq("id", override)
