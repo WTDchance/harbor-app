@@ -248,10 +248,17 @@ function parseStedi271(data: any): ParsedBenefits {
       (b?.serviceTypeDescription || '').toLowerCase().includes('mental')
   })
 
-  const planStatus = Array.isArray(data?.planStatus) && data.planStatus[0] ? data.planStatus[0] : null
+  // EDI active status codes:
+  //   '1' = Active Coverage
+  //   '2' = Active - Full Risk Capitation (used by Medicaid CCOs like Cascade Health Alliance)
+  // We check ALL planStatus entries, not just [0], because payers return multiple
+  // plan lines and the active one may not be first.
+  const ACTIVE_STATUS_CODES = new Set(['1', '2'])
+  const planStatuses: any[] = Array.isArray(data?.planStatus) ? data.planStatus : []
+  const activePlan = planStatuses.find((ps: any) => ACTIVE_STATUS_CODES.has(ps?.statusCode))
   const isActive =
-    planStatus?.statusCode === '1' ||
-    benefits.some((b: any) => b?.code === '1' && b?.serviceTypeCodes?.some(
+    !!activePlan ||
+    benefits.some((b: any) => ACTIVE_STATUS_CODES.has(b?.code) && b?.serviceTypeCodes?.some(
       (c: string) => c === '30' || c === 'MH' || c === 'A4'
     ))
 
@@ -285,7 +292,7 @@ function parseStedi271(data: any): ParsedBenefits {
     sessionLimit,
     sessionsUsed: null, // Not reliably surfaced by all payers; display session_limit only
     priorAuthRequired,
-    planName: planStatus?.statusDescription || data?.planInformation?.planDescription || null,
+    planName: activePlan?.planDetails || activePlan?.statusDescription || planStatuses[0]?.planDetails || data?.planInformation?.planDescription || null,
     coverageStartDate: edi8ToDate(coverageDates?.planBegin || coverageDates?.eligibilityBegin),
     coverageEndDate: edi8ToDate(coverageDates?.planEnd || coverageDates?.eligibilityEnd),
   }
@@ -388,15 +395,4 @@ async function persistResult(
     mentalHealthCovered: parsed.mentalHealthCovered,
     copayAmount: parsed.copayAmount,
     coinsurancePercent: parsed.coinsurancePercent,
-    deductibleTotal: parsed.deductibleTotal,
-    deductibleMet: parsed.deductibleMet,
-    sessionLimit: parsed.sessionLimit,
-    sessionsUsed: parsed.sessionsUsed,
-    priorAuthRequired: parsed.priorAuthRequired,
-    planName: parsed.planName,
-    coverageStartDate: parsed.coverageStartDate,
-    coverageEndDate: parsed.coverageEndDate,
-    errorMessage: ctx.errorMessage,
-    eligibilityCheckId: inserted?.id ?? null,
-  }
-}
+    deductibleTotal: parsed.deductib
