@@ -217,6 +217,12 @@ export default function SettingsPage() {
   // Active tab in the settings layout (account | practice | calendar | billing)
   const [activeTab, setActiveTab] = useState<TabKey>('practice')
 
+  // Self-pay rate state (stored in cents on the DB, displayed as dollars)
+  const [selfPayRate, setSelfPayRate] = useState<string>('')
+  const [selfPayRateSaving, setSelfPayRateSaving] = useState(false)
+  const [selfPayRateSaved, setSelfPayRateSaved] = useState(false)
+  const [selfPayRateError, setSelfPayRateError] = useState<string | null>(null)
+
   const searchParams = useSearchParams()
   const supabase = createClient()
 
@@ -270,6 +276,12 @@ export default function SettingsPage() {
     setGreeting(p.greeting || '')
     if (p.intake_config?.sections) {
       setIntakeConfig(prev => ({ ...prev, ...p.intake_config.sections }))
+    }
+    // Load self-pay rate (convert cents to dollar string; empty = unset)
+    if (typeof p.self_pay_rate_cents === 'number' && p.self_pay_rate_cents >= 0) {
+      setSelfPayRate((p.self_pay_rate_cents / 100).toFixed(2))
+    } else {
+      setSelfPayRate('')
     }
     setLoading(false)
   }, [resolvedPractice, practiceLoading, practiceError])
@@ -430,6 +442,37 @@ export default function SettingsPage() {
     if (res.ok) {
       setHoursSaved(true)
       setTimeout(() => setHoursSaved(false), 3000)
+    }
+  }
+
+  const handleSelfPayRateSave = async () => {
+    if (!practice) return
+    setSelfPayRateError(null)
+
+    // Parse dollar input -> cents. Empty string means unset (null on DB).
+    const raw = selfPayRate.trim()
+    let cents: number | null = null
+    if (raw !== '') {
+      const parsed = Number(raw)
+      if (!isFinite(parsed) || parsed < 0) {
+        setSelfPayRateError('Enter a non-negative dollar amount (e.g. 150.00) or leave blank to clear.')
+        return
+      }
+      cents = Math.round(parsed * 100)
+    }
+
+    setSelfPayRateSaving(true)
+    const res = await fetch(`/api/practices/${practice.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ self_pay_rate_cents: cents }),
+    })
+    setSelfPayRateSaving(false)
+    if (res.ok) {
+      setSelfPayRateSaved(true)
+      setTimeout(() => setSelfPayRateSaved(false), 3000)
+    } else {
+      setSelfPayRateError('Failed to save. Please try again.')
     }
   }
 
@@ -1211,12 +1254,35 @@ export default function SettingsPage() {
           <div className="bg-white rounded-xl border border-gray-200 mb-6">
             <div className="p-5 border-b border-gray-100">
               <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Self-Pay Rate</h2>
-              <p className="text-xs text-gray-400 mt-1">Standard session rate for patients paying out of pocket</p>
+              <p className="text-xs text-gray-400 mt-1">Default session rate for patients paying out of pocket. Leave blank to defer pricing to the therapist.</p>
             </div>
-            <div className="p-5">
-              <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm text-gray-600">
-                Coming soon. You&apos;ll be able to set a default session rate for self-pay patients, and override it per patient for sliding-scale arrangements.
+            <div className="p-5 space-y-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Session rate</label>
+              <div className="relative max-w-xs">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={selfPayRate}
+                  onChange={e => setSelfPayRate(e.target.value)}
+                  placeholder="150.00"
+                  className="w-full pl-7 pr-12 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">USD</span>
               </div>
+              <p className="text-xs text-gray-400">
+                Used when a patient&apos;s billing mode is set to self-pay. Sliding-scale overrides (per patient) will live on the patient detail page.
+              </p>
+              {selfPayRateError && <p className="text-xs text-red-600">{selfPayRateError}</p>}
+            </div>
+            <div className="p-5 border-t border-gray-100 flex justify-end">
+              <button
+                onClick={handleSelfPayRateSave}
+                disabled={selfPayRateSaving}
+                className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+              >
+                {selfPayRateSaving ? 'Saving...' : selfPayRateSaved ? '\u2713 Saved' : 'Save Rate'}
+              </button>
             </div>
           </div>
 
@@ -1227,7 +1293,7 @@ export default function SettingsPage() {
             </div>
             <div className="p-5">
               <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm text-gray-600">
-                Coming soon. Each patient will have a billing mode (pending, insurance, self-pay, or sliding-scale) that you can switch from the patient detail page.
+                Per-patient billing mode (pending, insurance, self-pay, sliding-scale) is tracked in the database. To switch a patient&apos;s mode, open the patient&apos;s detail page and use the billing-mode control there.
               </div>
             </div>
           </div>
