@@ -53,6 +53,32 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Filter out patients whose billing_mode isn't 'insurance'. Self-pay,
+    // sliding-scale, and pending patients shouldn't burn Stedi API calls —
+    // the dashboard surfaces billing_mode so the therapist can flip it back
+    // to 'insurance' whenever they want to bill a carrier.
+    const patientIdsConsidered = Array.from(uniquePairs.values()).map(v => v.patientId)
+    let skippedByBillingMode = 0
+    if (patientIdsConsidered.length > 0) {
+      const { data: billingRows } = await supabaseAdmin
+        .from('patients')
+        .select('id, billing_mode')
+        .in('id', patientIdsConsidered)
+
+      const modeById = new Map<string, string>()
+      for (const r of billingRows || []) {
+        modeById.set(r.id as string, (r.billing_mode as string) || 'pending')
+      }
+
+      for (const [key, pair] of uniquePairs) {
+        const mode = modeById.get(pair.patientId) || 'pending'
+        if (mode !== 'insurance') {
+          uniquePairs.delete(key)
+          skippedByBillingMode++
+        }
+      }
+    }
+
     const considered = uniquePairs.size
     let verified = 0
     let skipped = 0
@@ -134,6 +160,7 @@ export async function POST(req: NextRequest) {
       considered,
       verified,
       skipped,
+      skipped_by_billing_mode: skippedByBillingMode,
       errors: errors.length,
       errorDetail: errors.slice(0, 10),
       durationMs: Date.now() - started,

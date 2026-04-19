@@ -127,11 +127,16 @@ async function buildRowsForPractice(
 
   const { data: patients } = await supabaseAdmin
     .from('patients')
-    .select('id, first_name, last_name')
+    .select('id, first_name, last_name, billing_mode')
     .in('id', patientIds)
 
+  // Drop self-pay / sliding-scale patients from the weekly eligibility email —
+  // this digest is about carrier coverage, and cash-pay patients don't belong here.
+  // Pending + insurance patients stay in so the therapist can still see who needs verification.
   const patientById = new Map<string, { name: string }>()
   for (const p of patients || []) {
+    const mode = (p.billing_mode as string) || 'pending'
+    if (mode === 'self_pay' || mode === 'sliding_scale') continue
     patientById.set(p.id, {
       name: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Patient',
     })
