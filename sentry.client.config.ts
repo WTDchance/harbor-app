@@ -33,6 +33,17 @@ Sentry.init({
     'Load failed',
     // ResizeObserver noise
     'ResizeObserver loop',
+    // Next.js chunk load errors after a deploy — user's browser has cached HTML
+    // pointing at chunk hashes that no longer exist. Harmless; the inline
+    // recovery script in app/layout.tsx force-reloads these so users self-heal.
+    'ChunkLoadError',
+    /Loading chunk \d+ failed/i,
+    /Loading CSS chunk/i,
+    /Failed to fetch dynamically imported module/i,
+    /Importing a module script failed/i,
+    // The specific webpack internal error we see on iOS Safari when a chunk
+    // goes missing mid-session.
+    /a\[e\] is not a function/,
   ],
 
   // Don't send PII — HIPAA requirement

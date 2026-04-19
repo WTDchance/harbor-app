@@ -8,11 +8,11 @@ const siteUrl = 'https://harborreceptionist.com'
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: 'Harbor — AI Receptionist for Therapy Practices',
+    default: 'Harbor — AI Receptionist for Therapy Practices',
     template: '%s | Harbor Receptionist',
   },
   description:
-    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
+    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
     icon: '/favicon.ico',
@@ -28,7 +28,7 @@ export const metadata: Metadata = {
     locale: 'en_US',
     url: siteUrl,
     siteName: 'Harbor Receptionist',
-    title: 'Harbor — AI Receptionist for Therapy Practices',
+    title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
     images: [
@@ -36,13 +36,13 @@ export const metadata: Metadata = {
         url: '/og-image.svg',
         width: 1200,
         height: 630,
-        alt: 'Harbor AI Receptionist — Never miss a patient call again',
+        alt: 'Harbor AI Receptionist — Never miss a patient call again',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Harbor — AI Receptionist for Therapy Practices',
+    title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
     images: ['/og-image.svg'],
@@ -72,7 +72,49 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
         <link rel="icon" type="image/png" href="/favicon.ico" />
 
-        {/* Google Tag Manager — replace GTM-XXXXXXX with your container ID */}
+        {/* Chunk-load error recovery. Catches stale-chunk 404s after a deploy
+            and force-reloads once per 30s to get fresh HTML. Silent no-op
+            otherwise. See also sentry.client.config.ts for error filtering. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){
+  if (typeof window === 'undefined') return;
+  var CHUNK_ERROR_RE = /ChunkLoadError|Loading chunk \d+ failed|Loading CSS chunk|Failed to fetch dynamically imported module|Importing a module script failed|a\[e\] is not a function/i;
+  function isChunkError(reason) {
+    if (!reason) return false;
+    var msg = '';
+    if (typeof reason === 'string') msg = reason;
+    else if (reason.message) msg = String(reason.message);
+    else if (reason.name) msg = String(reason.name);
+    if (reason && reason.name === 'ChunkLoadError') return true;
+    return CHUNK_ERROR_RE.test(msg);
+  }
+  function reloadOnce() {
+    try {
+      var key = 'harbor_chunk_reload_at';
+      var last = Number(sessionStorage.getItem(key) || '0');
+      var now = Date.now();
+      if (now - last < 30000) return;
+      sessionStorage.setItem(key, String(now));
+    } catch (e) {}
+    window.location.reload();
+  }
+  window.addEventListener('unhandledrejection', function(e) {
+    if (isChunkError(e && e.reason)) {
+      if (e.preventDefault) e.preventDefault();
+      reloadOnce();
+    }
+  });
+  window.addEventListener('error', function(e) {
+    if (isChunkError(e && (e.error || e.message))) {
+      reloadOnce();
+    }
+  });
+})();`
+          }}
+        />
+
+        {/* Google Tag Manager — replace GTM-XXXXXXX with your container ID */}
         {process.env.NEXT_PUBLIC_GTM_ID && (
           <script
             dangerouslySetInnerHTML={{
@@ -85,7 +127,7 @@ j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
           />
         )}
 
-        {/* Microsoft Clarity — replace CLARITY_ID with your project ID */}
+        {/* Microsoft Clarity — replace CLARITY_ID with your project ID */}
         {process.env.NEXT_PUBLIC_CLARITY_ID && (
           <script
             dangerouslySetInnerHTML={{
