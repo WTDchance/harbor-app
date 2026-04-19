@@ -38,6 +38,9 @@ type PatientData = {
     telehealth_preference: string | null;
     intake_completed: boolean;
     intake_completed_at: string | null;
+    billing_mode: 'pending' | 'insurance' | 'self_pay' | 'sliding_scale';
+    billing_mode_changed_at: string | null;
+    billing_mode_changed_reason: string | null;
   };
   intake_status: string;
   intake_forms: {
@@ -184,6 +187,43 @@ function InfoRow({ label, value }: { label: string; value: string | null }) {
         {value || "--"}
       </span>
     </div>
+  );
+}
+
+const BILLING_MODE_LABELS: Record<
+  "pending" | "insurance" | "self_pay" | "sliding_scale",
+  { label: string; className: string }
+> = {
+  pending: {
+    label: "Pending",
+    className: "bg-gray-100 text-gray-700 border-gray-200",
+  },
+  insurance: {
+    label: "Insurance",
+    className: "bg-blue-50 text-blue-700 border-blue-200",
+  },
+  self_pay: {
+    label: "Self-Pay",
+    className: "bg-amber-50 text-amber-800 border-amber-200",
+  },
+  sliding_scale: {
+    label: "Sliding Scale",
+    className: "bg-purple-50 text-purple-700 border-purple-200",
+  },
+};
+
+function BillingModeBadge({
+  mode,
+}: {
+  mode: "pending" | "insurance" | "self_pay" | "sliding_scale";
+}) {
+  const m = BILLING_MODE_LABELS[mode] || BILLING_MODE_LABELS.pending;
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium border ${m.className}`}
+    >
+      {m.label}
+    </span>
   );
 }
 
@@ -544,6 +584,15 @@ export default function PatientDetailPage() {
     msg: string;
   } | null>(null);
 
+  // Billing mode switch state
+  const [showBillingModeModal, setShowBillingModeModal] = useState(false);
+  const [newBillingMode, setNewBillingMode] = useState<
+    "pending" | "insurance" | "self_pay" | "sliding_scale"
+  >("self_pay");
+  const [billingReason, setBillingReason] = useState("");
+  const [billingSaving, setBillingSaving] = useState(false);
+  const [billingError, setBillingError] = useState<string | null>(null);
+
   useEffect(() => {
     fetchPatient();
   }, [patientId]);
@@ -628,6 +677,64 @@ export default function PatientDetailPage() {
     }
   }
 
+  async function submitBillingModeChange() {
+    if (!data) return;
+    setBillingError(null);
+
+    const currentMode = data.patient.billing_mode;
+    if (currentMode === newBillingMode) {
+      setBillingError(`Patient is already in '${newBillingMode}' mode.`);
+      return;
+    }
+    if (
+      currentMode === "insurance" &&
+      newBillingMode === "self_pay" &&
+      billingReason.trim() === ""
+    ) {
+      setBillingError(
+        "A reason is required when switching from insurance to self-pay."
+      );
+      return;
+    }
+
+    setBillingSaving(true);
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session) {
+        router.push("/login");
+        return;
+      }
+      const res = await fetch(
+        `/api/patients/${data.patient.id}/billing-mode`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({
+            billing_mode: newBillingMode,
+            reason: billingReason.trim() || undefined,
+          }),
+        }
+      );
+      const json = await res.json();
+      if (!res.ok) {
+        setBillingError(json.error || "Failed to update billing mode.");
+        return;
+      }
+      setShowBillingModeModal(false);
+      setBillingReason("");
+      fetchPatient();
+    } catch (e: any) {
+      setBillingError(e.message || "Network error.");
+    } finally {
+      setBillingSaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -676,6 +783,106 @@ export default function PatientDetailPage() {
           onClose={() => setShowEditModal(false)}
           onSaved={() => fetchPatient()}
         />
+      )}
+
+      {/* Billing Mode Modal */}
+      {showBillingModeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6">
+            <h3 className="text-lg font-semibold text-gray-900 mb-1">
+              Change Billing Mode
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+              Current mode:{" "}
+              <BillingModeBadge mode={patient.billing_mode} />
+            </p>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              New mode
+            </label>
+            <select
+              value={newBillingMode}
+              onChange={(e) =>
+                setNewBillingMode(
+                  e.target.value as
+                    | "pending"
+                    | "insurance"
+                    | "self_pay"
+                    | "sliding_scale"
+                )
+              }
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 mb-4"
+            >
+              <option value="pending">Pending (unknown)</option>
+              <option value="insurance">Insurance</option>
+              <option value="self_pay">Self-Pay</option>
+              <option value="sliding_scale">Sliding Scale</option>
+            </select>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Reason{" "}
+              {patient.billing_mode === "insurance" &&
+              newBillingMode === "self_pay" ? (
+                <span className="text-red-500">*</span>
+              ) : (
+                <span className="text-gray-400 text-xs font-normal">
+                  (optional)
+                </span>
+              )}
+            </label>
+            <textarea
+              value={billingReason}
+              onChange={(e) => setBillingReason(e.target.value)}
+              rows={3}
+              placeholder={
+                patient.billing_mode === "insurance" &&
+                newBillingMode === "self_pay"
+                  ? "e.g. Plan not covered; patient chose cash pay."
+                  : "Short note about the change (optional)"
+              }
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+            />
+
+            {newBillingMode === "self_pay" ||
+            newBillingMode === "sliding_scale" ? (
+              <p className="mt-3 text-xs text-gray-500">
+                Any active insurance record on file will be archived (kept for
+                audit, not deleted). Eligibility-precheck will skip this
+                patient.
+              </p>
+            ) : newBillingMode === "insurance" &&
+              patient.billing_mode !== "insurance" ? (
+              <p className="mt-3 text-xs text-gray-500">
+                If this patient has a previously archived insurance record, it
+                will be reactivated.
+              </p>
+            ) : null}
+
+            {billingError && (
+              <p className="mt-3 text-xs text-red-600">{billingError}</p>
+            )}
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                onClick={() => {
+                  setShowBillingModeModal(false);
+                  setBillingError(null);
+                }}
+                disabled={billingSaving}
+                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitBillingModeChange}
+                disabled={billingSaving}
+                className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50"
+              >
+                {billingSaving ? "Saving..." : "Update Billing Mode"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Header */}
@@ -805,6 +1012,49 @@ export default function PatientDetailPage() {
               }}
               onChanged={fetchPatient}
             />
+          </div>
+
+          {/* Billing Mode */}
+          <div className="bg-white border rounded-lg p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h2 className="font-semibold text-gray-900 mb-1">Billing Mode</h2>
+                <p className="text-xs text-gray-500">
+                  Controls whether eligibility checks run for this patient and
+                  how Ellie refers to billing on future calls.
+                </p>
+              </div>
+              <button
+                onClick={() => {
+                  setNewBillingMode(
+                    patient.billing_mode === "insurance" ? "self_pay" : "insurance"
+                  );
+                  setBillingReason("");
+                  setBillingError(null);
+                  setShowBillingModeModal(true);
+                }}
+                className="text-xs font-medium text-teal-700 hover:text-teal-900 whitespace-nowrap"
+              >
+                Change
+              </button>
+            </div>
+            <div className="mt-3 flex items-center gap-3">
+              <BillingModeBadge mode={patient.billing_mode} />
+              {patient.billing_mode_changed_at && (
+                <span className="text-xs text-gray-400">
+                  changed{" "}
+                  {new Date(patient.billing_mode_changed_at).toLocaleDateString(
+                    undefined,
+                    { month: "short", day: "numeric", year: "numeric" }
+                  )}
+                </span>
+              )}
+            </div>
+            {patient.billing_mode_changed_reason && (
+              <p className="mt-2 text-xs text-gray-500 italic">
+                &ldquo;{patient.billing_mode_changed_reason}&rdquo;
+              </p>
+            )}
           </div>
 
           <CommunicationPrefsCard

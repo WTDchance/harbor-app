@@ -242,6 +242,10 @@ export async function GET(
       // Status fields
       intake_completed: patient.intake_completed || intakeStatus === 'completed',
       intake_completed_at: patient.intake_completed_at || completedIntake?.completed_at || null,
+      // Billing mode (pending | insurance | self_pay | sliding_scale)
+      billing_mode: patient.billing_mode || 'pending',
+      billing_mode_changed_at: patient.billing_mode_changed_at || null,
+      billing_mode_changed_reason: patient.billing_mode_changed_reason || null,
     },
     intake_status: intakeStatus,
     intake_forms: intakeForms.map((f) => ({
