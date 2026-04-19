@@ -90,7 +90,6 @@ export async function PATCH(
   }
 
   const body = await req.json().catch(() => ({}));
-  const practiceId = patient.practice_id;
   const phone = patient.phone;
   const email = patient.email;
 
