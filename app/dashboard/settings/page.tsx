@@ -20,6 +20,7 @@ type GCalStatus = { connected: boolean; email: string | null } | null
 type AppleCalStatus = { connected: boolean; username: string | null; calendarCount?: number } | null
 type SchedulingMode = 'harbor_driven' | 'notification'
 type RecapMethod = 'email' | 'sms' | 'both'
+type TabKey = 'account' | 'practice' | 'calendar' | 'billing'
 
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 const DAY_LABELS: Record<string, string> = {
@@ -213,6 +214,9 @@ export default function SettingsPage() {
   const [calGenerating, setCalGenerating] = useState(false)
   const [calCopied, setCalCopied] = useState(false)
 
+  // Active tab in the settings layout (account | practice | calendar | billing)
+  const [activeTab, setActiveTab] = useState<TabKey>('practice')
+
   const searchParams = useSearchParams()
   const supabase = createClient()
 
@@ -310,6 +314,17 @@ export default function SettingsPage() {
       setCalLoading(false)
     })
   }, [])
+
+  // Read ?tab= param from URL on mount for deep-linking
+  useEffect(() => {
+    const tabParam = searchParams.get('tab')
+    if (tabParam === 'account' || tabParam === 'practice' || tabParam === 'calendar' || tabParam === 'billing') {
+      setActiveTab(tabParam)
+    } else if (searchParams.get('gcal')) {
+      // OAuth callback lands here — route to Calendar tab so the connection status is visible
+      setActiveTab('calendar')
+    }
+  }, [searchParams])
 
   // Handle ?gcal= param from OAuth callback
   useEffect(() => {
@@ -546,10 +561,43 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Practice Settings</h1>
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="text-gray-500 mt-1">Changes sync to {practice?.ai_name || 'your AI receptionist'} automatically</p>
       </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-gray-200 mb-6 overflow-x-auto" role="tablist">
+        {([
+          { key: 'account', label: 'Account' },
+          { key: 'practice', label: 'Practice' },
+          { key: 'calendar', label: 'Calendar' },
+          { key: 'billing', label: 'Billing' },
+        ] as Array<{ key: TabKey; label: string }>).map(t => (
+          <button
+            key={t.key}
+            role="tab"
+            aria-selected={activeTab === t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors whitespace-nowrap ${
+              activeTab === t.key
+                ? 'border-teal-600 text-teal-700'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'account' && (
+        <>
+          <MFASection />
+        </>
+      )}
+
+      {activeTab === 'practice' && (
+        <>
 
       {/* Scheduling Mode */}
       <div className="bg-white rounded-xl border border-gray-200 mb-6">
@@ -724,7 +772,7 @@ export default function SettingsPage() {
           <div className="pt-4 mt-4 border-t border-gray-100">
             <div className="text-sm font-semibold text-gray-900">Billing identifiers</div>
             <p className="text-xs text-gray-500 mt-1 mb-3">
-              Required for insurance eligibility checks and any future claim submission. Ask your biller or check your NPPES record if you're unsure.
+              Required for insurance eligibility checks and any future claim submission. Ask your biller or check your NPPES record if you&apos;re unsure.
             </p>
           </div>
           <div>
@@ -773,7 +821,7 @@ export default function SettingsPage() {
         <div className="p-5 border-t border-gray-100 flex items-center justify-between">
           <div>
             {error && <p className="text-xs text-red-600">{error}</p>}
-            {!error && <p className="text-xs text-gray-400">Saving updates your receptionist's knowledge in real time</p>}
+            {!error && <p className="text-xs text-gray-400">Saving updates your receptionist&apos;s knowledge in real time</p>}
           </div>
           <button
             onClick={handleSave}
@@ -877,9 +925,6 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Two-Factor Authentication (HIPAA §164.312(d)) */}
-      <MFASection />
-
       {/* Intake Form Configuration */}
       <div className="bg-white rounded-xl border border-gray-200 mb-6">
         <div className="p-5 border-b border-gray-100">
@@ -935,55 +980,62 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+        </>
+      )}
 
-                {/* Calendar Sync — THE primary calendar solution */}
-          <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-            <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Sync to Your Calendar</h2>
-            <p className="text-sm text-gray-500 mt-1 mb-4">
-              Add Harbor appointments to your existing calendar. Works with Apple Calendar, Google Calendar, and Outlook — one click, no passwords needed.
-            </p>
+      {activeTab === 'calendar' && (
+        <>
 
-            {calLoading ? (
-              <div className="text-sm text-gray-400">Loading...</div>
-            ) : !calToken ? (
-              <button
-                onClick={generateCalToken}
-                disabled={calGenerating}
-                className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+      {/* Calendar Sync — THE primary calendar solution */}
+      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+        <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Sync to Your Calendar</h2>
+        <p className="text-sm text-gray-500 mt-1 mb-4">
+          Add Harbor appointments to your existing calendar. Works with Apple Calendar, Google Calendar, and Outlook — one click, no passwords needed.
+        </p>
+
+        {calLoading ? (
+          <div className="text-sm text-gray-400">Loading...</div>
+        ) : !calToken ? (
+          <button
+            onClick={generateCalToken}
+            disabled={calGenerating}
+            className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50 transition-colors"
+          >
+            {calGenerating ? 'Generating...' : 'Generate Calendar Link'}
+          </button>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-3">
+              <a
+                href={(calFeedUrl || '').replace('https://', 'webcal://')}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
               >
-                {calGenerating ? 'Generating...' : 'Generate Calendar Link'}
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                Open in Apple Calendar
+              </a>
+              <button
+                onClick={copyCalUrl}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {calCopied ? '\u2713 Copied!' : 'Copy Link'}
               </button>
-            ) : (
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-3">
-                  <a
-                    href={(calFeedUrl || '').replace('https://', 'webcal://')}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                    </svg>
-                    Open in Apple Calendar
-                  </a>
-                  <button
-                    onClick={copyCalUrl}
-                    className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
-                  >
-                    {calCopied ? '\u2713 Copied!' : 'Copy Link'}
-                  </button>
-                </div>
-                <p className="text-xs text-gray-400">
-                  Works with Apple Calendar, Google Calendar, and Outlook.
-                </p>
-                <button
-                  onClick={regenerateCalToken}
-                  className="text-xs text-red-400 hover:text-red-600"
-                >
-                  Regenerate Link (breaks existing subscriptions)
-                </button>
-              </div>
-            )}
-          </div>  {/* Advanced Calendar Integrations */}
+            </div>
+            <p className="text-xs text-gray-400">
+              Works with Apple Calendar, Google Calendar, and Outlook.
+            </p>
+            <button
+              onClick={regenerateCalToken}
+              className="text-xs text-red-400 hover:text-red-600"
+            >
+              Regenerate Link (breaks existing subscriptions)
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Advanced Calendar Integrations */}
       <div className="bg-white rounded-xl border border-gray-200">
         <div className="p-5 border-b border-gray-100">
           <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Advanced: Direct Calendar Access</h2>
@@ -1151,6 +1203,36 @@ export default function SettingsPage() {
 
         </div>
       </div>
+        </>
+      )}
+
+      {activeTab === 'billing' && (
+        <>
+          <div className="bg-white rounded-xl border border-gray-200 mb-6">
+            <div className="p-5 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Self-Pay Rate</h2>
+              <p className="text-xs text-gray-400 mt-1">Standard session rate for patients paying out of pocket</p>
+            </div>
+            <div className="p-5">
+              <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm text-gray-600">
+                Coming soon. You&apos;ll be able to set a default session rate for self-pay patients, and override it per patient for sliding-scale arrangements.
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-gray-200 mb-6">
+            <div className="p-5 border-b border-gray-100">
+              <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Billing Mode Management</h2>
+              <p className="text-xs text-gray-400 mt-1">Track which patients are on insurance vs. self-pay</p>
+            </div>
+            <div className="p-5">
+              <div className="rounded-lg bg-gray-50 border border-gray-200 p-4 text-sm text-gray-600">
+                Coming soon. Each patient will have a billing mode (pending, insurance, self-pay, or sliding-scale) that you can switch from the patient detail page.
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
