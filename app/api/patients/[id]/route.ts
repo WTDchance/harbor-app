@@ -39,6 +39,7 @@ export async function GET(
   if (!practiceId) {
     return NextResponse.json({ error: "Practice not found" }, { status: 404 });
   }
+
   const patientId = params.id;
 
   // 1. Get patient from patients table
@@ -315,4 +316,38 @@ export async function PATCH(
     "pronouns",
     "emergency_contact_name",
     "emergency_contact_phone",
-    "referral_source"
+    "referral_source",
+    "reason_for_seeking",
+    "telehealth_preference",
+  ];
+
+  const updates: Record<string, any> = {};
+  for (const field of allowedFields) {
+    if (field in body) {
+      updates[field] = body[field];
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json(
+      { error: "No valid fields to update" },
+      { status: 400 }
+    );
+  }
+
+  updates.updated_at = new Date().toISOString();
+
+  const { data, error: updateError } = await supabase
+    .from("patients")
+    .update(updates)
+    .eq("id", params.id)
+    .eq("practice_id", practiceId)
+    .select()
+    .single();
+
+  if (updateError) {
+    return NextResponse.json({ error: updateError.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ patient: data });
+}
