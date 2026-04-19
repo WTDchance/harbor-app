@@ -178,3 +178,4 @@ Required in Railway for production:
 **Analytics:** NEXT_PUBLIC_GTM_ID, NEXT_PUBLIC_CLARITY_ID, NEXT_PUBLIC_POSTHOG_KEY (not yet set)
 
 **Admin:** CRON_SECRET (Bearer token for /api/admin/* and /api/cron/*)
+
