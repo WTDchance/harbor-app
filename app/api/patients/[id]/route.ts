@@ -226,7 +226,7 @@ export async function GET(
       phone: patient.phone,
       email: patient.email || completedIntake?.patient_email || null,
       date_of_birth: patient.date_of_birth || completedIntake?.patient_dob || null,
-      insurance_provider: patient.insurance_provider || patient.insurance || null,
+      insurance_provider: patient.insurance_provider ?? patient.insurance ?? null,
       insurance_member_id: patient.insurance_member_id || null,
       insurance_group_number: patient.insurance_group_number || null,
       notes: patient.notes,
@@ -339,6 +339,13 @@ export async function PATCH(
       { error: "No valid fields to update" },
       { status: 400 }
     );
+  }
+
+  // Keep legacy `insurance` column in sync with `insurance_provider`
+  // so the GET fallback (insurance_provider ?? insurance) doesn't
+  // resurrect a value the user just cleared.
+  if ("insurance_provider" in updates) {
+    updates.insurance = updates.insurance_provider;
   }
 
   updates.updated_at = new Date().toISOString();
