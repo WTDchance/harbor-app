@@ -321,10 +321,16 @@ export async function PATCH(
     "telehealth_preference",
   ];
 
+  // Fields that must keep their value (never null-out on empty string)
+  const requiredFields = new Set(["first_name", "last_name", "phone"]);
+
   const updates: Record<string, any> = {};
   for (const field of allowedFields) {
     if (field in body) {
-      updates[field] = body[field];
+      // Convert empty strings to null for optional fields so falsy
+      // fallbacks in the GET handler don't resurrect cleared values.
+      const val = body[field];
+      updates[field] = !requiredFields.has(field) && val === "" ? null : val;
     }
   }
 
