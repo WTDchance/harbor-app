@@ -22,6 +22,19 @@ type SchedulingMode = 'harbor_driven' | 'notification'
 type RecapMethod = 'email' | 'sms' | 'both'
 type TabKey = 'account' | 'practice' | 'calendar' | 'billing'
 
+interface Therapist {
+  id: string
+  display_name: string
+  credentials: string | null
+  bio: string | null
+  is_primary: boolean
+  is_active: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+const BIO_SOFT_CAP = 1500
+
 const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] as const
 const DAY_LABELS: Record<string, string> = {
   monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday', thursday: 'Thursday',
@@ -223,6 +236,21 @@ export default function SettingsPage() {
   const [selfPayRateSaved, setSelfPayRateSaved] = useState(false)
   const [selfPayRateError, setSelfPayRateError] = useState<string | null>(null)
 
+  // Therapists state (list + modal for add/edit)
+  const [therapists, setTherapists] = useState<Therapist[]>([])
+  const [therapistsLoading, setTherapistsLoading] = useState(false)
+  const [showTherapistModal, setShowTherapistModal] = useState(false)
+  const [editingTherapistId, setEditingTherapistId] = useState<string | null>(null)
+  const [therapistForm, setTherapistForm] = useState({
+    display_name: '',
+    credentials: '',
+    bio: '',
+    is_primary: false,
+    is_active: true,
+  })
+  const [therapistSaving, setTherapistSaving] = useState(false)
+  const [therapistError, setTherapistError] = useState<string | null>(null)
+
   const searchParams = useSearchParams()
   const supabase = createClient()
 
@@ -326,6 +354,27 @@ export default function SettingsPage() {
       setCalLoading(false)
     })
   }, [])
+
+  // Load therapists for this practice
+  const loadTherapists = useCallback(async () => {
+    setTherapistsLoading(true)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { setTherapistsLoading(false); return }
+      const res = await fetch('/api/therapists', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (res.ok) {
+        const json = await res.json()
+        setTherapists(json.therapists || [])
+      }
+    } catch {}
+    setTherapistsLoading(false)
+  }, [supabase])
+
+  useEffect(() => {
+    if (!practiceLoading && resolvedPractice) loadTherapists()
+  }, [practiceLoading, resolvedPractice, loadTherapists])
 
   // Read ?tab= param from URL on mount for deep-linking
   useEffect(() => {
@@ -443,6 +492,85 @@ export default function SettingsPage() {
       setHoursSaved(true)
       setTimeout(() => setHoursSaved(false), 3000)
     }
+  }
+
+  const openTherapistModalForNew = () => {
+    setEditingTherapistId(null)
+    setTherapistForm({
+      display_name: '',
+      credentials: '',
+      bio: '',
+      is_primary: therapists.filter(t => t.is_active).length === 0,
+      is_active: true,
+    })
+    setTherapistError(null)
+    setShowTherapistModal(true)
+  }
+
+  const openTherapistModalForEdit = (t: Therapist) => {
+    setEditingTherapistId(t.id)
+    setTherapistForm({
+      display_name: t.display_name || '',
+      credentials: t.credentials || '',
+      bio: t.bio || '',
+      is_primary: t.is_primary,
+      is_active: t.is_active,
+    })
+    setTherapistError(null)
+    setShowTherapistModal(true)
+  }
+
+  const handleTherapistSave = async () => {
+    if (!therapistForm.display_name.trim()) {
+      setTherapistError('Display name is required.')
+      return
+    }
+    setTherapistSaving(true)
+    setTherapistError(null)
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) { setTherapistSaving(false); return }
+      const url = editingTherapistId ? `/api/therapists/${editingTherapistId}` : '/api/therapists'
+      const method = editingTherapistId ? 'PATCH' : 'POST'
+      const res = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          display_name: therapistForm.display_name.trim(),
+          credentials: therapistForm.credentials.trim() || null,
+          bio: therapistForm.bio || null,
+          is_primary: therapistForm.is_primary,
+          is_active: therapistForm.is_active,
+        }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setTherapistError(json.error || 'Failed to save therapist.')
+        return
+      }
+      setShowTherapistModal(false)
+      await loadTherapists()
+    } catch (e: any) {
+      setTherapistError(e.message || 'Network error.')
+    } finally {
+      setTherapistSaving(false)
+    }
+  }
+
+  const handleTherapistDelete = async (id: string) => {
+    if (!confirm('Remove this therapist from the active roster? Their record is kept for history and can be reactivated later.')) return
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session) return
+      const res = await fetch(`/api/therapists/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      })
+      if (res.ok) await loadTherapists()
+    } catch {}
   }
 
   const handleSelfPayRateSave = async () => {
@@ -601,6 +729,104 @@ export default function SettingsPage() {
       {gcalToast && (
         <div className="fixed top-4 right-4 z-50 bg-gray-900 text-white text-sm px-4 py-3 rounded-xl shadow-lg animate-fade-in">
           {gcalToast}
+        </div>
+      )}
+
+      {/* Therapist Modal */}
+      {showTherapistModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              {editingTherapistId ? 'Edit Therapist' : 'Add Therapist'}
+            </h3>
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Display Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={therapistForm.display_name}
+              onChange={e => setTherapistForm(f => ({ ...f, display_name: e.target.value }))}
+              placeholder="e.g. Dr. Trace Wonser"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 mb-4"
+            />
+
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Credentials <span className="text-gray-400 text-xs font-normal">(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={therapistForm.credentials}
+              onChange={e => setTherapistForm(f => ({ ...f, credentials: e.target.value }))}
+              placeholder="e.g. LCSW, PhD, LMFT"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 mb-4"
+            />
+
+            <div className="flex items-baseline justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">
+                Bio <span className="text-gray-400 text-xs font-normal">(optional)</span>
+              </label>
+              <span className={`text-xs ${therapistForm.bio.length > BIO_SOFT_CAP ? 'text-red-600 font-medium' : 'text-gray-400'}`}>
+                {therapistForm.bio.length} / {BIO_SOFT_CAP}
+              </span>
+            </div>
+            <textarea
+              value={therapistForm.bio}
+              onChange={e => setTherapistForm(f => ({ ...f, bio: e.target.value }))}
+              rows={6}
+              placeholder="A short paragraph about background, specialties, and approach. Ellie will reference this when callers ask about the therapist."
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 resize-none"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              This is shared with callers &mdash; don&apos;t include anything you wouldn&apos;t say to a new patient.
+            </p>
+
+            <div className="mt-4 space-y-2">
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={therapistForm.is_primary}
+                  onChange={e => setTherapistForm(f => ({ ...f, is_primary: e.target.checked }))}
+                  className="rounded text-teal-600 focus:ring-teal-500"
+                />
+                <span>Primary therapist</span>
+                <span className="text-xs text-gray-400">(solo-practice singular phrasing, post-call emails)</span>
+              </label>
+              {editingTherapistId && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={therapistForm.is_active}
+                    onChange={e => setTherapistForm(f => ({ ...f, is_active: e.target.checked }))}
+                    className="rounded text-teal-600 focus:ring-teal-500"
+                  />
+                  <span>Active on roster</span>
+                  <span className="text-xs text-gray-400">(uncheck to hide without deleting)</span>
+                </label>
+              )}
+            </div>
+
+            {therapistError && (
+              <p className="mt-3 text-xs text-red-600">{therapistError}</p>
+            )}
+
+            <div className="mt-6 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setShowTherapistModal(false); setTherapistError(null) }}
+                disabled={therapistSaving}
+                className="px-4 py-2 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleTherapistSave}
+                disabled={therapistSaving}
+                className="px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-50"
+              >
+                {therapistSaving ? 'Saving...' : editingTherapistId ? 'Save Changes' : 'Add Therapist'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -965,6 +1191,73 @@ export default function SettingsPage() {
           >
             {greetingSaving ? 'Saving...' : greetingSaved ? '\u2713 Saved' : 'Save Greeting'}
           </button>
+        </div>
+      </div>
+
+      {/* Therapists */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Therapists</h2>
+            <p className="text-xs text-gray-400 mt-1">Clinicians at this practice. Their bios help {practice?.ai_name || 'your receptionist'} talk knowledgeably about them on calls.</p>
+          </div>
+          <button
+            onClick={openTherapistModalForNew}
+            className="px-3 py-1.5 text-xs font-medium text-teal-700 border border-teal-200 rounded-lg hover:bg-teal-50 whitespace-nowrap"
+          >
+            + Add Therapist
+          </button>
+        </div>
+        <div className="p-5">
+          {therapistsLoading ? (
+            <p className="text-sm text-gray-400">Loading...</p>
+          ) : therapists.length === 0 ? (
+            <div className="text-sm text-gray-500 p-4 bg-gray-50 rounded-lg border border-gray-200">
+              No therapists yet. Add the therapist (or therapists) practicing under {practice?.name || 'this practice'} so {practice?.ai_name || 'your receptionist'} can reference them on calls.
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {therapists.map(t => (
+                <li key={t.id} className="py-3 flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-sm font-medium ${t.is_active ? 'text-gray-900' : 'text-gray-400 line-through'}`}>
+                        {t.display_name}
+                      </span>
+                      {t.credentials && (
+                        <span className="text-xs text-gray-500">{t.credentials}</span>
+                      )}
+                      {t.is_primary && t.is_active && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700 border border-teal-200">Primary</span>
+                      )}
+                      {!t.is_active && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500 border border-gray-200">Inactive</span>
+                      )}
+                    </div>
+                    {t.bio && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">{t.bio}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => openTherapistModalForEdit(t)}
+                      className="text-xs font-medium text-teal-700 hover:text-teal-900"
+                    >
+                      Edit
+                    </button>
+                    {t.is_active && (
+                      <button
+                        onClick={() => handleTherapistDelete(t.id)}
+                        className="text-xs text-gray-400 hover:text-red-600"
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
 
