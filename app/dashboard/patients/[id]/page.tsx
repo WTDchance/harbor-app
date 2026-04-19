@@ -102,7 +102,11 @@ type PatientData = {
 
 function formatDate(d: string | null) {
   if (!d) return "--";
-  return new Date(d).toLocaleDateString("en-US", {
+  // Date-only strings like "1990-11-07" are parsed as UTC midnight.
+  // toLocaleDateString then shifts to the local timezone, often showing
+  // the previous day. Append T12:00 to keep the calendar date stable.
+  const safe = d.length === 10 ? `${d}T12:00:00` : d;
+  return new Date(safe).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -1343,17 +1347,4 @@ export default function PatientDetailPage() {
                       : appt.status === "cancelled"
                       ? "bg-red-100 text-red-800"
                       : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {appt.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">No appointments scheduled.</p>
-        )}
-      </div>
-    </div>
-  );
-}
+          
