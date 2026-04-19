@@ -10,6 +10,7 @@
 
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 
 export async function GET() {
@@ -25,7 +26,9 @@ export async function GET() {
       return NextResponse.json({ error: 'No practice found' }, { status: 404 })
     }
 
-    const { data: practice } = await supabase
+    // Use supabaseAdmin (service role) to bypass RLS — the act-as cookie
+    // may point to a practice the user doesn't own per RLS policies.
+    const { data: practice } = await supabaseAdmin
       .from('practices')
       .select('*')
       .eq('id', practiceId)
