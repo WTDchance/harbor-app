@@ -171,37 +171,133 @@ export async function GET() {
 async function handleAssistantRequest(message: any) {
   const call = message.call || {}
   const phoneNumber = call.phoneNumber?.number || call.phoneNumberId || ''
-  console.log(`[Vapi] Inbound call to: ${phoneNumber}`)
+  const customerPhone = call.customer?.number || message.customer?.number || ''
+  console.log(`[Vapi] Inbound call to: ${phoneNumber} from: ${customerPhone || '(unknown)'}`)
 
-  // Resolve practice using shared fallback chain
   const { practiceId, practiceName, resolvedBy } = await resolvePracticeId(call, message)
 
   if (!practiceId) {
     console.warn('[Vapi] No practice found for number:', phoneNumber)
-    return NextResponse.json({
-      assistant: buildFallbackAssistant(),
-    })
+    return NextResponse.json({ assistant: buildFallbackAssistant() })
   }
 
-  // Get the practice's Vapi assistant ID
   const { data: practice } = await supabaseAdmin
     .from('practices')
-    .select('vapi_assistant_id, name')
+    .select('vapi_assistant_id, name, ai_name')
     .eq('id', practiceId)
     .maybeSingle()
 
   if (!practice?.vapi_assistant_id) {
     console.warn(`[Vapi] Practice ${practiceId} has no vapi_assistant_id, using fallback`)
+    return NextResponse.json({ assistant: buildFallbackAssistant() })
+  }
+
+  console.log(`[Vapi] Matched practice: ${practice.name} (${practiceId}) via ${resolvedBy} -> assistant ${practice.vapi_assistant_id}`)
+
+  // Look up returning caller by phone. When recognized, inject a personalized
+  // firstMessage via assistantOverrides so Ellie opens with "Welcome back"
+  // instead of running new-patient intake on someone already in the DB.
+  const callerContext = customerPhone
+    ? await lookupReturningCallerContext(practiceId, customerPhone)
+    : null
+
+  const aiName = practice.ai_name || 'Ellie'
+
+  if (callerContext) {
+    const firstName = (callerContext.first_name || '').trim()
+    const lastName = (callerContext.last_name || '').trim()
+    const fullName = [firstName, lastName].filter(Boolean).join(' ').trim()
+    const nameClause = fullName ? `Is this ${fullName}?` : 'Who am I speaking with?'
+    const firstMessage = `Welcome back! This is ${aiName} at ${practice.name}. ${nameClause}`
+    console.log(`[Vapi] Returning caller: ${fullName || '(unknown name)'} | billing_mode=${callerContext.billing_mode}`)
+
     return NextResponse.json({
-      assistant: buildFallbackAssistant(),
+      assistantId: practice.vapi_assistant_id,
+      assistantOverrides: {
+        firstMessage,
+        variableValues: {
+          caller_is_existing_patient: 'yes',
+          caller_first_name: firstName,
+          caller_last_name: lastName,
+          caller_full_name: fullName,
+          caller_billing_mode: callerContext.billing_mode || 'pending',
+          caller_intake_completed: callerContext.intake_completed ? 'yes' : 'no',
+          caller_last_appointment_at: callerContext.last_appointment_at || '',
+          caller_last_appointment_status: callerContext.last_appointment_status || '',
+          caller_insurance_provider: callerContext.insurance_provider || '',
+        },
+      },
     })
   }
 
-  console.log(`[Vapi] Matched practice: ${practice.name} (${practiceId}) via ${resolvedBy} → assistant ${practice.vapi_assistant_id}`)
-
   return NextResponse.json({
     assistantId: practice.vapi_assistant_id,
+    assistantOverrides: {
+      variableValues: { caller_is_existing_patient: 'no' },
+    },
   })
+}
+
+/**
+ * Look up a returning caller in this practice by phone. Returns null if no
+ * match. Phone matching is tolerant: exact, normalized digits, and
+ * trailing-10-digit match.
+ */
+async function lookupReturningCallerContext(
+  practiceId: string,
+  phone: string
+): Promise<null | {
+  patient_id: string
+  first_name: string | null
+  last_name: string | null
+  billing_mode: string | null
+  intake_completed: boolean
+  insurance_provider: string | null
+  last_appointment_at: string | null
+  last_appointment_status: string | null
+}> {
+  if (!phone) return null
+
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length < 7) return null
+  const last10 = digits.slice(-10)
+
+  const { data: patients } = await supabaseAdmin
+    .from('patients')
+    .select('id, first_name, last_name, phone, billing_mode, intake_completed, insurance_provider')
+    .eq('practice_id', practiceId)
+    .limit(1000)
+
+  const match = (patients || []).find((p: any) => {
+    if (!p.phone) return false
+    if (p.phone === phone) return true
+    const pDigits = String(p.phone).replace(/\D/g, '')
+    if (pDigits === digits) return true
+    if (pDigits.length >= 10 && pDigits.slice(-10) === last10) return true
+    return false
+  })
+
+  if (!match) return null
+
+  const { data: lastAppt } = await supabaseAdmin
+    .from('appointments')
+    .select('scheduled_at, status')
+    .eq('practice_id', practiceId)
+    .eq('patient_id', match.id)
+    .order('scheduled_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  return {
+    patient_id: match.id,
+    first_name: match.first_name,
+    last_name: match.last_name,
+    billing_mode: match.billing_mode || 'pending',
+    intake_completed: !!match.intake_completed,
+    insurance_provider: match.insurance_provider || null,
+    last_appointment_at: lastAppt?.scheduled_at || null,
+    last_appointment_status: lastAppt?.status || null,
+  }
 }
 
 // ---- tool-calls (new Vapi format) ----
