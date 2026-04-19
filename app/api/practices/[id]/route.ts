@@ -88,10 +88,24 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     // Build hours string from hours_json for the system prompt
     const hoursString = formatHoursForPrompt(updatedData.hours_json)
 
+    // Fetch active therapists so the system prompt can include their bios.
+    const { data: therapistRows } = await supabaseAdmin
+      .from('therapists')
+      .select('display_name, credentials, bio, is_primary, is_active')
+      .eq('practice_id', id)
+      .eq('is_active', true)
+      .order('is_primary', { ascending: false })
+      .order('created_at', { ascending: true })
+
     // Rebuild system prompt with proper hours
     const newSystemPrompt = buildSystemPrompt({
       ...updatedData,
       hours: hoursString,
+      therapists: (therapistRows || []).map(t => ({
+        display_name: t.display_name,
+        credentials: t.credentials,
+        bio: t.bio,
+      })),
     })
 
     // Update Supabase

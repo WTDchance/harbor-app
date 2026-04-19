@@ -16,6 +16,15 @@ export interface SystemPromptData {
   // number; when unset, she defers pricing to the therapist and offers to take
   // a message.
   self_pay_rate_cents?: number | null
+  // Active therapists on the practice. When provided, their names, credentials,
+  // and bios are rendered in an ABOUT THE THERAPIST(S) section so Ellie can talk
+  // about them knowledgeably. When absent or empty, falls back to `therapist_name`
+  // alone (legacy single-therapist behavior).
+  therapists?: Array<{
+    display_name: string
+    credentials?: string | null
+    bio?: string | null
+  }>
 }
 
 export function buildSystemPrompt(data: SystemPromptData): string {
@@ -31,16 +40,47 @@ export function buildSystemPrompt(data: SystemPromptData): string {
     ? 'Both telehealth and in-person sessions are available.'
     : 'In-person sessions only.'
 
+  const activeTherapists = (data.therapists || []).filter(t => t && t.display_name && t.display_name.trim())
+  const therapistNames = activeTherapists.length > 0
+    ? activeTherapists.map(t => t.display_name.trim()).join(', ')
+    : data.therapist_name
+  const isMulti = activeTherapists.length >= 2
+  const practiceRunBy = isMulti
+    ? `${data.practice_name} is a therapy practice with ${activeTherapists.length} therapists.`
+    : `${data.practice_name} is a therapy practice run by ${therapistNames}.`
+  const therapistLabel = isMulti ? 'Therapists' : 'Therapist'
+
   let prompt = `You are ${aiName}, the friendly AI receptionist for ${data.practice_name}.
-${data.practice_name} is a therapy practice run by ${data.therapist_name}.
+${practiceRunBy}
 
 ABOUT THE PRACTICE:
-- Therapist: ${data.therapist_name}
+- ${therapistLabel}: ${therapistNames}
 - Specialties: ${specialties}
 - Hours: ${hours}
 - Location: ${data.location || 'Please call for address'}
 - ${telehealth}
-- Insurance: ${insurance}
+- Insurance: ${insurance}`
+
+  // Add ABOUT THE THERAPIST(S) only when we have bios or credentials to share.
+  // Rows backfilled from practices.provider_name carry only a display_name, so
+  // adding the header with no body would be noise.
+  const therapistsWithContent = activeTherapists.filter(t => (t.bio && t.bio.trim()) || (t.credentials && t.credentials.trim()))
+  if (therapistsWithContent.length > 0) {
+    const header = isMulti ? 'ABOUT THE THERAPISTS' : 'ABOUT THE THERAPIST'
+    const blocks = therapistsWithContent.map(t => {
+      const name = t.display_name.trim()
+      const creds = t.credentials && t.credentials.trim() ? `, ${t.credentials.trim()}` : ''
+      const bio = t.bio && t.bio.trim() ? `\n${t.bio.trim()}` : ''
+      return `${name}${creds}${bio}`
+    }).join('\n\n')
+    prompt += `
+
+${header}:
+${blocks}
+When callers ask about the therapist${isMulti ? 's' : ''} - their background, style, specialties, or whether they're a good fit - reference the info above. If a caller asks something that isn't covered here, acknowledge that and offer to take a message so ${isMulti ? 'they' : therapistNames} can follow up personally.`
+  }
+
+  prompt += `
 
 YOUR PERSONALITY:
 You are warm, calm, compassionate, and professional. You sound like a real person, not a robot.

@@ -237,6 +237,16 @@ export async function PATCH(req: NextRequest) {
 
   // Build the full system prompt using the same builder as handleAssistantRequest
   const { buildSystemPrompt } = await import('@/lib/systemPrompt')
+
+  // Fetch therapists so the prompt reflects the current roster + bios.
+  const { data: therapistRows } = await supabaseAdmin
+    .from('therapists')
+    .select('display_name, credentials, bio, is_primary, is_active')
+    .eq('practice_id', p.id)
+    .eq('is_active', true)
+    .order('is_primary', { ascending: false })
+    .order('created_at', { ascending: true })
+
   const systemPrompt = buildSystemPrompt({
     therapist_name: p.provider_name || p.name,
     practice_name: p.name,
@@ -248,6 +258,12 @@ export async function PATCH(req: NextRequest) {
     insurance_accepted: p.insurance_accepted || [],
     system_prompt_notes: p.system_prompt || '',
     emotional_support_enabled: true,
+    self_pay_rate_cents: p.self_pay_rate_cents ?? null,
+    therapists: (therapistRows || []).map(t => ({
+      display_name: t.display_name,
+      credentials: t.credentials,
+      bio: t.bio,
+    })),
   })
 
   const aiName = p.ai_name || 'Ellie'
