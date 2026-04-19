@@ -395,4 +395,15 @@ async function persistResult(
     mentalHealthCovered: parsed.mentalHealthCovered,
     copayAmount: parsed.copayAmount,
     coinsurancePercent: parsed.coinsurancePercent,
-    deductibleTotal: parsed.deductib
+    deductibleTotal: parsed.deductibleTotal,
+    deductibleMet: parsed.deductibleMet,
+    sessionLimit: parsed.sessionLimit,
+    sessionsUsed: parsed.sessionsUsed,
+    priorAuthRequired: parsed.priorAuthRequired,
+    planName: parsed.planName,
+    coverageStartDate: parsed.coverageStartDate,
+    coverageEndDate: parsed.coverageEndDate,
+    errorMessage: ctx.errorMessage,
+    eligibilityCheckId: inserted?.id ?? null,
+  }
+}

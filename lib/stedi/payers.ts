@@ -139,6 +139,10 @@ export function payerAcceptsNameDobLookup(payerId: string): boolean {
   return NAME_DOB_ELIGIBLE.has(payerId)
 }
 
+/**
+ * Return the list of known payer names (from the hardcoded map).
+ * Used by the verify endpoint to suggest corrections for typos.
+ */
 export function knownPayerNames(): string[] {
   return Object.keys(PAYER_IDS)
 }

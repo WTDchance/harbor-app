@@ -125,4 +125,20 @@ export async function POST(req: NextRequest) {
       coinsurance_percent: result.coinsurancePercent,
       deductible_total: result.deductibleTotal,
       deductible_met: result.deductibleMet,
-      session_l
+      session_limit: result.sessionLimit,
+      sessions_used: result.sessionsUsed,
+      prior_auth_required: result.priorAuthRequired,
+      plan_name: result.planName,
+      coverage_start_date: result.coverageStartDate,
+      coverage_end_date: result.coverageEndDate,
+      error_message: result.errorMessage,
+      eligibility_check_id: result.eligibilityCheckId,
+    }, { status: httpStatus })
+  } catch (err) {
+    console.error('[verify] unexpected error', err)
+    return NextResponse.json(
+      { error: 'Internal server error during eligibility check' },
+      { status: 500 }
+    )
+  }
+}
