@@ -1,4 +1,5 @@
 import { Resend } from 'resend'
+import { isEmailOptedOut } from './email-optout'
 
 // Lazy init — avoid crashing `next build` when env vars aren't set
 let _resend: Resend | null = null
@@ -44,6 +45,30 @@ export async function sendEmail(payload: EmailPayload): Promise<boolean> {
           console.error('Email error:', error)
           return false
     }
+}
+
+// Patient-facing email. Use this INSTEAD of sendEmail for any message
+// addressed to a patient (intake invites, intake reminders, welcome email,
+// bulk practice messages). Skips the send if the recipient is on the
+// practice's email opt-out list.
+//
+// Therapist-facing emails (call summaries, weekly eligibility digest,
+// crisis alerts) must keep using sendEmail — those are operational
+// communications to the therapist, not marketing/patient traffic.
+export interface PatientEmailPayload extends EmailPayload {
+    practiceId: string
+}
+
+export async function sendPatientEmail(
+    payload: PatientEmailPayload
+): Promise<{ sent: boolean; skipped: 'opted_out' | null }> {
+    const optedOut = await isEmailOptedOut(payload.practiceId, payload.to)
+    if (optedOut) {
+        console.log(`↩️ Skipping patient email to ${payload.to}: opted out of email`)
+        return { sent: false, skipped: 'opted_out' }
+    }
+    const sent = await sendEmail(payload)
+    return { sent, skipped: null }
 }
 
 // PHI-free call summary notification — sent from Support@

@@ -7,7 +7,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import twilio from 'twilio'
 import crypto from 'crypto'
-import { sendEmail, buildIntakeEmail } from '@/lib/email'
+import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
 import { logCommunication } from '@/lib/patientCommunications'
 
 // POST /api/intake/send
@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
     // Send via email
     if ((effectiveMethod === 'email' || effectiveMethod === 'both') && patient_email) {
       try {
-        await sendIntakeEmail(patient_email, firstName, practiceName, intakeUrl)
+        await sendIntakeEmail(practice_id, patient_email, firstName, practiceName, intakeUrl)
         emailSent = true
         console.log(`[Intake] Email sent to ${patient_email}`)
       } catch (err) {
@@ -244,6 +244,7 @@ async function sendIntakeSMS(
 
 // -- Email delivery via Resend (uses shared @/lib/email helpers) --
 async function sendIntakeEmail(
+  practiceId: string,
   email: string,
   firstName: string,
   practiceName: string,
@@ -259,15 +260,16 @@ async function sendIntakeEmail(
     intakeUrl,
   })
 
-  // Send from the practice's display name @ Support inbox
-  const ok = await sendEmail({
+  // Gated by the practice's email opt-out list.
+  const { sent, skipped } = await sendPatientEmail({
+    practiceId,
     to: email,
     subject,
     html,
     from: `${practiceName} <${from}>`,
   })
 
-  if (!ok) {
+  if (!sent && skipped !== 'opted_out') {
     throw new Error('Resend send failed (see server logs)')
   }
 }

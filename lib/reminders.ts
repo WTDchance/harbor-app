@@ -11,7 +11,7 @@
 
 import { supabaseAdmin } from '@/lib/supabase'
 import { sendSMS } from '@/lib/twilio'
-import { sendEmail, EMAIL_SUPPORT } from '@/lib/email'
+import { sendPatientEmail, EMAIL_SUPPORT } from '@/lib/email'
 
 /**
  * Send 48-hour appointment reminders
@@ -120,7 +120,8 @@ async function sendRemindersForDate(targetDate: Date, hoursAhead: number) {
           hoursAhead,
           appointmentId: appt.id,
         })
-        const ok = await sendEmail({
+        const { sent: ok } = await sendPatientEmail({
+          practiceId: (appt as any).practice_id,
           to: patient.email,
           subject,
           html,

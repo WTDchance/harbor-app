@@ -6,6 +6,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
+import { isOptedOut as isSmsOptedOut } from "@/lib/sms-optout";
+import { isEmailOptedOut } from "@/lib/email-optout";
+import { isCallOptedOut } from "@/lib/call-optout";
 
 async function getAuthenticatedUser(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -163,6 +166,20 @@ export async function GET(
     .order("updated_at", { ascending: false })
     .limit(1);
 
+  // 6c. Communication preferences (SMS / email / call opt-out state).
+  const [smsOut, emailOut, callOut] = await Promise.all([
+    patient.phone ? isSmsOptedOut(practiceId, patient.phone) : Promise.resolve(false),
+    patient.email ? isEmailOptedOut(practiceId, patient.email) : Promise.resolve(false),
+    patient.phone ? isCallOptedOut(practiceId, patient.phone) : Promise.resolve(false),
+  ]);
+  const communicationPrefs = {
+    sms_opted_out: smsOut,
+    email_opted_out: emailOut,
+    call_opted_out: callOut,
+    phone: patient.phone,
+    email: patient.email,
+  };
+
   const latestInsurance = insRows?.[0] || null;
   let latestCheck: any = null;
   if (latestInsurance?.id) {
@@ -253,6 +270,7 @@ export async function GET(
     crisis_alerts: crisisAlerts || [],
     tasks: tasks || [],
     outcome_trend: outcomeTrend,
+    communication_prefs: communicationPrefs,
     eligibility: latestInsurance
       ? {
           record_id: latestInsurance.id,

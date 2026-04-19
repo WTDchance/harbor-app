@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
-import { sendEmail, buildIntakeEmail } from '@/lib/email'
+import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
 import { randomBytes } from 'crypto'
 
 function generateToken(): string {
@@ -103,7 +103,8 @@ export async function POST(req: NextRequest) {
         patientName: patient_name,
         intakeUrl,
       })
-      emailSent = await sendEmail({ to: patient_email, subject, html })
+      const res = await sendPatientEmail({ practiceId: practice.id, to: patient_email, subject, html })
+      emailSent = res.sent
     }
 
     await supabase

@@ -5,7 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin } from "@/lib/supabase";
 import twilio from "twilio";
-import { sendEmail, buildIntakeEmail } from "@/lib/email";
+import { sendPatientEmail, buildIntakeEmail } from "@/lib/email";
 
 export async function POST(request: NextRequest) {
   try {
@@ -111,14 +111,19 @@ export async function POST(request: NextRequest) {
           intakeUrl,
         });
 
-        await sendEmail({
+        const res = await sendPatientEmail({
+          practiceId: form.practice_id,
           to: form.patient_email,
           subject,
           html,
           from: `${practiceName} <${from}>`,
         });
-        emailSent = true;
-        console.log(`[Intake Resend] Email sent to ${form.patient_email}`);
+        emailSent = res.sent;
+        if (res.skipped === 'opted_out') {
+          console.log(`[Intake Resend] Email skipped — ${form.patient_email} opted out`);
+        } else {
+          console.log(`[Intake Resend] Email sent to ${form.patient_email}`);
+        }
       } catch (err) {
         console.error("[Intake Resend] Email failed:", err);
       }

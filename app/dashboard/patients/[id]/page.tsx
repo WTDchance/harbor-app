@@ -11,6 +11,7 @@ import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import IntakeProgress from "@/components/IntakeProgress";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
+import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
 const supabase = createClient();
 
@@ -96,6 +97,7 @@ type PatientData = {
     gad7_score: number | null;
   }[];
   eligibility: EligibilityData | null;
+  communication_prefs: CommunicationPrefs | null;
 };
 
 function formatDate(d: string | null) {
@@ -800,6 +802,11 @@ export default function PatientDetailPage() {
               onChanged={fetchPatient}
             />
           </div>
+
+          <CommunicationPrefsCard
+            patientId={patient.id}
+            prefs={data.communication_prefs}
+          />
 
           <div className="bg-white border rounded-lg p-5 shadow-sm">
             <h2 className="font-semibold text-gray-900 mb-3">
