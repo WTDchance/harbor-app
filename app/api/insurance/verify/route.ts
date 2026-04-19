@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { runAndPersistEligibilityCheck } from '@/lib/stedi/eligibility'
-import { knownPayerNames, resolvePayerId } from '@/lib/stedi/payers'
+import { knownPayerNames, resolvePayerIdWithDb } from '@/lib/stedi/payers'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 
 // Real-time eligibility check. Called from the insurance dashboard
@@ -51,9 +51,10 @@ export async function POST(req: NextRequest) {
 
     // Fail fast on unknown payers so the dashboard can surface a helpful error
     // instead of writing a "manual_pending" row for something the user typo'd.
-    if (!payerIdOverride && !resolvePayerId(insurance_company)) {
+    // Uses DB-backed lookup so we match against the full Stedi payer directory.
+    if (!payerIdOverride && !(await resolvePayerIdWithDb(supabase, insurance_company))) {
       return NextResponse.json({
-        error: `Payer ID not found for "${insurance_company}". Provide payer_id manually.`,
+        error: `Payer ID not found for "${insurance_company}". Provide payer_id manually or check spelling.`,
         known_payers: knownPayerNames(),
       }, { status: 400 })
     }
@@ -124,14 +125,4 @@ export async function POST(req: NextRequest) {
       coinsurance_percent: result.coinsurancePercent,
       deductible_total: result.deductibleTotal,
       deductible_met: result.deductibleMet,
-      session_limit: result.sessionLimit,
-      prior_auth_required: result.priorAuthRequired,
-      plan_name: result.planName,
-      coverage_end_date: result.coverageEndDate,
-      error: result.errorMessage,
-    }, { status: httpStatus })
-  } catch (error) {
-    console.error('[verify] unexpected error', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
+      session_l

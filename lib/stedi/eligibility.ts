@@ -8,7 +8,7 @@
 // advances the parent insurance_records cadence. Callers decide the auth client.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { resolvePayerId, payerAcceptsNameDobLookup } from './payers'
+import { resolvePayerIdWithDb, payerAcceptsNameDobLookup } from './payers'
 
 // 14 days between re-verifications. Short enough to catch mid-month lapses,
 // long enough to keep batch volume sane.
@@ -89,7 +89,8 @@ export async function runAndPersistEligibilityCheck(
   supabase: SupabaseClient,
   input: EligibilityInput
 ): Promise<EligibilityResult> {
-  const payerId = resolvePayerId(input.insurance.company, input.insurance.payerIdOverride)
+  // Two-tier lookup: hardcoded map first, then full Stedi payer DB
+  const payerId = await resolvePayerIdWithDb(supabase, input.insurance.company, input.insurance.payerIdOverride)
   const stediApiKey = process.env.STEDI_API_KEY
 
   // ---- short-circuits: persist a row, return, don't burn a Stedi call ----
