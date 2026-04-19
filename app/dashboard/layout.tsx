@@ -154,21 +154,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         setUserEmail(session.user.email ?? null);
         setCheckingAuth(false);
 
-        // Fetch practice name
+        // Fetch practice name via server-side resolver (respects act-as cookie)
         try {
-          const { data: userRecord } = await supabase
-            .from("users")
-            .select("practice_id")
-            .eq("id", session.user.id)
-            .single();
-
-          if (userRecord?.practice_id) {
-            const { data: practice } = await supabase
-              .from("practices")
-              .select("name")
-              .eq("id", userRecord.practice_id)
-              .single();
-            if (practice?.name) setPracticeName(practice.name);
+          const res = await fetch("/api/practice/me");
+          if (res.ok) {
+            const data = await res.json();
+            if (data.practice?.name) setPracticeName(data.practice.name);
           }
         } catch {}
       }

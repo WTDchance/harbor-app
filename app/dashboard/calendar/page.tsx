@@ -91,13 +91,14 @@ export default function CalendarPage() {
 
   async function fetchConnections() {
     try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const { data: practice } = await supabase
-        .from('practices').select('id').eq('notification_email', user.email).single()
-      if (!practice?.id) return
+      // Resolve practice via server-side endpoint (respects act-as cookie)
+      const meRes = await fetch('/api/practice/me')
+      if (!meRes.ok) return
+      const meData = await meRes.json()
+      const practiceId = meData.practice?.id
+      if (!practiceId) return
       const { data } = await supabase
-        .from('calendar_connections').select('*').eq('practice_id', practice.id)
+        .from('calendar_connections').select('*').eq('practice_id', practiceId)
       setConnections(data || [])
     } catch {}
   }

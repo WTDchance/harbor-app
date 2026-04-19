@@ -36,11 +36,10 @@ export default function RemindersPage() {
         return
       }
 
-      const { data: practiceData } = await supabase
-        .from('practices')
-        .select('id')
-        .eq('notification_email', user.email)
-        .single()
+      // Resolve practice via server-side endpoint (respects act-as cookie)
+      const meRes = await fetch('/api/practice/me')
+      const meData = meRes.ok ? await meRes.json() : null
+      const practiceData = meData?.practice
 
       if (practiceData) {
         setPractice(practiceData)

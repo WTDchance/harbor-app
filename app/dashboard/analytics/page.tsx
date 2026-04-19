@@ -47,11 +47,10 @@ export default function AnalyticsPage() {
         return
       }
 
-      const { data: practice } = await supabase
-        .from('practices')
-        .select('id')
-        .eq('notification_email', user.email)
-        .single()
+      // Resolve practice via server-side endpoint (respects act-as cookie)
+      const meRes = await fetch('/api/practice/me')
+      const meData = meRes.ok ? await meRes.json() : null
+      const practice = meData?.practice
 
       if (!practice) {
         setLoading(false)

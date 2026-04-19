@@ -349,14 +349,15 @@ export default function MessagingPage() {
       } = await supabase.auth.getSession();
       if (!session) return;
 
-      // Get practice ID from user record
-      const { data: userRecord } = await supabase
-        .from("users")
-        .select("practice_id")
-        .eq("id", session.user.id)
-        .single();
-
-      if (!userRecord?.practice_id) {
+      // Get practice ID via server-side resolver (respects act-as cookie)
+      const meRes = await fetch("/api/practice/me");
+      if (!meRes.ok) {
+        setError("Could not find practice");
+        return;
+      }
+      const meData = await meRes.json();
+      const practiceId = meData.practice?.id;
+      if (!practiceId) {
         setError("Could not find practice");
         return;
       }
@@ -370,7 +371,7 @@ export default function MessagingPage() {
         body: JSON.stringify({
           to: selectedConversation.patient_phone,
           body: replyText.trim(),
-          practiceId: userRecord.practice_id,
+          practiceId,
         }),
       });
 

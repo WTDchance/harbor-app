@@ -117,28 +117,33 @@ export default function DashboardHome() {
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
+        // Get greeting name from user record
         const { data: userRecord } = await supabase
           .from("users")
-          .select("practice_id, first_name")
+          .select("first_name")
           .eq("id", user.id)
           .single();
         if (userRecord?.first_name) {
-            setGreetingName(userRecord.first_name);
-          } else if (userRecord?.practice_id) {
-            const { data: practice } = await supabase
-              .from("practices")
-              .select("provider_name")
-              .eq("id", userRecord.practice_id)
-              .single();
-            if (practice?.provider_name) {
-              const firstName = practice.provider_name.split(" ")[0];
-              setGreetingName(firstName);
+          setGreetingName(userRecord.first_name);
+        } else {
+          // Fall back to practice provider name via server-side resolver
+          try {
+            const res = await fetch("/api/practice/me");
+            if (res.ok) {
+              const data = await res.json();
+              if (data.practice?.provider_name) {
+                const firstName = data.practice.provider_name.split(" ")[0];
+                setGreetingName(firstName);
+              }
             }
-          } else if (user.email) {
+          } catch {}
+          // Final fallback: email prefix
+          if (!greetingName && user.email) {
             const fallback = user.email.split("@")[0];
             setGreetingName(fallback.charAt(0).toUpperCase() + fallback.slice(1));
           }
         }
+      }
     })();
 
     loadStats(true);
