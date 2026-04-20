@@ -1,27 +1,27 @@
 // Admin-only test SMS endpoint - bypasses the SMS_ENABLED env gate so post-A2P
 // verification can happen before the Railway env var flip.
 //
-// POST /api/admin/test-sms
-//   Headers: Authorization: Bearer <CRON_SECRET>
-//   Body:    { to: "+15551234567", body: "Hello", from?: "+1541..." }
+// Uses the Twilio REST API directly via fetch + Basic auth to avoid any
+// Twilio SDK type churn in this route.
 //
-// If \"from\" is omitted, uses the Harbor Demo practice's Twilio number.
+// POST /api/admin/test-sms
+// Headers: Authorization Bearer CRON_SECRET
+// Body: JSON with to, body, optional from
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import twilio from 'twilio'
 
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''
-  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
+  const expected = 'Bearer ' + (process.env.CRON_SECRET || '')
   if (!process.env.CRON_SECRET || auth !== expected) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const body = await req.json().catch(() => ({}))
-  const to = body?.to
-  const msg = body?.body || 'Harbor test SMS - if you are reading this, A2P is working.'
-  let from = body?.from
+  const to: string | undefined = body?.to
+  const msg: string = body?.body || 'Harbor test SMS - if you are reading this, A2P is working.'
+  let from: string | undefined = body?.from
 
   if (!to) {
     return NextResponse.json({ error: 'to is required' }, { status: 400 })
@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
       .select('phone_number')
       .eq('id', '172405dd-65f9-46ce-88e9-104c68d24da4')
       .maybeSingle()
-    from = p?.phone_number
+    from = p?.phone_number || undefined
     if (!from) {
       return NextResponse.json({ error: 'No from number available' }, { status: 500 })
     }
@@ -45,23 +45,39 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 })
   }
 
-  try {
-    const client = twilio(sid, token)
-    const message = await client.messages.create({ from, to, body: msg })
-    return NextResponse.json({
-      ok: true,
-      sid: message.sid,
-      status: message.status,
-      from: message.from,
-      to: message.to,
-    })
-  } catch (err: any) {
-    console.error('[test-sms] send failed:', err?.message || err)
+  const auth64 = Buffer.from(sid + ':' + token).toString('base64')
+  const form = new URLSearchParams()
+  form.set('From', from)
+  form.set('To', to)
+  form.set('Body', msg)
+
+  const resp = await fetch(
+    'https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages.json',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Basic ' + auth64,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    }
+  )
+
+  const json: any = await resp.json().catch(() => ({}))
+  if (!resp.ok) {
     return NextResponse.json({
       ok: false,
-      error: err?.message || String(err),
-      code: err?.code,
-      moreInfo: err?.moreInfo,
+      status: resp.status,
+      error: json?.message || 'Twilio send failed',
+      code: json?.code,
+      more_info: json?.more_info,
     }, { status: 500 })
   }
+  return NextResponse.json({
+    ok: true,
+    sid: json?.sid,
+    status: json?.status,
+    from: json?.from,
+    to: json?.to,
+  })
 }
