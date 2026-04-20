@@ -1107,13 +1107,24 @@ async function processEndOfCall(opts: {
     console.error('[Vapi] Email notification error:', err)
   }
 
-  // 7. Auto-send intake forms when we captured *any* contact method.
-  // Previously this required a phone number AND that the patient be new,
-  // which silently dropped email-only captures and any returning caller who
-  // hadn't been sent an intake yet. We now fire whenever we have at least
-  // one reachable channel and a patient record (new or existing).
+  // 7. Auto-send intake forms.
+  // Hard preconditions so we never SMS a stranger who called for 25 seconds:
+  //   (a) We have a patient record id to attach it to
+  //   (b) The CALLER actually identified themselves (info.patientName is set,
+  //       not a generic placeholder like 'New Caller'). Having a caller-ID
+  //       phone is NOT enough - every call has that.
+  //   (c) Call ran long enough to plausibly be a real intake (>= 60s).
+  //       Short hangups get no intake, period.
+  //   (d) We have at least one reachable contact (phone or email).
   const intakePatientId = newPatient?.id || existingPatient?.id || null
-  if (intakePatientId && (patientPhone || info.patientEmail)) {
+  const hasNamedCaller = !!(info.patientName && info.patientName.trim()
+    && info.patientName.trim().toLowerCase() !== 'new caller'
+    && info.patientName.trim().toLowerCase() !== 'unknown')
+  const durSec = (typeof message?.call?.duration === 'number' ? message.call.duration : 0)
+    || (typeof message?.durationSeconds === 'number' ? message.durationSeconds : 0)
+    || (typeof message?.endedReason === 'string' ? 60 : 0) // fall back past the gate when we truly cannot tell
+  const isLongEnough = durSec === 0 ? true : durSec >= 60
+  if (intakePatientId && hasNamedCaller && isLongEnough && (patientPhone || info.patientEmail)) {
     try {
       // Get the call_log record to pass the ID
       const { data: callLogRecord } = await supabaseAdmin
@@ -1303,13 +1314,17 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
         .eq('id', patientId)
 
       console.log(`[Vapi] Updated existing patient ${patientId} with intake info from call`)
-    } else {
+    } else if (firstName) {
+      // Only create a NEW patient row when we actually captured a first name.
+      // Previously we inserted 'New Caller' placeholder rows any time the tool
+      // fired, which created ghost patients and triggered downstream intake
+      // SMS to people who never identified. (See 4/20/26 25-second call bug.)
       const { data: created, error: createErr } = await supabaseAdmin
         .from('patients')
         .insert({
           practice_id: practiceId,
-          first_name: firstName || 'New',
-          last_name: lastName || 'Caller',
+          first_name: firstName,
+          last_name: lastName || '',
           phone: phone || null,
           email: email || null,
           insurance_provider: insurance || null,
@@ -1326,6 +1341,8 @@ async function handleCollectIntake(params: any, practiceId: string | null): Prom
       } else {
         console.log(`[Vapi] Created new patient ${created?.id} from intake tool call`)
       }
+    } else {
+      console.log('[Vapi] collectIntakeInfo called without a first name - refusing to create placeholder patient row')
     }
   } catch (err) {
     console.error('[Vapi] Intake tool handler error:', err)
