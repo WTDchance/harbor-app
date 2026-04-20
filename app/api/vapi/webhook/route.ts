@@ -279,11 +279,17 @@ async function handleAssistantRequest(message: any) {
 
   const baseOverrides: any = {}
   if (freshFirstMessage) baseOverrides.firstMessage = freshFirstMessage
-  if (freshSystemPrompt) {
-    baseOverrides.model = {
-      messages: [{ role: 'system', content: freshSystemPrompt }],
-    }
-  }
+  // NOTE: we used to override model.messages here to always ship the freshest
+  // system prompt, but Vapi rejects a partial model object (requires provider
+  // + model fields) and returns "couldn't get assistant" / voice-id-not-set
+  // errors. System prompt still syncs to the stored assistant via the
+  // /api/practices/[id] PATCH route on settings save, so this is a no-op
+  // downside for ai_name / hours / specialties / greeting edits - but the
+  // FRESHLY-RENDERED firstMessage override above IS enough to make ai_name
+  // changes take effect on the next call without re-saving settings.
+  // If we want live system-prompt-per-call in future, include full model config
+  // (provider, model, temperature, messages) - not just messages.
+  void freshSystemPrompt
 
   if (callerContext) {
     const firstName = (callerContext.first_name || '').trim()
