@@ -15,7 +15,11 @@ export const metadata: Metadata = {
     "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/harbor-icon-clean.png', type: 'image/png' },
+    ],
+    shortcut: '/harbor-icon-clean.png',
+    apple: '/harbor-icon-clean.png',
   },
   manifest: '/manifest.json',
   appleWebApp: {
@@ -70,7 +74,9 @@ export default function RootLayout({
         <meta name="apple-mobile-web-app-title" content="Harbor" />
         <meta name="theme-color" content="#1f375d" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" type="image/png" href="/favicon.ico" />
+        <link rel="icon" type="image/png" href="/harbor-icon-clean.png" />
+        <link rel="shortcut icon" type="image/png" href="/harbor-icon-clean.png" />
+        <link rel="apple-touch-icon" href="/harbor-icon-clean.png" />
 
         {/* Chunk-load error recovery. Catches stale-chunk 404s after a deploy
             and force-reloads once per 30s to get fresh HTML. Silent no-op
