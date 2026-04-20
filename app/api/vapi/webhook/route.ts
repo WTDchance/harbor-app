@@ -216,7 +216,7 @@ async function handleAssistantRequest(message: any) {
     .select(
       `id, vapi_assistant_id, name, ai_name, timezone, greeting,
        provider_name, specialties, location, telehealth, insurance_accepted,
-       hours_json, self_pay_rate_cents, emotional_support_enabled`
+       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number`
     )
     .eq('id', practiceId)
     .maybeSingle()
@@ -262,6 +262,7 @@ async function handleAssistantRequest(message: any) {
       insurance_accepted: practice.insurance_accepted || undefined,
       emotional_support_enabled: practice.emotional_support_enabled ?? true,
       self_pay_rate_cents: practice.self_pay_rate_cents ?? null,
+      fax_number: practice.fax_number ?? null,
       therapists: (therapistRows || []).map((t: any) => ({
         display_name: t.display_name,
         credentials: t.credentials,

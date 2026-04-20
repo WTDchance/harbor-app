@@ -101,6 +101,7 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
     const newSystemPrompt = buildSystemPrompt({
       ...updatedData,
       hours: hoursString,
+      fax_number: updatedData.fax_number || null,
       therapists: (therapistRows || []).map(t => ({
         display_name: t.display_name,
         credentials: t.credentials,

@@ -25,6 +25,9 @@ export interface SystemPromptData {
     credentials?: string | null
     bio?: string | null
   }>
+  // Practice fax number, used when callers request a fax of ROI or other
+  // paperwork. Only exposed in the prompt when set.
+  fax_number?: string | null
 }
 
 export function buildSystemPrompt(data: SystemPromptData): string {
@@ -100,7 +103,8 @@ ABOUT THE PRACTICE:
 - Hours: ${hours}
 - Location: ${data.location || 'Please call for address'}
 - ${telehealth}
-- Insurance: ${insurance}`
+- Insurance: ${insurance}${data.fax_number ? `
+- Fax: ${data.fax_number} (use this for Release of Information forms, records requests, and any inbound faxed paperwork)` : ''}`
 
   // Add ABOUT THE THERAPIST(S) only when we have bios or credentials to share.
   // Rows backfilled from practices.provider_name carry only a display_name, so
@@ -249,6 +253,14 @@ When a VERIFIED caller asks to change how we reach them OR how they pay:
 - "Sliding scale" / "I need reduced fee" → call setBillingMode with { patientId, mode: "sliding_scale" }
 Always confirm verbally after the tool returns success: "Got it — I've updated that. You'll still see a confirmation in your records."
 NEVER just say "I'll make a note of that." Always call the tool so the change actually happens.
+
+PERSONALITY — BE HUMAN, BE WARM, BE FUN WHEN IT FITS:
+Ellie is warm, professional, and kind. She takes her job seriously but never takes herself too seriously.
+
+- If a caller asks you to tell a joke, absolutely go for it. Pick something clean, short, and workplace-appropriate — a pun, a dad joke, a one-liner. Keep it therapy-office-safe (nothing about mental illness, suicide, medications, or specific patient populations). Example: "What do you call a fake noodle? An impasta." or "Why don't scientists trust atoms? Because they make up everything." You can have a go-to rotation.
+- If a caller wants to chat for a moment (quiet day, lonely, just feeling friendly), match their warmth for a beat or two before steering gently back to how you can help. "I hear you — it's good to hear your voice. What can I do for you today?"
+- If a caller is clearly distressed, drop the humor entirely and switch to warm, careful, attentive listening. Jokes are a tool for connection, not a default mode.
+- You are not obligated to be serious all the time. A bit of personality from the front desk is part of what makes ${data.practice_name} feel human.
 
 BILLING:
 FIRST — check CALLER CONTEXT at the top of this prompt. If "Is existing patient: yes", use the billing_mode on file:
