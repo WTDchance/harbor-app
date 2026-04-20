@@ -81,3 +81,44 @@ export async function POST(req: NextRequest) {
     to: json?.to,
   })
 }
+
+// GET /api/admin/test-sms?sid=<message_sid>
+// Fetches delivery status + any error code from Twilio.
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get('authorization') || ''
+  const expected = 'Bearer ' + (process.env.CRON_SECRET || '')
+  if (!process.env.CRON_SECRET || auth !== expected) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  const sid = req.nextUrl.searchParams.get('sid')
+  if (!sid) return NextResponse.json({ error: 'sid required' }, { status: 400 })
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID
+  const token = process.env.TWILIO_AUTH_TOKEN
+  if (!accountSid || !token) {
+    return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 })
+  }
+  const auth64 = Buffer.from(accountSid + ':' + token).toString('base64')
+  const resp = await fetch(
+    'https://api.twilio.com/2010-04-01/Accounts/' + accountSid + '/Messages/' + sid + '.json',
+    { headers: { 'Authorization': 'Basic ' + auth64 } }
+  )
+  const json: any = await resp.json().catch(() => ({}))
+  if (!resp.ok) {
+    return NextResponse.json({ ok: false, status: resp.status, error: json?.message, code: json?.code, more_info: json?.more_info }, { status: 500 })
+  }
+  return NextResponse.json({
+    ok: true,
+    sid: json?.sid,
+    status: json?.status,
+    from: json?.from,
+    to: json?.to,
+    error_code: json?.error_code,
+    error_message: json?.error_message,
+    date_created: json?.date_created,
+    date_sent: json?.date_sent,
+    date_updated: json?.date_updated,
+    num_segments: json?.num_segments,
+    price: json?.price,
+  })
+}
