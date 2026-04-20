@@ -239,8 +239,8 @@ async function handleAssistantRequest(message: any) {
   const aiName = practice.ai_name || 'Ellie'
 
   // Build a fresh system prompt + firstMessage on EVERY inbound call from the
-  // current DB state. This eliminates "I changed the AI name in settings but
-  // the call still uses the old one" drift: any edit to ai_name, greeting,
+  // current DB state. This eliminates the "I changed the AI name in settings
+  // but the call still uses the old one" drift: any edit to ai_name, greeting,
   // hours, therapists, specialties, etc. takes effect on the next call
   // without needing a Vapi assistant PATCH. The stored Vapi assistant still
   // owns voice/model/server config; we just override the per-call bits.
@@ -366,11 +366,10 @@ function formatTimeClock(t: string): string {
 
 /**
  * Pick the firstMessage (what Ellie literally speaks first) for an inbound
- * call. If the practice has a custom greeting AND it still references the
- * current ai_name (or doesn't reference any AI name at all), use it as-is.
- * Otherwise fall back to a clean template built from current ai_name —
- * this prevents the "changed AI name in settings but she still introduces
- * herself as the old name" bug we hit on 4/18/26.
+ * call. If the stored greeting already references the current ai_name, use
+ * it verbatim (user curated). Otherwise fall back to a clean template built
+ * from current ai_name — prevents the "changed AI name in settings but she
+ * still introduces herself as the old name" bug hit on 4/19/26.
  */
 function buildFirstMessage(
   storedGreeting: string | null | undefined,
@@ -383,15 +382,12 @@ function buildFirstMessage(
 
   const g = storedGreeting.trim()
 
-  // If the stored greeting already mentions the current ai_name, user curated
-  // it intentionally — respect it verbatim.
   const lowerGreeting = g.toLowerCase()
   const lowerName = aiName.toLowerCase()
   if (lowerName && lowerGreeting.includes(lowerName)) return g
 
   // Stored greeting exists but does NOT mention current ai_name. That is the
   // drift case — a stale "I'm Jeff" greeting from an earlier configuration.
-  // Prefer the fresh template so name changes take effect on the next call.
   console.log(`[Vapi] Stored greeting does not reference ai_name="${aiName}" — using fresh template instead`)
   return defaultTemplate
 }
@@ -1668,8 +1664,111 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
   const gad = parseInt(gad2Score) || 0
 
   if (phq >= 3 || gad >= 3) {
-    return 'Thank you for sharing that. I want to make sure the therapist has this informat
+    return 'Thank you for sharing that. I want to make sure the therapist has this information before your appointment so they can provide you with the best care.'
+  }
+  return 'Thank you for answering those questions. That information will help the therapist prepare for your first session.'
+}
 
+// ---- Helpers ----
+
+function buildTools(serverUrl: string) {
+  return [
+    {
+      type: 'function',
+      function: {
+        name: 'collectIntakeInfo',
+        description: 'Save patient intake information when they want to schedule an appointment',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Patient full name' },
+            phone: { type: 'string', description: 'Patient phone number' },
+            email: { type: 'string', description: 'Patient email address' },
+            insurance: { type: 'string', description: 'Insurance provider or self-pay' },
+            telehealthPreference: { type: 'string', description: 'telehealth or in-person' },
+            reason: { type: 'string', description: 'Brief reason for seeking therapy' },
+            preferredTimes: { type: 'string', description: 'Preferred days and times' },
+          },
+          required: ['name', 'phone', 'email'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'checkAvailability',
+        description: 'Check the practice calendar for available appointment slots on a given day and time. Returns real open time slots.',
+        parameters: {
+          type: 'object',
+          properties: {
+            preferredDay: { type: 'string', description: 'Day to check — e.g. "Monday", "tomorrow", "today", or a date like "April 20"' },
+            preferredTime: { type: 'string', description: 'Time preference: "morning", "afternoon", "evening", or a specific time like "2pm"' },
+          },
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'bookAppointment',
+        description: 'Book a confirmed appointment on the practice calendar. Use this after the caller has chosen a specific date and time.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Full name of the patient' },
+            appointmentDateTime: { type: 'string', description: 'The chosen appointment date and time, e.g. "Monday April 21 at 2pm" or "2026-04-21T14:00:00"' },
+            patientPhone: { type: 'string', description: 'Patient phone number' },
+            patientEmail: { type: 'string', description: 'Patient email address' },
+            reason: { type: 'string', description: 'Brief reason for the appointment' },
+          },
+          required: ['patientName', 'appointmentDateTime'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'takeMessage',
+        description: 'Record a message for the therapist when the caller wants to leave a message',
+        parameters: {
+          type: 'object',
+          properties: {
+            callerName: { type: 'string', description: 'Name of the caller' },
+            phone: { type: 'string', description: 'Callback phone number' },
+            message: { type: 'string', description: 'The message for the therapist' },
+          },
+          required: ['callerName'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'submitIntakeScreening',
+        description: 'Submit PHQ-2 and GAD-2 screening scores after asking the 4 screening questions',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientName: { type: 'string', description: 'Patient name' },
+            phq2Score: { type: 'number', description: 'PHQ-2 depression score (0-6)' },
+            gad2Score: { type: 'number', description: 'GAD-2 anxiety score (0-6)' },
+          },
+          required: ['phq2Score', 'gad2Score'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+  ]
+}
 
 function buildFallbackAssistant() {
   return {
@@ -1704,3 +1803,5 @@ function buildFallbackAssistant() {
     maxDurationSeconds: 600,
   }
 }
+
+functi
