@@ -138,7 +138,9 @@ export default function LoginPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "login", details: { method: "password+mfa" } }),
           }).catch(() => {});
-          router.replace(postLoginRedirect((await supabase.auth.getSession()).data.session?.user?.email));
+          supabase.auth.getSession().then(({ data }) => {
+            router.replace(postLoginRedirect(data.session?.user?.email));
+          });
         }}
         onCancel={async () => {
           await supabase.auth.signOut();
