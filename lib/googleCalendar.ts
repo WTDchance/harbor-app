@@ -50,7 +50,12 @@ export async function refreshAccessToken(
         client_secret: clientSecret,
         refresh_token: refreshToken,
         grant_type: 'refresh_token'
-      })
+      }),
+      // 4s cap on Google's oauth2 endpoint. Without this, a slow response
+      // from Google would hang until Vapi's silence-timeout dropped the call
+      // (seen on 4/19/26). withTimeout in webhook.ts is the outer safety net;
+      // this is the inner one so we never even approach it.
+      signal: AbortSignal.timeout(4000),
     })
 
     if (!response.ok) {
@@ -109,7 +114,8 @@ export async function getCalendarEvents(
         headers: {
           Authorization: `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
-        }
+        },
+        signal: AbortSignal.timeout(4000),
       }
     )
 

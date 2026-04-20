@@ -75,6 +75,7 @@ export async function getCalendarRouter(practiceId: string): Promise<CalendarRou
               start: { dateTime: ev.start.toISOString() },
               end: { dateTime: ev.end.toISOString() },
             }),
+            signal: AbortSignal.timeout(4000),
           }
         )
         if (!resp.ok) throw new Error(`Google createEvent failed: ${resp.status}`)
@@ -86,7 +87,11 @@ export async function getCalendarRouter(practiceId: string): Promise<CalendarRou
         if (!token) throw new Error('Google token unavailable')
         const resp = await fetch(
           `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(id)}`,
-          { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }
+          {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` },
+            signal: AbortSignal.timeout(4000),
+          }
         )
         if (!resp.ok && resp.status !== 410) throw new Error(`Google deleteEvent failed: ${resp.status}`)
       },
