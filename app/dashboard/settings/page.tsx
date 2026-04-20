@@ -162,6 +162,7 @@ export default function SettingsPage() {
     name: '',
     ai_name: '',
     phone_number: '',
+    fax_number: '',
     timezone: 'America/Los_Angeles',
     insurance_accepted: '',
     notification_emails: '',
@@ -276,6 +277,7 @@ export default function SettingsPage() {
       name: p.name || '',
       ai_name: p.ai_name || '',
       phone_number: p.phone_number || '',
+      fax_number: p.fax_number || '',
       timezone: p.timezone || 'America/Los_Angeles',
       insurance_accepted: (p.insurance_accepted || []).join(', '),
       notification_emails: (p.notification_emails || []).join(', '),
@@ -417,6 +419,7 @@ export default function SettingsPage() {
         name: form.name,
         ai_name: form.ai_name,
         phone_number: form.phone_number,
+        fax_number: form.fax_number || null,
         timezone: form.timezone,
         insurance_accepted: form.insurance_accepted.split(',').map((s: string) => s.trim()).filter(Boolean),
         notification_emails: form.notification_emails.split(',').map((s: string) => s.trim()).filter(Boolean),
@@ -1016,6 +1019,17 @@ export default function SettingsPage() {
               className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
             <p className="text-xs text-gray-400 mt-1">The Twilio number patients call (format: +15415394890)</p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Fax Number</label>
+            <input
+              type="tel"
+              value={form.fax_number}
+              onChange={e => setForm(f => ({ ...f, fax_number: e.target.value }))}
+              placeholder="(541) 555-1212"
+              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">If you have a fax line, Ellie shares this when callers ask to fax Release of Information forms or records. Leave blank if you don't accept fax.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Timezone</label>
