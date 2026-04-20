@@ -47,7 +47,14 @@ export async function POST(req: NextRequest) {
 
   const auth64 = Buffer.from(sid + ':' + token).toString('base64')
   const form = new URLSearchParams()
-  form.set('From', from)
+  // Prefer MessagingServiceSid - required post-A2P so Twilio routes through
+  // the approved campaign. Fall back to From when not supplied.
+  const msSid: string | undefined = body?.messaging_service_sid
+  if (msSid) {
+    form.set('MessagingServiceSid', msSid)
+  } else {
+    form.set('From', from)
+  }
   form.set('To', to)
   form.set('Body', msg)
 
