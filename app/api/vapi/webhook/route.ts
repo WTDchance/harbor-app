@@ -1156,7 +1156,7 @@ async function processEndOfCall(opts: {
   if (info.appointmentScheduled && info.appointmentTime) {
     try {
       const appointmentPatientId = existingPatient?.id || newPatient?.id
-      const parsedDate = parseAppointmentDate(info.appointmentTime)
+      const parsedDate = parseAppointmentDate(info.appointmentTime, practice?.timezone || 'America/Los_Angeles')
       const durationMinutes = 60
 
       // 8a. Push to the practice's connected calendar first, so we can store
@@ -1328,47 +1328,103 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
   }
 
   try {
-    const router = await getCalendarRouter(practiceId)
+    // Fetch practice timezone - ALL day-boundary and business-hour math
+    // below is done in this timezone, never server-local (Railway is UTC).
+    const { data: practiceRow } = await supabaseAdmin
+      .from('practices')
+      .select('timezone')
+      .eq('id', practiceId)
+      .maybeSingle()
+    const tz = practiceRow?.timezone || 'America/Los_Angeles'
+
+    const router = await withTimeout(
+      getCalendarRouter(practiceId),
+      5000,
+      'getCalendarRouter'
+    )
     if (!router) {
       return 'The calendar is not connected for this practice yet. Let me take down your preferred times and someone will confirm your appointment.'
     }
 
-    // Build a search window based on the preferred day
+    // Helpers: get wall-clock parts of `now` in the practice timezone.
     const now = new Date()
-    let searchStart = new Date(now)
-    let searchEnd = new Date(now)
+    const tzParts = (d: Date): { year: number; month: number; day: number; weekday: number; hour: number; minute: number } => {
+      const fmt = new Intl.DateTimeFormat('en-US', {
+        timeZone: tz,
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false,
+      })
+      const map: Record<string, string> = {}
+      for (const p of fmt.formatToParts(d)) if (p.type !== 'literal') map[p.type] = p.value
+      const dayName = (map.weekday || '').toLowerCase()
+      const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
+      return {
+        year: Number(map.year),
+        month: Number(map.month),
+        day: Number(map.day),
+        weekday: dayMap[dayName] ?? 0,
+        hour: Number(map.hour === '24' ? '0' : map.hour),
+        minute: Number(map.minute),
+      }
+    }
 
-    // Try to parse the preferred day into an actual date range
+    // Convert wall-clock midnight (year,month,day, 00:00) in tz to a UTC Date.
+    // Uses a fixed-point iteration: guess UTC, see what tz says, adjust.
+    const zonedMidnightToUtc = (year: number, month: number, day: number): Date => {
+      let guess = new Date(Date.UTC(year, month - 1, day, 0, 0, 0))
+      for (let i = 0; i < 3; i++) {
+        const p = tzParts(guess)
+        const deltaMs =
+          ((p.year - year) * 31536000000) +
+          ((p.month - month) * 2592000000) +
+          ((p.day - day) * 86400000) +
+          (p.hour * 3600000) +
+          (p.minute * 60000)
+        if (deltaMs === 0) break
+        guess = new Date(guess.getTime() - deltaMs)
+      }
+      return guess
+    }
+
+    // Build search window in PRACTICE timezone.
     const dayLower = (preferredDay || '').toLowerCase()
-    const dayMap: Record<string, number> = {
+    const dayNameMap: Record<string, number> = {
       sunday: 0, monday: 1, tuesday: 2, wednesday: 3,
       thursday: 4, friday: 5, saturday: 6,
     }
-
+    const today = tzParts(now)
+    let daysAhead = 0
     if (dayLower === 'today') {
-      searchStart = new Date(now)
-      searchEnd = new Date(now)
-      searchEnd.setHours(23, 59, 59)
+      daysAhead = 0
     } else if (dayLower === 'tomorrow') {
-      searchStart = new Date(now.getTime() + 24 * 60 * 60 * 1000)
-      searchStart.setHours(0, 0, 0)
-      searchEnd = new Date(searchStart)
-      searchEnd.setHours(23, 59, 59)
-    } else if (dayMap[dayLower] !== undefined) {
-      const targetDay = dayMap[dayLower]
-      const currentDay = now.getDay()
-      let daysAhead = targetDay - currentDay
+      daysAhead = 1
+    } else if (dayNameMap[dayLower] !== undefined) {
+      const target = dayNameMap[dayLower]
+      daysAhead = target - today.weekday
       if (daysAhead <= 0) daysAhead += 7
-      searchStart = new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000)
-      searchStart.setHours(0, 0, 0)
-      searchEnd = new Date(searchStart)
-      searchEnd.setHours(23, 59, 59)
-    } else {
-      // No specific day — search the next 7 days
-      searchEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
     }
 
-    // Determine business hours filter from preferred time
+    // Target date in practice tz
+    const targetMs = zonedMidnightToUtc(today.year, today.month, today.day).getTime() + daysAhead * 86400000
+    const targetParts = tzParts(new Date(targetMs))
+    const dayStart = zonedMidnightToUtc(targetParts.year, targetParts.month, targetParts.day)
+
+    let searchStart: Date
+    let searchEnd: Date
+    if (dayLower === 'today') {
+      // Start from NOW (not midnight) so we don't offer times in the past
+      searchStart = new Date(Math.max(now.getTime(), dayStart.getTime()))
+      searchEnd = new Date(dayStart.getTime() + 86400000 - 1)
+    } else if (dayLower === 'tomorrow' || dayNameMap[dayLower] !== undefined) {
+      searchStart = dayStart
+      searchEnd = new Date(dayStart.getTime() + 86400000 - 1)
+    } else {
+      // No specific day -- search the next 7 days starting now
+      searchStart = new Date(now.getTime())
+      searchEnd = new Date(now.getTime() + 7 * 86400000)
+    }
+
+    // Business hours in WALL-CLOCK tz hours
     let businessHours = { startHour: 9, endHour: 17 }
     const timeLower = (preferredTime || '').toLowerCase()
     if (timeLower.includes('morning')) {
@@ -1384,16 +1440,17 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
       6000,
       'router.listEvents'
     )
-    const slots = findFreeSlots(events, searchStart, searchEnd, 60, businessHours)
+    const slots = findFreeSlots(events, searchStart, searchEnd, 60, businessHours, tz)
 
     if (slots.length === 0) {
       const dayLabel = dayLower || 'that time frame'
       return `I checked the calendar and unfortunately there are no open slots ${dayLabel}${preferredTime ? ` in the ${preferredTime}` : ''}. Would you like me to check a different day or time?`
     }
 
-    // Format up to 3 slots for the caller
+    // Format up to 3 slots in the practice timezone
     const formatted = slots.slice(0, 3).map((s) => {
       return s.start.toLocaleString('en-US', {
+        timeZone: tz,
         weekday: 'long',
         month: 'long',
         day: 'numeric',
@@ -1423,7 +1480,14 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
 
   try {
     // Parse the appointment date/time
-    const parsedDate = parseAppointmentDate(appointmentDateTime)
+    // Fetch practice timezone so we parse "April 27 at 2pm" as 2pm in PT not UTC
+    const { data: _practiceTz } = await supabaseAdmin
+      .from('practices')
+      .select('timezone')
+      .eq('id', practiceId)
+      .maybeSingle()
+    const _tz = _practiceTz?.timezone || 'America/Los_Angeles'
+    const parsedDate = parseAppointmentDate(appointmentDateTime, _tz)
     if (!parsedDate) {
       return `I could not understand the date "${appointmentDateTime}". Could you tell me the day and time again?`
     }
@@ -1839,40 +1903,116 @@ function fmtTime(t: string): string {
   return mm === 0 ? `${h12} ${suffix}` : `${h12}:${mm.toString().padStart(2, '0')} ${suffix}`
 }
 
-function parseAppointmentDate(timeStr: string): Date | null {
+/**
+ * Get year/month/day/weekday of a Date as seen in the given IANA timezone.
+ * Used so that "Monday April 27 at 2pm" resolves to Monday-in-PRACTICE-TZ,
+ * not Monday-in-server-TZ (Railway runs UTC, so a late-night call would pick
+ * the WRONG day without this).
+ */
+function tzDateParts(d: Date, tz: string): { year: number; month: number; day: number; weekday: number } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short',
+  })
+  const map: Record<string, string> = {}
+  for (const p of fmt.formatToParts(d)) if (p.type !== 'literal') map[p.type] = p.value
+  const dayMap: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
+  return {
+    year: Number(map.year),
+    month: Number(map.month),
+    day: Number(map.day),
+    weekday: dayMap[(map.weekday || '').toLowerCase()] ?? 0,
+  }
+}
+
+/**
+ * Construct a UTC Date whose wall-clock time in `tz` equals the given
+ * (year, month, day, hour, minute). Uses fixed-point iteration (converges in
+ * 1-2 steps for any IANA timezone, handles DST transitions).
+ */
+function zonedTimeToUtc(
+  year: number, month: number, day: number,
+  hour: number, minute: number, tz: string
+): Date {
+  let guess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0))
+  for (let i = 0; i < 3; i++) {
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', hour12: false,
+    })
+    const map: Record<string, string> = {}
+    for (const p of fmt.formatToParts(guess)) if (p.type !== 'literal') map[p.type] = p.value
+    const gy = Number(map.year), gm = Number(map.month), gd = Number(map.day)
+    const gh = Number(map.hour === '24' ? '0' : map.hour), gmn = Number(map.minute)
+    const deltaMs =
+      ((gy - year) * 31536000000) +
+      ((gm - month) * 2592000000) +
+      ((gd - day) * 86400000) +
+      ((gh - hour) * 3600000) +
+      ((gmn - minute) * 60000)
+    if (deltaMs === 0) break
+    guess = new Date(guess.getTime() - deltaMs)
+  }
+  return guess
+}
+
+/**
+ * Parse a spoken appointment datetime ("Monday April 27 at 2pm", "tomorrow at
+ * 10 AM", "April 24 at 3:30 PM") and return a Date whose wall-clock
+ * representation in the PRACTICE timezone matches what was said.
+ *
+ * Previously this used setHours() which applies server-local (UTC on Railway)
+ * so "April 27 at 2pm" stored as 2026-04-27T14:00Z and Google Calendar showed
+ * it as April 26, 7 PM PT. Now every step is done in the practice timezone.
+ */
+function parseAppointmentDate(timeStr: string, timezone: string = 'America/Los_Angeles'): Date | null {
   if (!timeStr) return null
   const now = new Date()
   const lower = timeStr.toLowerCase()
+  const today = tzDateParts(now, timezone)
+
   const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-  let targetDate: Date | null = null
+  let targetYear = today.year
+  let targetMonth = today.month
+  let targetDay = today.day
+  let found = false
+
   if (lower.includes('tomorrow')) {
-    targetDate = new Date(now)
-    targetDate.setDate(targetDate.getDate() + 1)
+    const tomorrow = tzDateParts(new Date(now.getTime() + 86400000), timezone)
+    targetYear = tomorrow.year; targetMonth = tomorrow.month; targetDay = tomorrow.day
+    found = true
   }
-  if (!targetDate) {
+  if (!found) {
     for (let i = 0; i < dayNames.length; i++) {
       if (lower.includes(dayNames[i])) {
-        const currentDay = now.getDay()
-        let daysUntil = i - currentDay
+        let daysUntil = i - today.weekday
         if (daysUntil <= 0) daysUntil += 7
-        targetDate = new Date(now)
-        targetDate.setDate(targetDate.getDate() + daysUntil)
+        const target = tzDateParts(new Date(now.getTime() + daysUntil * 86400000), timezone)
+        targetYear = target.year; targetMonth = target.month; targetDay = target.day
+        found = true
         break
       }
     }
   }
-  if (!targetDate) {
+  if (!found) {
     const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
     const monthDayMatch = lower.match(/(\w+)\s+(\d{1,2})/)
     if (monthDayMatch) {
       const monthIdx = months.indexOf(monthDayMatch[1])
       if (monthIdx >= 0) {
-        targetDate = new Date(now.getFullYear(), monthIdx, parseInt(monthDayMatch[2]))
-        if (targetDate < now) targetDate.setFullYear(targetDate.getFullYear() + 1)
+        targetMonth = monthIdx + 1
+        targetDay = parseInt(monthDayMatch[2])
+        // Roll year forward if the date is already in the past for this year
+        const candidate = zonedTimeToUtc(targetYear, targetMonth, targetDay, 23, 59, timezone)
+        if (candidate.getTime() < now.getTime()) targetYear += 1
+        found = true
       }
     }
   }
-  if (!targetDate) return null
+  if (!found) return null
+
+  // Parse time
   let hours = 9
   let minutes = 0
   if (lower.includes('noon')) {
@@ -1893,8 +2033,8 @@ function parseAppointmentDate(timeStr: string): Date | null {
       if (period === 'am' && hours === 12) hours = 0
     }
   }
-  targetDate.setHours(hours, minutes, 0, 0)
-  return targetDate
+
+  return zonedTimeToUtc(targetYear, targetMonth, targetDay, hours, minutes, timezone)
 }
 
 
@@ -2016,7 +2156,10 @@ async function handleCancelAppointment(
 
   try {
     // Find the appointment. Match by patient_id + a fuzzy scheduled_at window.
-    const parsed = parseAppointmentDate(appointmentDateTime)
+    const { data: _practiceTz2 } = await supabaseAdmin
+      .from('practices').select('timezone').eq('id', practiceId).maybeSingle()
+    const _tz2 = _practiceTz2?.timezone || 'America/Los_Angeles'
+    const parsed = parseAppointmentDate(appointmentDateTime, _tz2)
     let query = supabaseAdmin
       .from('appointments')
       .select('id, scheduled_at, status, calendar_event_id')

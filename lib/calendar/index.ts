@@ -135,12 +135,29 @@ export async function getCalendarRouter(practiceId: string): Promise<CalendarRou
  * Find free slots between start/end for a given slot length in minutes.
  * Considers an "event" a busy block.
  */
+/**
+ * Hour (0-23) of a Date as it appears in the given IANA timezone.
+ * Used to compare a candidate slot's wall-clock hour against business hours,
+ * without relying on the server's local timezone (Railway runs in UTC).
+ */
+function hourInTz(d: Date, tz: string): number {
+  const h = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    hour: '2-digit',
+    hour12: false,
+  }).format(d)
+  // Intl sometimes returns '24' for midnight; normalize to 0
+  const n = Number(h)
+  return n === 24 ? 0 : n
+}
+
 export function findFreeSlots(
   events: NormalizedEvent[],
   start: Date,
   end: Date,
   slotMinutes: number,
-  businessHours?: { startHour: number; endHour: number } // local hours, optional
+  businessHours?: { startHour: number; endHour: number }, // wall-clock hours in timezone
+  timezone: string = 'America/Los_Angeles'
 ): Array<{ start: Date; end: Date }> {
   const busy = events
     .map((e) => ({ start: new Date(e.start), end: new Date(e.end) }))
@@ -149,17 +166,24 @@ export function findFreeSlots(
 
   const slots: Array<{ start: Date; end: Date }> = []
   const slotMs = slotMinutes * 60 * 1000
+  const stepMs = 30 * 60 * 1000
 
-  let cursor = new Date(start)
+  // Snap cursor up to the next 30-minute boundary so we never return oddball
+  // slot times like 9:38 or 10:07 (seen on 4/20/26 when start was 'now').
+  const startMs = start.getTime()
+  let cursor = new Date(Math.ceil(startMs / stepMs) * stepMs)
+
   while (cursor.getTime() + slotMs <= end.getTime()) {
     const candidateEnd = new Date(cursor.getTime() + slotMs)
 
-    // Business hours filter
     if (businessHours) {
-      const h = cursor.getHours()
-      const eh = candidateEnd.getHours()
-      if (h < businessHours.startHour || eh > businessHours.endHour) {
-        cursor = new Date(cursor.getTime() + 30 * 60 * 1000)
+      // Evaluate business-hour window in the PRACTICE timezone, not server.
+      const h = hourInTz(cursor, timezone)
+      const eh = hourInTz(candidateEnd, timezone)
+      // eh===0 means the candidate crosses midnight (e.g. 11pm -> 12am),
+      // treat that as out-of-hours.
+      if (h < businessHours.startHour || eh > businessHours.endHour || (eh === 0 && h >= businessHours.endHour - 1)) {
+        cursor = new Date(cursor.getTime() + stepMs)
         continue
       }
     }
@@ -170,7 +194,7 @@ export function findFreeSlots(
     if (!overlaps) {
       slots.push({ start: new Date(cursor), end: candidateEnd })
     }
-    cursor = new Date(cursor.getTime() + 30 * 60 * 1000)
+    cursor = new Date(cursor.getTime() + stepMs)
   }
   return slots
 }
