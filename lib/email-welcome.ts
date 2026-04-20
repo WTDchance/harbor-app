@@ -25,7 +25,7 @@ export async function sendWelcomeEmail(opts: WelcomeEmailOpts): Promise<boolean>
   const dashboardUrl = opts.dashboardUrl || `${appUrl}/dashboard?welcome=1`
   const prettyNumber = formatPhoneForDisplay(opts.phoneNumber)
   const foundingBadge = opts.foundingMember
-    ? `<div style="display:inline-block; background:#fde68a; color:#92400e; font-weight:600; font-size:12px; padding:4px 12px; border-radius:999px; margin-bottom:16px;">🎯 Founding Practice — $197/mo locked in forever</div>`
+    ? `<div style="display:inline-block; background:#fde68a; color:#92400e; font-weight:600; font-size:12px; padding:4px 12px; border-radius:999px; margin-bottom:16px;">🎯 Founding Practice — $397/mo locked in forever</div>`
     : ''
 
   const html = `<!DOCTYPE html>

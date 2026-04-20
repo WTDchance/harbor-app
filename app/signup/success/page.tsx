@@ -146,7 +146,7 @@ function SignupSuccessContent() {
               </p>
               {data?.founding_member && (
                 <div className="inline-block bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-semibold uppercase tracking-wide px-3 py-1 rounded-full mb-6">
-                  Founding Practice — $197/mo locked in forever
+                  Founding Practice — $397/mo locked in forever
                 </div>
               )}
               <div className="bg-teal-500/10 border-2 border-teal-500 rounded-xl p-6 mb-6">

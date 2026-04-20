@@ -121,11 +121,11 @@ export default function TermsPage() {
         </p>
         <ul className="list-disc pl-6 space-y-2">
           <li>
-            <strong>Founding Practice Plan:</strong> $197/month (available to
+            <strong>Founding Practice Plan:</strong> $397/month (available to
             the first 50 practices; price locked for life)
           </li>
           <li>
-            <strong>Standard Plan:</strong> $397/month
+            <strong>Standard Plan:</strong> $597/month
           </li>
         </ul>
         <p className="mt-3">

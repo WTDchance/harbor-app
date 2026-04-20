@@ -6,8 +6,8 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
 const FOUNDING_CAP = Number(process.env.FOUNDING_MEMBER_CAP || '20')
-const FOUNDING_PRICE_CENTS = 19700 // $197
-const REGULAR_PRICE_CENTS = 39700 // $397
+const FOUNDING_PRICE_CENTS = 39700 // $397
+const REGULAR_PRICE_CENTS = 59700 // $597
 
 export async function GET() {
   try {

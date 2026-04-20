@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     template: '%s | Harbor Receptionist',
   },
   description:
-    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
+    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $397/mo.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
     icon: [

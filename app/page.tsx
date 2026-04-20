@@ -39,8 +39,8 @@ export default function LandingPage() {
   const cap = fc?.cap ?? 20
   const remaining = fc?.remaining ?? cap
   const isFoundingAvailable = fc?.is_founding_available ?? true
-  const foundingDollars = Math.floor((fc?.price_cents ?? 19700) / 100)
-  const regularDollars = Math.floor((fc?.regular_price_cents ?? 39700) / 100)
+  const foundingDollars = Math.floor((fc?.price_cents ?? 39700) / 100)
+  const regularDollars = Math.floor((fc?.regular_price_cents ?? 59700) / 100)
 
   const claimed = cap - remaining
   const spotsCopy = remaining <= 0

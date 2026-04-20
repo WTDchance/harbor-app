@@ -13,7 +13,7 @@ import Link from 'next/link'
 const fmtUSD = (cents: number) =>
   `$${(cents / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })}`
 
-const HARBOR_ANNUAL_COST_CENTS = 197 * 12 * 100 // $2,364/year at $197/mo
+const HARBOR_ANNUAL_COST_CENTS = 397 * 12 * 100 // $4,764/year at $397/mo
 
 export default function RoiCalculatorPage() {
   // --- Inputs ---
@@ -216,7 +216,7 @@ export default function RoiCalculatorPage() {
             </div>
 
             <div className="mt-6 pt-6 border-t border-gray-100">
-              <p className="text-xs text-gray-500 mb-2">Harbor at $197/mo costs {fmtUSD(calc.harborCost)}/year.</p>
+              <p className="text-xs text-gray-500 mb-2">Harbor at $397/mo costs {fmtUSD(calc.harborCost)}/year.</p>
               {calc.netAnnualBenefit > 0 ? (
                 <>
                   <p className="text-lg text-gray-900">
