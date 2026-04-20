@@ -12,6 +12,7 @@ import twilio from 'twilio'
 import { formatPhoneNumber } from '@/lib/twilio'
 import { analyzeTranscript } from '@/lib/transcriptAnalyzer'
 import { logCommunication } from '@/lib/patientCommunications'
+import { recordOptOut as recordSmsOptOut, clearOptOut as clearSmsOptOut } from '@/lib/sms-optout'
 
 // ---- Network-call timeout guard ----
 // Vapi streams tool-call results into a live conversation; if we don't respond
@@ -544,6 +545,12 @@ async function handleToolCalls(message: any) {
         case 'rescheduleAppointment':
           result = await handleRescheduleAppointment(params, practiceId, call?.id || null)
           break
+        case 'setCommunicationPreference':
+          result = await handleSetCommunicationPreference(params, practiceId)
+          break
+        case 'setBillingMode':
+          result = await handleSetBillingMode(params, practiceId)
+          break
         default:
           result = `Unknown tool: ${toolName}`
       }
@@ -603,6 +610,12 @@ async function handleFunctionCall(message: any) {
         break
       case 'rescheduleAppointment':
         result = await handleRescheduleAppointment(params, practiceId, call?.id || null)
+        break
+      case 'setCommunicationPreference':
+        result = await handleSetCommunicationPreference(params, practiceId)
+        break
+      case 'setBillingMode':
+        result = await handleSetBillingMode(params, practiceId)
         break
       default:
         result = `Unknown function: ${toolName}`
@@ -2270,5 +2283,166 @@ async function handleRescheduleAppointment(
   } catch (err: any) {
     console.error('[Vapi] rescheduleAppointment error:', err?.message || err)
     return 'I ran into trouble with the reschedule. Let me take a message so the team can follow up.'
+  }
+}
+
+
+// ============================================================================
+// Communication preferences + billing mode tools (added 4/20/26)
+// ----------------------------------------------------------------------------
+// Previously Ellie would say "I'll update that" when a caller asked to stop
+// texts or switch billing modes, but had no tool to actually persist the
+// change. Now she has both.
+// ============================================================================
+
+/**
+ * setCommunicationPreference: toggle SMS/email/call opt-out for a verified
+ * patient. Uses the same three opt-out tables that the dashboard
+ * Communication card writes to, so changes are immediately reflected there.
+ */
+async function handleSetCommunicationPreference(
+  params: any,
+  practiceId: string | null
+): Promise<string> {
+  if (!practiceId) return 'I was not able to update that right now. Let me take a message for the team.'
+
+  const patientId = params?.patientId
+  if (!patientId) return 'I need to verify your identity first before I can update your preferences.'
+
+  try {
+    const { data: patient } = await supabaseAdmin
+      .from('patients')
+      .select('id, practice_id, phone, email, first_name')
+      .eq('id', patientId)
+      .eq('practice_id', practiceId)
+      .maybeSingle()
+    if (!patient) {
+      return 'I was not able to look up your preferences right now. Let me take a message.'
+    }
+
+    const changes: string[] = []
+
+    if (typeof params.optOutSms === 'boolean') {
+      if (!patient.phone) {
+        return "I don't have a phone number on file for text messages, so there is nothing to change there."
+      }
+      if (params.optOutSms) {
+        await recordSmsOptOut(practiceId, patient.phone, 'STOP', 'voice_call')
+        changes.push('text messages turned off')
+      } else {
+        await clearSmsOptOut(practiceId, patient.phone)
+        changes.push('text messages turned on')
+      }
+    }
+
+    if (typeof params.optOutEmail === 'boolean') {
+      if (!patient.email) {
+        return "I don't have an email on file, so there is nothing to change there."
+      }
+      // Use the email_opt_outs table directly (no shared lib export to avoid
+      // import churn)
+      if (params.optOutEmail) {
+        await supabaseAdmin.from('email_opt_outs').upsert(
+          { practice_id: practiceId, email: patient.email, source: 'voice_call' },
+          { onConflict: 'practice_id,email' }
+        )
+        changes.push('emails turned off')
+      } else {
+        await supabaseAdmin.from('email_opt_outs')
+          .delete()
+          .eq('practice_id', practiceId)
+          .eq('email', patient.email)
+        changes.push('emails turned on')
+      }
+    }
+
+    if (typeof params.optOutCall === 'boolean') {
+      if (!patient.phone) {
+        return "I don't have a phone number on file, so there is nothing to change for calls."
+      }
+      if (params.optOutCall) {
+        await supabaseAdmin.from('call_opt_outs').upsert(
+          { practice_id: practiceId, phone: patient.phone, source: 'voice_call' },
+          { onConflict: 'practice_id,phone' }
+        )
+        changes.push('phone calls turned off')
+      } else {
+        await supabaseAdmin.from('call_opt_outs')
+          .delete()
+          .eq('practice_id', practiceId)
+          .eq('phone', patient.phone)
+        changes.push('phone calls turned on')
+      }
+    }
+
+    if (changes.length === 0) {
+      return 'Could you tell me which one you want to change — texts, emails, or phone calls?'
+    }
+
+    console.log(`[Vapi] setCommunicationPreference ${patientId}:`, changes.join(', '))
+    return `PREFS_OK: ${changes.join(' and ')}.`
+  } catch (err: any) {
+    console.error('[Vapi] setCommunicationPreference error:', err?.message || err)
+    return 'I ran into trouble updating that. Let me take a message so the team can follow up.'
+  }
+}
+
+/**
+ * setBillingMode: change a verified patient's billing_mode between
+ * "insurance" / "self_pay" / "sliding_scale". Logs the change via
+ * billing_mode_history if the table exists; silently ignores otherwise.
+ */
+async function handleSetBillingMode(
+  params: any,
+  practiceId: string | null
+): Promise<string> {
+  if (!practiceId) return 'I was not able to update that right now. Let me take a message for the team.'
+  const patientId = params?.patientId
+  const mode = String(params?.mode || '').toLowerCase().replace(/[^a-z_]/g, '')
+  if (!patientId) return 'I need to verify your identity first before I can change billing.'
+  if (!['insurance', 'self_pay', 'sliding_scale'].includes(mode)) {
+    return 'Which would you like — insurance, self-pay, or sliding scale?'
+  }
+
+  try {
+    const { data: existing } = await supabaseAdmin
+      .from('patients')
+      .select('id, billing_mode, first_name')
+      .eq('id', patientId)
+      .eq('practice_id', practiceId)
+      .maybeSingle()
+    if (!existing) {
+      return 'I was not able to update billing right now. Let me take a message.'
+    }
+
+    const prior = existing.billing_mode || 'pending'
+    if (prior === mode) {
+      const friendly = mode === 'self_pay' ? 'self-pay' : mode.replace('_', ' ')
+      return `PREFS_OK: Your billing is already set to ${friendly}. Nothing to change.`
+    }
+
+    await supabaseAdmin
+      .from('patients')
+      .update({ billing_mode: mode, updated_at: new Date().toISOString() })
+      .eq('id', patientId)
+
+    // Best-effort audit trail; table may not exist in all environments.
+    try {
+      await supabaseAdmin.from('billing_mode_history').insert({
+        practice_id: practiceId,
+        patient_id: patientId,
+        prior_mode: prior,
+        new_mode: mode,
+        changed_by_source: 'voice_call',
+        created_at: new Date().toISOString(),
+      })
+    } catch { /* ignore - optional table */ }
+
+    const friendly = mode === 'self_pay' ? 'self-pay' : mode.replace('_', ' ')
+    console.log(`[Vapi] setBillingMode ${patientId}: ${prior} -> ${mode}`)
+    return `PREFS_OK: Your billing is now set to ${friendly}.`
+  } catch (err: any) {
+    console.error('[Vapi] setBillingMode error:', err?.message || err)
+    return 'I ran into trouble updating billing. Let me take a message so the team can follow up.'
   }
 }

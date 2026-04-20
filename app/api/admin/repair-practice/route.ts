@@ -434,6 +434,42 @@ export async function PATCH(req: NextRequest) {
     {
       type: 'function',
       function: {
+        name: 'setCommunicationPreference',
+        description: 'Update a verified patient\'s preference for receiving SMS, email, or phone calls. MUST be called only after verifyIdentity returned VERIFICATION_OK. Pass optOutSms=true to stop texts, optOutSms=false to resume. Same pattern for optOutEmail and optOutCall. Only include the fields the caller is explicitly asking to change.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientId: { type: 'string', description: 'The patient id returned by verifyIdentity' },
+            optOutSms: { type: 'boolean', description: 'true = stop texts, false = resume texts. Omit if not changing.' },
+            optOutEmail: { type: 'boolean', description: 'true = stop emails, false = resume. Omit if not changing.' },
+            optOutCall: { type: 'boolean', description: 'true = do not call (DNC), false = resume. Omit if not changing.' },
+          },
+          required: ['patientId'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'setBillingMode',
+        description: 'Change a verified patient\'s billing mode between insurance, self_pay, and sliding_scale. MUST be called only after verifyIdentity returned VERIFICATION_OK.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientId: { type: 'string', description: 'The patient id returned by verifyIdentity' },
+            mode: { type: 'string', enum: ['insurance', 'self_pay', 'sliding_scale'], description: 'New billing mode for the patient' },
+          },
+          required: ['patientId', 'mode'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
         name: 'submitIntakeScreening',
         description: 'Submit PHQ-2 and GAD-2 screening scores after asking the 4 screening questions',
         parameters: {
