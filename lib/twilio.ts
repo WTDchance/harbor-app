@@ -75,14 +75,15 @@ export async function sendSMS(
         const messageParams: Record<string, string> = {
                 to: toNumber,
                 body: body,
+                from: fromNumber,
         }
 
+      // Include MessagingServiceSid for A2P campaign attribution when set.
+      // When both from and MessagingServiceSid are present, Twilio uses from
+      // for caller-id and routes through the campaign. Previous either/or
+      // logic caused the from field to be ignored once MSSid was set.
       if (messagingServiceSid) {
-              // Use Messaging Service → enables RCS with automatic SMS fallback
           messageParams.messagingServiceSid = messagingServiceSid
-      } else {
-              // Direct SMS (no RCS)
-          messageParams.from = fromNumber
       }
 
       const message = await twilioClient.messages.create(messageParams as Parameters<typeof twilioClient.messages.create>[0])
@@ -128,11 +129,17 @@ export async function sendSMSFromNumber(
         const msgParams: Record<string, string> = {
                 to: toNumber,
                 body: body,
+                from: fromTwilioNumber,
         }
+        // A2P routing: when MessagingServiceSid is set, include BOTH from and
+        // messagingServiceSid. Twilio honors from for sender caller-id, and
+        // routes through the approved campaign for compliance. This preserves
+        // per-practice sender isolation (mom's patients see mom's number, demo
+        // gets demo's) while staying A2P-compliant. Prior either/or logic
+        // ignored fromTwilioNumber once MessagingServiceSid was set and caused
+        // cross-practice sender leakage.
         if (messagingServiceSid) {
                 msgParams.messagingServiceSid = messagingServiceSid
-        } else {
-                msgParams.from = fromTwilioNumber
         }
         const message = await twilioClient.messages.create(msgParams as Parameters<typeof twilioClient.messages.create>[0])
         console.log(`✓ SMS sent from ${fromTwilioNumber} to ${toNumber}`)
