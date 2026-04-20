@@ -1669,3 +1669,38 @@ async function handleSubmitScreening(params: any, practiceId: string | null): Pr
 
   if (phq >= 3 || gad >= 3) {
     return 'Thank you for sharing that. I want to make sure the therapist has this informat
+
+
+function buildFallbackAssistant() {
+  return {
+    name: 'Harbor Receptionist',
+    firstMessage: 'Thank you for calling. How can I help you today?',
+    model: {
+      provider: 'anthropic',
+      model: 'claude-haiku-4-5-20251001',
+      messages: [
+        {
+          role: 'system',
+          content: 'You are a friendly receptionist for a therapy practice. Help callers with basic questions and offer to take a message. If someone is in crisis, direct them to call 988 or 911.',
+        },
+      ],
+      temperature: 0.7,
+    },
+    voice: {
+      provider: '11labs',
+      voiceId: 'EXAVITQu4vr4xnSDxMaL',
+      model: 'eleven_turbo_v2_5',
+      stability: 0.5,
+      similarityBoost: 0.8,
+      speed: 0.85,
+      style: 0.2,
+      useSpeakerBoost: true,
+    },
+    transcriber: {
+      provider: 'deepgram',
+      model: 'nova-2',
+    },
+    silenceTimeoutSeconds: 30,
+    maxDurationSeconds: 600,
+  }
+}
