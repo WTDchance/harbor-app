@@ -333,7 +333,7 @@ async function handleToolCalls(message: any) {
           result = await handleCheckAvailability(params, practiceId)
           break
         case 'bookAppointment':
-          result = await handleBookAppointment(params, practiceId)
+          result = await handleBookAppointment(params, practiceId, call?.id || null)
           break
         case 'takeMessage':
           result = await handleTakeMessage(params, practiceId)
@@ -384,7 +384,7 @@ async function handleFunctionCall(message: any) {
         result = await handleCheckAvailability(params, practiceId)
         break
       case 'bookAppointment':
-        result = await handleBookAppointment(params, practiceId)
+        result = await handleBookAppointment(params, practiceId, call?.id || null)
         break
       case 'takeMessage':
         result = await handleTakeMessage(params, practiceId)
@@ -559,7 +559,7 @@ async function processEndOfCall(opts: {
 
   // 4. Save call log to Supabase
   // FIX: Check Supabase {error} return instead of relying on try/catch
-  // (Supabase JS v2 does NOT throw on errors â it returns {data, error})
+  // (Supabase JS v2 does NOT throw on errors â it returns {data, error})
   const callLogData: Record<string, any> = {
     practice_id: practiceId,
     vapi_call_id: vapiCallId || null,
@@ -577,7 +577,21 @@ async function processEndOfCall(opts: {
     callLogData.call_outcome = metrics.callOutcome
     callLogData.is_new_patient = metrics.isNewPatient
     callLogData.booking_attempted = metrics.bookingAttempted
-    callLogData.booking_succeeded = metrics.bookingSucceeded
+    // Authoritative booking_succeeded: only true if an appointment row was
+    // actually created for this call. Prevents Ellie's confirmation language
+    // from setting booking_succeeded=true when the DB insert silently failed
+    // (the calendar_event_id bug we hit on 2026-04-20 was a known example).
+    let bookingDbSucceeded = false
+    if (vapiCallId) {
+      const { data: bookedRow } = await supabaseAdmin
+        .from('appointments')
+        .select('id')
+        .eq('vapi_call_id', vapiCallId)
+        .limit(1)
+        .maybeSingle()
+      bookingDbSucceeded = !!bookedRow
+    }
+    callLogData.booking_succeeded = metrics.bookingAttempted ? bookingDbSucceeded : false
     callLogData.topics_discussed = metrics.topicsDiscussed
     callLogData.caller_talk_seconds = metrics.callerTalkSeconds
     callLogData.ai_talk_seconds = metrics.aiTalkSeconds
@@ -694,7 +708,7 @@ async function processEndOfCall(opts: {
     }
   } else {
     // FIX: Create patient even with minimal info (phone number only)
-    // Previously required a name from extraction â now uses "New Caller" as fallback
+    // Previously required a name from extraction â now uses "New Caller" as fallback
     const nameParts = (info.patientName || '').trim().split(/\s+/).filter(Boolean)
     const firstName = nameParts[0] || 'New'
     const lastName = nameParts.slice(1).join(' ') || (nameParts[0] ? '' : 'Caller')
@@ -723,7 +737,7 @@ async function processEndOfCall(opts: {
         console.log(`[Vapi] Patient created: ${firstName} ${lastName} (${created.id})`)
       }
     } else {
-      console.log('[Vapi] No patient info available (no phone, email, or name) â skipping patient creation')
+      console.log('[Vapi] No patient info available (no phone, email, or name) â skipping patient creation')
     }
   }
 
@@ -801,7 +815,7 @@ async function processEndOfCall(opts: {
     },
   })
 
-  // 5. Crisis alert â save and SMS the therapist
+  // 5. Crisis alert â save and SMS the therapist
   if (crisisDetected) {
     try {
       const { error: crisisError } = await supabaseAdmin.from('crisis_alerts').insert({
@@ -1176,7 +1190,7 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
   }
 }
 
-async function handleBookAppointment(params: any, practiceId: string | null): Promise<string> {
+async function handleBookAppointment(params: any, practiceId: string | null, vapiCallId: string | null = null): Promise<string> {
   const { patientName, appointmentDateTime, patientPhone, patientEmail, reason } = params
 
   if (!practiceId) {
@@ -1245,6 +1259,7 @@ async function handleBookAppointment(params: any, practiceId: string | null): Pr
       duration_minutes: durationMinutes,
       calendar_event_id: calendarEventId,
       booking_lead_time_hours: Math.max(0, Math.round(leadTimeMs / (1000 * 60 * 60))),
+      vapi_call_id: vapiCallId,
     }
 
     // Try to link to existing patient
