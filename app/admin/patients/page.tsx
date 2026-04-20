@@ -125,7 +125,8 @@ export default function AdminPatientsPage() {
         {filtered.length} patient{filtered.length !== 1 ? "s" : ""}
       </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <div className="-mx-4 md:mx-0 overflow-x-auto">
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ borderBottom: "2px solid #e5e7eb", textAlign: "left" }}>
             <th style={{ padding: "8px 12px", fontSize: 13, fontWeight: 600 }}>Name</th>
@@ -187,6 +188,7 @@ export default function AdminPatientsPage() {
           })}
         </tbody>
       </table>
+      </div>
 
       {filtered.length === 0 && (
         <div style={{ textAlign: "center", padding: 40, color: "#888" }}>
