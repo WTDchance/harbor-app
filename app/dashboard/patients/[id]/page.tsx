@@ -1107,6 +1107,58 @@ export default function PatientDetailPage() {
         </div>
       </div>
 
+      {/* Appointments */}
+      <div className="bg-white border rounded-lg p-5 shadow-sm">
+        <h2 className="font-semibold text-gray-900 mb-3">
+          Appointments ({appointments.length})
+        </h2>
+        {appointments.length > 0 ? (
+          <div className="space-y-2">
+            {appointments.map((appt) => {
+              const { date, time } = formatDateTime(appt.scheduled_at);
+              return (
+                <div
+                  key={appt.id}
+                  className="flex items-center justify-between text-sm border-b pb-2 last:border-0"
+                >
+                  <div>
+                    <span className="font-medium">{date}</span>
+                    {time && (
+                      <span className="text-gray-500 ml-1">at {time}</span>
+                    )}
+                    {appt.appointment_type && (
+                      <span className="text-gray-400 ml-2">
+                        · {appt.appointment_type}
+                      </span>
+                    )}
+                    {appt.source && (
+                      <span className="text-gray-400 ml-2 text-xs">
+                        ({appt.source})
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      appt.status === "confirmed"
+                        ? "bg-green-100 text-green-800"
+                        : appt.status === "cancelled"
+                        ? "bg-red-100 text-red-800"
+                        : appt.status === "completed"
+                        ? "bg-blue-100 text-blue-800"
+                        : "bg-gray-100 text-gray-600"
+                    }`}
+                  >
+                    {appt.status}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No appointments scheduled.</p>
+        )}
+      </div>
+
       {/* Intake Packet Progress (new) */}
       <IntakeProgress patientId={patient.id} />
 
@@ -1583,57 +1635,6 @@ export default function PatientDetailPage() {
         )}
       </div>
 
-      {/* Appointments */}
-      <div className="bg-white border rounded-lg p-5 shadow-sm">
-        <h2 className="font-semibold text-gray-900 mb-3">
-          Appointments ({appointments.length})
-        </h2>
-        {appointments.length > 0 ? (
-          <div className="space-y-2">
-            {appointments.map((appt) => {
-              const { date, time } = formatDateTime(appt.scheduled_at);
-              return (
-                <div
-                  key={appt.id}
-                  className="flex items-center justify-between text-sm border-b pb-2 last:border-0"
-                >
-                  <div>
-                    <span className="font-medium">{date}</span>
-                    {time && (
-                      <span className="text-gray-500 ml-1">at {time}</span>
-                    )}
-                    {appt.appointment_type && (
-                      <span className="text-gray-400 ml-2">
-                        · {appt.appointment_type}
-                      </span>
-                    )}
-                    {appt.source && (
-                      <span className="text-gray-400 ml-2 text-xs">
-                        ({appt.source})
-                      </span>
-                    )}
-                  </div>
-                  <span
-                    className={`text-xs px-2 py-0.5 rounded ${
-                      appt.status === "confirmed"
-                        ? "bg-green-100 text-green-800"
-                        : appt.status === "cancelled"
-                        ? "bg-red-100 text-red-800"
-                        : appt.status === "completed"
-                        ? "bg-blue-100 text-blue-800"
-                        : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {appt.status}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">No appointments scheduled.</p>
-        )}
-      </div>
     </div>
   );
 }
