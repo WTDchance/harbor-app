@@ -207,14 +207,15 @@ async function handleAssistantRequest(message: any) {
     const firstName = (callerContext.first_name || '').trim()
     const lastName = (callerContext.last_name || '').trim()
     const fullName = [firstName, lastName].filter(Boolean).join(' ').trim()
-    const nameClause = fullName ? `Is this ${fullName}?` : 'Who am I speaking with?'
-    const firstMessage = `Welcome back! This is ${aiName} at ${practice.name}. ${nameClause}`
-    console.log(`[Vapi] Returning caller: ${fullName || '(unknown name)'} | billing_mode=${callerContext.billing_mode}`)
+    console.log(`[Vapi] Returning caller (not disclosed in greeting for HIPAA): ${fullName || '(unknown name)'} | billing_mode=${callerContext.billing_mode}`)
 
+    // HIPAA: do NOT override firstMessage with the caller's name. The static
+    // practice greeting plays — generic, identity-neutral. Variables below are
+    // only used INTERNALLY in the prompt until the caller identifies themselves.
+    // See CALLER CONTEXT section in systemPrompt.ts for the verification flow.
     return NextResponse.json({
       assistantId: practice.vapi_assistant_id,
       assistantOverrides: {
-        firstMessage,
         variableValues: {
           caller_is_existing_patient: 'yes',
           caller_first_name: firstName,
