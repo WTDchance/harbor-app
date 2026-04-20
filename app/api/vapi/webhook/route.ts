@@ -1503,14 +1503,13 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
 }
 
 async function handleBookAppointment(params: any, practiceId: string | null, vapiCallId: string | null = null): Promise<string> {
-  const { patientName, appointmentDateTime, patientPhone, patientEmail, reason } = params
+  const { patientName, appointmentDateTime, patientPhone, patientEmail, reason, patientId: providedPatientId } = params
 
   if (!practiceId) {
     return 'I was unable to book the appointment right now. The office will follow up to confirm your time.'
   }
 
   try {
-    // Parse the appointment date/time
     // Fetch practice timezone so we parse "April 27 at 2pm" as 2pm in PT not UTC
     const { data: _practiceTz } = await supabaseAdmin
       .from('practices')
@@ -1526,7 +1525,6 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
     const durationMinutes = 60
     const endDate = new Date(parsedDate.getTime() + durationMinutes * 60_000)
 
-    // Get practice name for the calendar event
     const { data: practice } = await supabaseAdmin
       .from('practices')
       .select('name, provider_name')
@@ -1534,6 +1532,71 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
       .maybeSingle()
 
     const practiceName = practice?.name || 'the practice'
+
+    // ------------------------------------------------------------------
+    // Patient linking (source of truth): resolve the linked patient BEFORE
+    // we write anything. Preference order:
+    //   1. patientId explicitly provided by a prior verifyIdentity tool call
+    //      (most accurate — the caller's name is spell-confirmed in DB)
+    //   2. match by phone (last-10 digit, practice-scoped)
+    //   3. match by email (practice-scoped)
+    // Whatever we resolve, we USE THE DB NAME for patient_name on the
+    // appointment row and in the Google Calendar event, not the possibly-
+    // mistranscribed Ellie-heard version from `patientName`. See the
+    // 4/20/26 'Kim Slannagan vs Kim Flanagan' bug that triggered this.
+    // ------------------------------------------------------------------
+    let linkedPatientId: string | null = null
+    let canonicalPatientName: string | null = null
+    let canonicalPatientPhone: string | null = patientPhone || null
+    let canonicalPatientEmail: string | null = patientEmail || null
+
+    const canon = (row: any) => {
+      if (!row) return
+      linkedPatientId = row.id
+      const first = (row.first_name || '').trim()
+      const last = (row.last_name || '').trim()
+      const combined = [first, last].filter(Boolean).join(' ').trim()
+      if (combined) canonicalPatientName = combined
+      if (row.phone && !canonicalPatientPhone) canonicalPatientPhone = row.phone
+      if (row.email && !canonicalPatientEmail) canonicalPatientEmail = row.email
+    }
+
+    if (providedPatientId) {
+      const { data: existing } = await supabaseAdmin
+        .from('patients')
+        .select('id, first_name, last_name, phone, email')
+        .eq('id', providedPatientId)
+        .eq('practice_id', practiceId)
+        .maybeSingle()
+      canon(existing)
+    }
+    if (!linkedPatientId && patientPhone) {
+      const normalizedPhone = patientPhone.replace(/\D/g, '').slice(-10)
+      if (normalizedPhone.length >= 10) {
+        const { data: existing } = await supabaseAdmin
+          .from('patients')
+          .select('id, first_name, last_name, phone, email')
+          .eq('practice_id', practiceId)
+          .ilike('phone', `%${normalizedPhone}`)
+          .limit(1)
+          .maybeSingle()
+        canon(existing)
+      }
+    }
+    if (!linkedPatientId && patientEmail) {
+      const { data: existing } = await supabaseAdmin
+        .from('patients')
+        .select('id, first_name, last_name, phone, email')
+        .eq('practice_id', practiceId)
+        .ilike('email', patientEmail)
+        .limit(1)
+        .maybeSingle()
+      canon(existing)
+    }
+
+    // Fall back to the name Ellie spoke only when we could NOT link to a
+    // patient row (truly new caller, not yet in our system).
+    const resolvedName = canonicalPatientName || patientName || null
 
     // Push to the practice's connected calendar
     let calendarEventId: string | null = null
@@ -1544,12 +1607,13 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
         'getCalendarRouter'
       )
       if (router) {
-        const summary = `Therapy: ${patientName || 'New patient'}`
+        const summary = `Therapy: ${resolvedName || 'New patient'}`
         const description = [
           `Booked via phone (${practiceName}).`,
-          patientPhone ? `Phone: ${patientPhone}` : null,
-          patientEmail ? `Email: ${patientEmail}` : null,
+          canonicalPatientPhone ? `Phone: ${canonicalPatientPhone}` : null,
+          canonicalPatientEmail ? `Email: ${canonicalPatientEmail}` : null,
           reason ? `Reason: ${reason}` : null,
+          linkedPatientId ? `Patient id: ${linkedPatientId}` : null,
         ].filter(Boolean).join('\n')
 
         const ev = await withTimeout(
@@ -1571,13 +1635,14 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
       console.error('[Vapi] bookAppointment: calendar push failed:', calErr?.message || calErr)
     }
 
-    // Save appointment to DB
+    // Save appointment to DB using the canonical values
     const leadTimeMs = parsedDate.getTime() - Date.now()
     const appointmentData: any = {
       practice_id: practiceId,
-      patient_name: patientName || null,
-      patient_phone: patientPhone || null,
-      patient_email: patientEmail || null,
+      patient_id: linkedPatientId,
+      patient_name: resolvedName,
+      patient_phone: canonicalPatientPhone,
+      patient_email: canonicalPatientEmail,
       appointment_time: appointmentDateTime,
       scheduled_at: parsedDate.toISOString(),
       appointment_date: parsedDate.toISOString().split('T')[0],
@@ -1587,21 +1652,6 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
       calendar_event_id: calendarEventId,
       booking_lead_time_hours: Math.max(0, Math.round(leadTimeMs / (1000 * 60 * 60))),
       vapi_call_id: vapiCallId,
-    }
-
-    // Try to link to existing patient
-    if (patientPhone) {
-      const normalizedPhone = patientPhone.replace(/\D/g, '').slice(-10)
-      if (normalizedPhone.length >= 10) {
-        const { data: existing } = await supabaseAdmin
-          .from('patients')
-          .select('id')
-          .eq('practice_id', practiceId)
-          .ilike('phone', `%${normalizedPhone}`)
-          .limit(1)
-          .maybeSingle()
-        if (existing) appointmentData.patient_id = existing.id
-      }
     }
 
     const { error: apptError } = await supabaseAdmin
