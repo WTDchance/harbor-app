@@ -145,6 +145,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [practiceName, setPracticeName] = useState<string | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const COLLAPSED_KEY = 'harbor_dashboard_sidebar_collapsed';
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage.getItem(COLLAPSED_KEY) === '1') {
+        setCollapsed(true);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  const toggleCollapsed = () => {
+    setCollapsed((v) => {
+      const next = !v;
+      try {
+        if (typeof window !== 'undefined') window.localStorage.setItem(COLLAPSED_KEY, next ? '1' : '0');
+      } catch {}
+      return next;
+    });
+  };
+
 
   useEffect(() => {
     supabase.auth.getSession().then(async ({ data: { session } }) => {
@@ -208,27 +229,33 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         className={`
           fixed md:static inset-y-0 left-0 z-30
           flex flex-col w-64 bg-white border-r border-gray-100
-          transform transition-transform duration-200
+          transform transition-all duration-200
+          ${collapsed ? "md:w-16" : "md:w-64"}
           ${mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
         `}
       >
         {/* Logo + Practice Name */}
         <Link
           href="/dashboard"
-          className="flex flex-col items-center gap-2 px-3 py-4 border-b border-gray-100 hover:bg-gray-50/80 transition-colors"
+          className={`flex ${collapsed ? 'md:flex-row md:justify-center' : 'flex-col'} items-center gap-2 px-3 py-4 border-b border-gray-100 hover:bg-gray-50/80 transition-colors`}
           style={{ background: 'linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)' }}
           onClick={() => setMobileOpen(false)}
+          title={collapsed ? (practiceName || 'Harbor') : undefined}
         >
           <div className="flex items-center gap-2.5">
             <img src="/harbor-icon-clean.png" alt="" className="h-10 w-auto" />
-            <span className="text-xl font-bold tracking-wider" style={{ color: '#1f375d' }}>HARBOR</span>
+            {!collapsed && (
+              <span className="text-xl font-bold tracking-wider" style={{ color: '#1f375d' }}>HARBOR</span>
+            )}
           </div>
-          <div className="text-center min-w-0 w-full">
-            <p className="text-sm font-bold leading-tight truncate" style={{ color: '#1f375d' }}>
-              {practiceName || "Harbor"}
-            </p>
-            <p className="text-xs leading-tight font-medium" style={{ color: '#52bfc0' }}>Practice Dashboard</p>
-          </div>
+          {!collapsed && (
+            <div className="text-center min-w-0 w-full">
+              <p className="text-sm font-bold leading-tight truncate" style={{ color: '#1f375d' }}>
+                {practiceName || "Harbor"}
+              </p>
+              <p className="text-xs leading-tight font-medium" style={{ color: '#52bfc0' }}>Practice Dashboard</p>
+            </div>
+          )}
         </Link>
 
         {/* Nav */}
@@ -240,8 +267,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 key={item.href}
                 href={item.href}
                 onClick={() => setMobileOpen(false)}
+                title={collapsed ? item.label : undefined}
                 className={`
-                  flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                  flex items-center gap-3 rounded-lg text-sm font-medium transition-colors
+                  ${collapsed ? 'md:justify-center md:px-2 px-3 py-2.5' : 'px-3 py-2.5'}
                   ${active
                     ? "text-white shadow-sm"
                     : "text-gray-600 hover:bg-gray-50 hover:text-gray-900"
@@ -252,8 +281,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 <span className={active ? "text-white/80" : "text-gray-400"}>
                   {item.icon}
                 </span>
-                {item.label}
-                {active && (
+                {!collapsed && item.label}
+                {active && !collapsed && (
                   <span className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: '#52bfc0' }} />
                 )}
               </Link>
@@ -262,24 +291,41 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </nav>
 
         {/* User footer */}
-        <div className="px-3 py-4 border-t border-gray-100">
-          <div className="flex items-center gap-3 px-3 py-2.5 rounded-lg">
-            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#1f375d' }}>
+        <div className="px-3 py-4 border-t border-gray-100 space-y-2">
+          <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg ${collapsed ? 'md:justify-center md:px-2' : ''}`}>
+            <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: '#1f375d' }} title={collapsed ? (userEmail || undefined) : undefined}>
               <span className="text-xs font-semibold text-white">{initials}</span>
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs text-gray-500 truncate">{userEmail}</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              title="Sign out"
-              className="text-gray-400 hover:text-red-500 transition-colors shrink-0"
-            >
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3M11 11l3-3-3-3M14 8H6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-            </button>
+            {!collapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-xs text-gray-500 truncate">{userEmail}</p>
+              </div>
+            )}
+            {!collapsed && (
+              <button
+                onClick={handleLogout}
+                title="Sign out"
+                className="text-gray-400 hover:text-red-500 transition-colors shrink-0"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                  <path d="M6 2H3a1 1 0 00-1 1v10a1 1 0 001 1h3M11 11l3-3-3-3M14 8H6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
           </div>
+
+          {/* Desktop collapse toggle */}
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={`hidden md:flex items-center gap-2 w-full rounded-lg text-gray-500 hover:bg-gray-50 hover:text-gray-900 transition-colors text-xs border border-gray-100 ${collapsed ? 'justify-center px-2 py-2' : 'px-3 py-2'}`}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className={collapsed ? '' : 'rotate-180'}>
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            {!collapsed && <span>Collapse</span>}
+          </button>
         </div>
       </aside>
 
