@@ -137,7 +137,7 @@ All `/api/admin/*` routes require `Authorization: Bearer <CRON_SECRET>` header.
 ## Current Status (April 18, 2026)
 
 ### Launch Blockers
-- **A2P 10DLC:** Twilio campaign CM8e8461ae under review. ALL outbound SMS (appointment reminders, intake form links) is gated until approved. Ticket #26061850 with Varun Bhardwaj at Twilio.
+- ~~**A2P 10DLC:** Twilio campaign CM8e8461ae~~ **APPROVED 4/20/26 by Bella at Twilio.** Outbound SMS unlocks when `SMS_ENABLED=true` is set on the harbor-app Railway service.
 - **Mom's calendar:** Needs to reconnect Google Calendar via dashboard settings now that OAuth consent screen is published to production.
 
 ### Today's Focus
