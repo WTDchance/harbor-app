@@ -344,10 +344,10 @@ export default function LandingPage() {
             <span className="text-white text-xl">&ldquo;</span>
           </div>
           <blockquote className="text-xl italic mb-6" style={{ color: '#1f375d' }}>
-            &ldquo;I used to miss 3&ndash;4 calls a week. Now Ellie handles everything &ndash; she even screens new patients with mental health questions before I meet them. It&apos;s like having a full-time receptionist for a fraction of the cost.&rdquo;
+            &ldquo;As a therapist, I know exactly the problems solo practitioners face &ndash; missed calls, after-hours intake, knowing when to step in during a crisis. Harbor handles all of it with more care and professionalism than I expected. This is the kind of front office our field has been waiting for.&rdquo;
           </blockquote>
           <div className="font-semibold" style={{ color: '#1f375d' }}>Trace Wonser, PhD</div>
-          <div className="text-sm text-gray-500">Licensed Psychologist &middot; Private Practice</div>
+          <div className="text-sm text-gray-500">Licensed Psychologist &middot; Harbor Early Advisor</div>
         </div>
       </section>
 
