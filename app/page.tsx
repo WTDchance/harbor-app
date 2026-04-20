@@ -347,7 +347,7 @@ export default function LandingPage() {
             &ldquo;As a therapist, I know exactly the problems solo practitioners face &ndash; missed calls, after-hours intake, knowing when to step in during a crisis. Harbor handles all of it with more care and professionalism than I expected. This is the kind of front office our field has been waiting for.&rdquo;
           </blockquote>
           <div className="font-semibold" style={{ color: '#1f375d' }}>Trace Wonser, PhD</div>
-          <div className="text-sm text-gray-500">Licensed Psychologist &middot; Harbor Early Advisor</div>
+          <div className="text-sm text-gray-500">PhD &middot; Private Practice &middot; Harbor Early Advisor</div>
         </div>
       </section>
 
