@@ -18,9 +18,9 @@ import { logCommunication } from '@/lib/patientCommunications'
 // within ~10s the call hits silence-timeout and the caller hears nothing. We
 // previously relied on the underlying HTTP client's default timeout, which in
 // practice let Google Calendar's listEvents() hang past Vapi's silence window
-// (see Chance's 4/18/26 test — Ellie said "Let me pull up the calendar" and
-// then went silent until the call dropped). Wrap any outbound call that can
-// block on the network so we degrade gracefully instead of going mute.
+// (see 4/18/26 test - Ellie said "Let me pull up the calendar" and then went
+// silent until the call dropped). Wrap any outbound call that can block on
+// the network so we degrade gracefully instead of going mute.
 async function withTimeout<T>(
   promise: Promise<T>,
   ms: number,
@@ -227,10 +227,6 @@ async function handleAssistantRequest(message: any) {
 
   console.log(`[Vapi] Matched practice: ${practice.name} (${practiceId}) via ${resolvedBy} -> assistant ${practice.vapi_assistant_id}`)
 
-  // Look up returning caller by phone. When recognized, inject caller context
-  // as variableValues so the prompt can adapt behavior (skip intake, check
-  // insurance, reference upcoming appointment) without leaking PHI into the
-  // firstMessage.
   const practiceTimezone = practice.timezone || 'America/Los_Angeles'
   const callerContext = customerPhone
     ? await lookupReturningCallerContext(practiceId, customerPhone, practiceTimezone)
@@ -238,12 +234,11 @@ async function handleAssistantRequest(message: any) {
 
   const aiName = practice.ai_name || 'Ellie'
 
-  // Build a fresh system prompt + firstMessage on EVERY inbound call from the
-  // current DB state. This eliminates the "I changed the AI name in settings
-  // but the call still uses the old one" drift: any edit to ai_name, greeting,
-  // hours, therapists, specialties, etc. takes effect on the next call
-  // without needing a Vapi assistant PATCH. The stored Vapi assistant still
-  // owns voice/model/server config; we just override the per-call bits.
+  // Build fresh systemPrompt + firstMessage on EVERY inbound call from current
+  // DB state. Any edit to ai_name, greeting, hours, therapists, specialties,
+  // etc. takes effect on the next call without a Vapi assistant PATCH. The
+  // stored Vapi assistant still owns voice/model/server config; we only
+  // override the per-call content.
   let freshSystemPrompt: string | null = null
   let freshFirstMessage: string | null = null
   try {
@@ -279,8 +274,6 @@ async function handleAssistantRequest(message: any) {
       practice.name || practiceName
     )
   } catch (err: any) {
-    // If prompt build fails for any reason, fall back to the stored Vapi
-    // assistant config. Do not break the call.
     console.error('[Vapi] Failed to build fresh assistant overrides:', err?.message || err)
   }
 
@@ -329,9 +322,9 @@ async function handleAssistantRequest(message: any) {
 }
 
 /**
- * Turn a practice's structured hours_json into the flat string the system
- * prompt expects. Mirrors app/api/practices/[id]/route.ts so webhook-built
- * prompts match dashboard-built ones exactly.
+ * Render hours_json as the string shape buildSystemPrompt expects. Mirrors
+ * the helper in app/api/practices/[id]/route.ts so webhook-built prompts
+ * match dashboard-built ones exactly.
  */
 function formatHoursForPrompt(hoursJson: any): string {
   if (!hoursJson) return 'Monday through Friday, 9am to 5pm'
@@ -365,30 +358,24 @@ function formatTimeClock(t: string): string {
 }
 
 /**
- * Pick the firstMessage (what Ellie literally speaks first) for an inbound
- * call. If the stored greeting already references the current ai_name, use
- * it verbatim (user curated). Otherwise fall back to a clean template built
- * from current ai_name — prevents the "changed AI name in settings but she
- * still introduces herself as the old name" bug hit on 4/19/26.
+ * Pick the firstMessage for an inbound call. If the stored greeting already
+ * references the current ai_name, use it verbatim (user curated). Otherwise
+ * build a clean template from current ai_name so renaming the AI in settings
+ * takes effect on the very next call (fixes 4/19/26 "I renamed Ellie but she
+ * still says I'm Jeff" bug).
  */
 function buildFirstMessage(
   storedGreeting: string | null | undefined,
   aiName: string,
   practiceName: string
 ): string {
-  const defaultTemplate = `Thanks for calling ${practiceName}. This is ${aiName} — how can I help you today?`
-
+  const defaultTemplate = `Thanks for calling ${practiceName}. This is ${aiName} - how can I help you today?`
   if (!storedGreeting || !storedGreeting.trim()) return defaultTemplate
-
   const g = storedGreeting.trim()
-
   const lowerGreeting = g.toLowerCase()
   const lowerName = aiName.toLowerCase()
   if (lowerName && lowerGreeting.includes(lowerName)) return g
-
-  // Stored greeting exists but does NOT mention current ai_name. That is the
-  // drift case — a stale "I'm Jeff" greeting from an earlier configuration.
-  console.log(`[Vapi] Stored greeting does not reference ai_name="${aiName}" — using fresh template instead`)
+  console.log(`[Vapi] Stored greeting does not reference ai_name="${aiName}" - using fresh template instead`)
   return defaultTemplate
 }
 
@@ -438,7 +425,6 @@ async function lookupReturningCallerContext(
 
   const nowIso = new Date().toISOString()
 
-  // Most recent PAST appointment (history only — never confuse with upcoming)
   const { data: lastPast } = await supabaseAdmin
     .from('appointments')
     .select('scheduled_at, status')
@@ -450,7 +436,6 @@ async function lookupReturningCallerContext(
     .limit(1)
     .maybeSingle()
 
-  // Next UPCOMING appointment (what to use for reschedule/confirm conversations)
   const { data: nextUpcoming } = await supabaseAdmin
     .from('appointments')
     .select('scheduled_at, status')
@@ -476,12 +461,6 @@ async function lookupReturningCallerContext(
   }
 }
 
-/**
- * Render an ISO timestamp in the practice's timezone as a natural-language
- * string Ellie can speak aloud. Returns '' when input is empty.
- *
- * Example output: "Monday, April 20 at 2:30 PM (Pacific time)"
- */
 function formatAppointmentForSpeech(
   iso: string | null | undefined,
   timezone: string
@@ -1325,11 +1304,7 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
   }
 
   try {
-    const router = await withTimeout(
-      getCalendarRouter(practiceId),
-      5000,
-      'getCalendarRouter'
-    )
+    const router = await getCalendarRouter(practiceId)
     if (!router) {
       return 'The calendar is not connected for this practice yet. Let me take down your preferred times and someone will confirm your appointment.'
     }
@@ -1804,4 +1779,96 @@ function buildFallbackAssistant() {
   }
 }
 
-functi
+function formatHours(hoursJson: any): string {
+  if (!hoursJson) return 'Monday through Friday, 9am to 5pm'
+  if (typeof hoursJson === 'string') return hoursJson
+  try {
+    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+    const dayLabels: Record<string, string> = {
+      monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday',
+      thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
+    }
+    const parts: string[] = []
+    for (const day of days) {
+      const h = hoursJson[day]
+      if (!h) continue
+      // Handle structured format: { enabled, openTime, closeTime }
+      if (typeof h === 'object' && 'enabled' in h) {
+        if (h.enabled && h.openTime && h.closeTime) {
+          parts.push(`${dayLabels[day]}: ${fmtTime(h.openTime)} - ${fmtTime(h.closeTime)}`)
+        }
+      } else if (typeof h === 'string' && h !== 'closed') {
+        parts.push(`${dayLabels[day]}: ${h}`)
+      }
+    }
+    return parts.length > 0 ? parts.join(', ') : 'Monday through Friday, 9am to 5pm'
+  } catch {
+    return 'Monday through Friday, 9am to 5pm'
+  }
+}
+
+function fmtTime(t: string): string {
+  const [hh, mm] = t.split(':').map(Number)
+  if (isNaN(hh)) return t
+  const suffix = hh >= 12 ? 'PM' : 'AM'
+  const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh
+  return mm === 0 ? `${h12} ${suffix}` : `${h12}:${mm.toString().padStart(2, '0')} ${suffix}`
+}
+
+function parseAppointmentDate(timeStr: string): Date | null {
+  if (!timeStr) return null
+  const now = new Date()
+  const lower = timeStr.toLowerCase()
+  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+  let targetDate: Date | null = null
+  if (lower.includes('tomorrow')) {
+    targetDate = new Date(now)
+    targetDate.setDate(targetDate.getDate() + 1)
+  }
+  if (!targetDate) {
+    for (let i = 0; i < dayNames.length; i++) {
+      if (lower.includes(dayNames[i])) {
+        const currentDay = now.getDay()
+        let daysUntil = i - currentDay
+        if (daysUntil <= 0) daysUntil += 7
+        targetDate = new Date(now)
+        targetDate.setDate(targetDate.getDate() + daysUntil)
+        break
+      }
+    }
+  }
+  if (!targetDate) {
+    const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
+    const monthDayMatch = lower.match(/(\w+)\s+(\d{1,2})/)
+    if (monthDayMatch) {
+      const monthIdx = months.indexOf(monthDayMatch[1])
+      if (monthIdx >= 0) {
+        targetDate = new Date(now.getFullYear(), monthIdx, parseInt(monthDayMatch[2]))
+        if (targetDate < now) targetDate.setFullYear(targetDate.getFullYear() + 1)
+      }
+    }
+  }
+  if (!targetDate) return null
+  let hours = 9
+  let minutes = 0
+  if (lower.includes('noon')) {
+    hours = 12; minutes = 0
+  } else if (lower.includes('morning') && !lower.match(/\d{1,2}/)) {
+    hours = 9
+  } else if (lower.includes('afternoon') && !lower.match(/\d{1,2}/)) {
+    hours = 14
+  } else if (lower.includes('evening') && !lower.match(/\d{1,2}/)) {
+    hours = 17
+  } else {
+    const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/)
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1])
+      minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0
+      const period = timeMatch[3]
+      if (period === 'pm' && hours < 12) hours += 12
+      if (period === 'am' && hours === 12) hours = 0
+    }
+  }
+  targetDate.setHours(hours, minutes, 0, 0)
+  return targetDate
+}

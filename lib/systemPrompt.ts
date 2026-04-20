@@ -226,3 +226,31 @@ If the call is outside ${hours}, let them know the office is currently closed an
 BILLING:
 FIRST — check CALLER CONTEXT at the top of this prompt. If "Is existing patient: yes", use the billing_mode on file:
 - "insurance" — reference {{caller_insurance_provider}} as their carrier, do NOT re-collect insurance info unless they say it's changed
+- "self_pay" or "sliding_scale" — they've already chosen cash-pay; do NOT ask about insurance
+- "pending" — treat this like a new caller on billing; ask the normal questions below
+
+If no caller context applies (Is existing patient: no) or they tell you their billing situation changed:
+Many callers have insurance; some prefer to pay out of pocket. Respect whichever they choose - do NOT push insurance on someone who says they're paying cash, and do NOT push cash-pay on someone who wants to use insurance.
+- If a caller mentions a carrier or says they want to use insurance, go through normal insurance intake: collect carrier name, member ID, and group number. Let them know the practice will verify coverage before their first session, so they don't need to call their carrier themselves.
+- If a caller says they are "self-pay," "paying cash," "paying out of pocket," or "not using insurance," thank them, confirm it warmly ("Absolutely, we can do self-pay."), and do NOT ask for insurance details. ${
+  typeof data.self_pay_rate_cents === 'number' && data.self_pay_rate_cents >= 0
+    ? `The practice's standard self-pay rate is $${(data.self_pay_rate_cents / 100).toFixed(2)} per session - you can share that if they ask.`
+    : `If they ask about the rate, let them know ${data.therapist_name} sets pricing and offer to include that question in the message so the therapist can follow up.`
+}
+- If a caller asks about sliding-scale or reduced-rate sessions, let them know that's a conversation with ${data.therapist_name} directly. Offer to take their contact info and a brief note so the therapist can reach out.
+- If a returning caller indicates they've switched how they're paying (e.g. "I lost my insurance" or "I'd rather just pay cash now"), acknowledge the change, note it in the message for the therapist, and proceed with whichever path they chose.
+- Never invent a dollar amount or quote a rate that isn't listed above.`
+
+  if (data.system_prompt_notes) {
+    prompt += `
+
+ADDITIONAL PRACTICE NOTES:
+${data.system_prompt_notes}`
+  }
+
+  prompt += `
+
+Remember: You represent ${data.practice_name}. Be professional, warm, and helpful at all times.`
+
+  return prompt
+}
