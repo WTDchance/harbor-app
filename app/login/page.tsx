@@ -13,6 +13,23 @@ const supabase = createClient();
 
 type Mode = "login" | "reset";
 
+// Admin users land on /admin instead of a specific practice dashboard.
+// The check uses NEXT_PUBLIC_ADMIN_EMAIL when set, else falls back to the
+// known founder email. Kept client-side because the login redirect needs it
+// before the /api/auth/callback route runs.
+const ADMIN_EMAILS = new Set(
+  (process.env.NEXT_PUBLIC_ADMIN_EMAIL || 'chancewonser@gmail.com')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean)
+)
+
+function postLoginRedirect(email: string | null | undefined): string {
+  if (email && ADMIN_EMAILS.has(email.toLowerCase())) return '/admin'
+  return '/dashboard'
+}
+
+
 export default function LoginPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>("login");
@@ -33,7 +50,7 @@ export default function LoginPage() {
     }
 
     supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session) router.replace("/dashboard");
+      if (session) router.replace(postLoginRedirect(session.user?.email));
       else setCheckingSession(false);
     });
   }, [router]);
@@ -61,7 +78,7 @@ export default function LoginPage() {
         body: JSON.stringify({ action: "login", details: { method: "password" } }),
       }).catch(() => {});
 
-      router.replace("/dashboard");
+      router.replace(postLoginRedirect(data?.user?.email));
     } catch (err: unknown) {
       // Audit: failed login attempt
       fetch("/api/audit-log", {
@@ -121,7 +138,7 @@ export default function LoginPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ action: "login", details: { method: "password+mfa" } }),
           }).catch(() => {});
-          router.replace("/dashboard");
+          router.replace(postLoginRedirect((await supabase.auth.getSession()).data.session?.user?.email));
         }}
         onCancel={async () => {
           await supabase.auth.signOut();
