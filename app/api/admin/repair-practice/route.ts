@@ -381,6 +381,59 @@ export async function PATCH(req: NextRequest) {
     {
       type: 'function',
       function: {
+        name: 'verifyIdentity',
+        description: 'REQUIRED before disclosing any patient details, cancelling, or rescheduling. Verifies caller identity by matching first name + last name + date of birth against the practice records. Returns VERIFICATION_OK:{patientId} when matched, VERIFICATION_FAILED otherwise. Never disclose PHI without a VERIFICATION_OK.',
+        parameters: {
+          type: 'object',
+          properties: {
+            firstName: { type: 'string', description: 'Caller first name as they stated it' },
+            lastName: { type: 'string', description: 'Caller last name as they stated it' },
+            dateOfBirth: { type: 'string', description: 'Caller date of birth in any spoken form - e.g. "November 7, 1990", "11/07/1990", or "1990-11-07"' },
+          },
+          required: ['firstName', 'lastName', 'dateOfBirth'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'cancelAppointment',
+        description: 'Cancel an existing appointment. MUST be called only after verifyIdentity returned VERIFICATION_OK. Deletes the event from the practice calendar and marks the record cancelled.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientId: { type: 'string', description: 'The patient id returned by verifyIdentity (e.g. "VERIFICATION_OK:abc-123" -> pass "abc-123")' },
+            appointmentDateTime: { type: 'string', description: 'The date/time of the appointment to cancel, e.g. "Thursday April 24 at 2pm"' },
+          },
+          required: ['patientId', 'appointmentDateTime'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'rescheduleAppointment',
+        description: 'Reschedule an existing appointment to a new date and time. MUST be called only after verifyIdentity returned VERIFICATION_OK. Books the new slot first, then cancels the old one, so a failure leaves the original appointment intact.',
+        parameters: {
+          type: 'object',
+          properties: {
+            patientId: { type: 'string', description: 'The patient id returned by verifyIdentity' },
+            oldAppointmentDateTime: { type: 'string', description: 'The existing appointment date/time, e.g. "Thursday April 24 at 2pm"' },
+            newAppointmentDateTime: { type: 'string', description: 'The new appointment date/time the caller wants, e.g. "Friday April 25 at 10am"' },
+          },
+          required: ['patientId', 'oldAppointmentDateTime', 'newAppointmentDateTime'],
+        },
+      },
+      async: false,
+      server: { url: serverUrl },
+    },
+    {
+      type: 'function',
+      function: {
         name: 'submitIntakeScreening',
         description: 'Submit PHQ-2 and GAD-2 screening scores after asking the 4 screening questions',
         parameters: {

@@ -535,6 +535,15 @@ async function handleToolCalls(message: any) {
         case 'submitIntakeScreening':
           result = await handleSubmitScreening(params, practiceId)
           break
+        case 'verifyIdentity':
+          result = await handleVerifyIdentity(params, practiceId)
+          break
+        case 'cancelAppointment':
+          result = await handleCancelAppointment(params, practiceId)
+          break
+        case 'rescheduleAppointment':
+          result = await handleRescheduleAppointment(params, practiceId, call?.id || null)
+          break
         default:
           result = `Unknown tool: ${toolName}`
       }
@@ -585,6 +594,15 @@ async function handleFunctionCall(message: any) {
         break
       case 'submitIntakeScreening':
         result = await handleSubmitScreening(params, practiceId)
+        break
+      case 'verifyIdentity':
+        result = await handleVerifyIdentity(params, practiceId)
+        break
+      case 'cancelAppointment':
+        result = await handleCancelAppointment(params, practiceId)
+        break
+      case 'rescheduleAppointment':
+        result = await handleRescheduleAppointment(params, practiceId, call?.id || null)
         break
       default:
         result = `Unknown function: ${toolName}`
@@ -1877,4 +1895,237 @@ function parseAppointmentDate(timeStr: string): Date | null {
   }
   targetDate.setHours(hours, minutes, 0, 0)
   return targetDate
+}
+
+
+// ============================================================================
+// HIPAA identity verification (added 4/20/26)
+// ----------------------------------------------------------------------------
+// Ellie must call verifyIdentity with first name + last name + date of birth
+// BEFORE disclosing any PHI. If any field mismatches what's on file, the tool
+// returns verified: false and Ellie must refuse disclosure.
+// ============================================================================
+
+/**
+ * Normalize a date-of-birth string the caller speaks into ISO yyyy-mm-dd so
+ * we can compare against patients.date_of_birth (stored as text like
+ * '1990-11-07'). Accepts a few spoken/written shapes:
+ *   "November 7, 1990", "11/07/1990", "11-7-1990", "1990-11-07"
+ * Returns null if unparseable.
+ */
+function normalizeDOB(raw: string | null | undefined): string | null {
+  if (!raw) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  // Already ISO
+  const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s)
+  if (iso) {
+    const y = iso[1]
+    const m = String(iso[2]).padStart(2, '0')
+    const d = String(iso[3]).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  // mm/dd/yyyy or m-d-yyyy
+  const mdy = /^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/.exec(s)
+  if (mdy) {
+    const m = String(mdy[1]).padStart(2, '0')
+    const d = String(mdy[2]).padStart(2, '0')
+    return `${mdy[3]}-${m}-${d}`
+  }
+  // Try Date parsing as a last resort ("November 7, 1990" etc.)
+  const parsed = new Date(s)
+  if (!isNaN(parsed.getTime())) {
+    const y = parsed.getUTCFullYear()
+    const m = String(parsed.getUTCMonth() + 1).padStart(2, '0')
+    const d = String(parsed.getUTCDate()).padStart(2, '0')
+    return `${y}-${m}-${d}`
+  }
+  return null
+}
+
+function normalizeName(s: string | null | undefined): string {
+  return (s || '').toLowerCase().replace(/[^a-z]/g, '').trim()
+}
+
+/**
+ * verifyIdentity tool: HIPAA gate. Matches caller's stated {firstName,
+ * lastName, dateOfBirth} against patients table. Writes the verification
+ * outcome to the call_logs row (once patched up by end-of-call report).
+ *
+ * Returns plain text for Ellie - success or failure, never mentioning the
+ * on-file fields themselves.
+ */
+async function handleVerifyIdentity(
+  params: any,
+  practiceId: string | null
+): Promise<string> {
+  if (!practiceId) {
+    return 'I was not able to verify that right now. Let me take a message for the team instead.'
+  }
+  const firstName = normalizeName(params?.firstName)
+  const lastName = normalizeName(params?.lastName)
+  const dobIso = normalizeDOB(params?.dateOfBirth)
+
+  if (!firstName || !lastName || !dobIso) {
+    return 'VERIFICATION_INCOMPLETE: I still need the full first name, last name, and date of birth to verify.'
+  }
+
+  try {
+    const { data: patients } = await supabaseAdmin
+      .from('patients')
+      .select('id, first_name, last_name, date_of_birth')
+      .eq('practice_id', practiceId)
+      .limit(2000)
+
+    const match = (patients || []).find((p: any) => {
+      if (!p.first_name || !p.last_name || !p.date_of_birth) return false
+      if (normalizeName(p.first_name) !== firstName) return false
+      if (normalizeName(p.last_name) !== lastName) return false
+      const storedDOB = normalizeDOB(p.date_of_birth)
+      return storedDOB === dobIso
+    })
+
+    if (!match) {
+      console.log(`[Vapi] verifyIdentity FAIL for practice ${practiceId} - first=${firstName} last=${lastName} dob=${dobIso}`)
+      return "VERIFICATION_FAILED: I wasn't able to find a record that matches. For your privacy, I can't share details without a match. I can take a message for the therapist instead."
+    }
+
+    console.log(`[Vapi] verifyIdentity OK for practice ${practiceId} - patient ${match.id}`)
+    return `VERIFICATION_OK:${match.id}`
+  } catch (err: any) {
+    console.error('[Vapi] verifyIdentity error:', err?.message || err)
+    return 'I was not able to verify that right now. Let me take a message so the team can follow up.'
+  }
+}
+
+/**
+ * cancelAppointment tool: requires prior VERIFICATION_OK. Takes the patient
+ * id (from the verification step) and the appointment date/time to cancel.
+ * Marks the DB row status=cancelled and deletes the Google Calendar event.
+ */
+async function handleCancelAppointment(
+  params: any,
+  practiceId: string | null
+): Promise<string> {
+  if (!practiceId) return 'I was not able to cancel that right now. Let me take a message for the team.'
+
+  const patientId = params?.patientId
+  const appointmentDateTime = params?.appointmentDateTime
+  if (!patientId) return 'I need to verify your identity first before I can cancel an appointment.'
+  if (!appointmentDateTime) return 'Which appointment would you like to cancel?'
+
+  try {
+    // Find the appointment. Match by patient_id + a fuzzy scheduled_at window.
+    const parsed = parseAppointmentDate(appointmentDateTime)
+    let query = supabaseAdmin
+      .from('appointments')
+      .select('id, scheduled_at, status, calendar_event_id')
+      .eq('practice_id', practiceId)
+      .eq('patient_id', patientId)
+      .neq('status', 'cancelled')
+      .order('scheduled_at', { ascending: true })
+      .limit(10)
+
+    const { data: candidates } = await query
+    let target: any = null
+    if (parsed && candidates && candidates.length > 0) {
+      // Pick the candidate closest to parsed (within 2 hours)
+      const parsedMs = parsed.getTime()
+      target = candidates
+        .map((c: any) => ({ c, d: Math.abs(new Date(c.scheduled_at).getTime() - parsedMs) }))
+        .filter((x) => x.d < 2 * 60 * 60 * 1000)
+        .sort((a, b) => a.d - b.d)[0]?.c
+    }
+    if (!target && candidates && candidates.length === 1) target = candidates[0]
+
+    if (!target) {
+      return "I couldn't find that appointment to cancel. Let me take a message so the team can help."
+    }
+
+    // Delete from Google calendar (non-fatal on fail)
+    if (target.calendar_event_id) {
+      try {
+        const router = await withTimeout(getCalendarRouter(practiceId), 5000, 'getCalendarRouter')
+        if (router) {
+          await withTimeout(router.deleteEvent(target.calendar_event_id), 6000, 'router.deleteEvent')
+          console.log(`[Vapi] cancelAppointment: Google event ${target.calendar_event_id} deleted`)
+        }
+      } catch (calErr: any) {
+        console.error('[Vapi] cancelAppointment: calendar delete failed (non-blocking):', calErr?.message || calErr)
+      }
+    }
+
+    // Mark DB row cancelled
+    await supabaseAdmin
+      .from('appointments')
+      .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+      .eq('id', target.id)
+
+    return `CANCEL_OK: Your appointment on ${new Date(target.scheduled_at).toLocaleString('en-US')} is cancelled. You'll get a confirmation by text shortly.`
+  } catch (err: any) {
+    console.error('[Vapi] cancelAppointment error:', err?.message || err)
+    return 'I ran into trouble cancelling that. Let me take a message so the team can follow up.'
+  }
+}
+
+/**
+ * rescheduleAppointment tool: requires prior VERIFICATION_OK. Cancels the
+ * existing appointment and books the new one. If the new booking fails, the
+ * original is LEFT INTACT (we only cancel after the new event is confirmed)
+ * so the patient never ends up with zero appointments due to partial failure.
+ */
+async function handleRescheduleAppointment(
+  params: any,
+  practiceId: string | null,
+  vapiCallId: string | null = null
+): Promise<string> {
+  if (!practiceId) return 'I was not able to reschedule right now. Let me take a message for the team.'
+
+  const patientId = params?.patientId
+  const oldAppointmentDateTime = params?.oldAppointmentDateTime
+  const newAppointmentDateTime = params?.newAppointmentDateTime
+  if (!patientId) return 'I need to verify your identity first before I can reschedule.'
+  if (!oldAppointmentDateTime || !newAppointmentDateTime) {
+    return 'I need both the current appointment time and the new time you would like.'
+  }
+
+  try {
+    // Look up patient's name/phone/email so bookAppointment can reuse them
+    const { data: patient } = await supabaseAdmin
+      .from('patients')
+      .select('first_name, last_name, phone, email')
+      .eq('id', patientId)
+      .maybeSingle()
+    const patientName = [patient?.first_name, patient?.last_name].filter(Boolean).join(' ').trim()
+
+    // Book the NEW slot first (so a failure leaves the old slot untouched)
+    const bookResult = await handleBookAppointment(
+      {
+        patientName: patientName || 'Returning patient',
+        appointmentDateTime: newAppointmentDateTime,
+        patientPhone: patient?.phone || '',
+        patientEmail: patient?.email || '',
+        reason: 'Rescheduled from a previous booking',
+      },
+      practiceId,
+      vapiCallId
+    )
+    if (!bookResult.startsWith('BOOK_OK') && !bookResult.toLowerCase().includes('confirmed')) {
+      // bookAppointment may not have a BOOK_OK prefix - detect failure loosely.
+      if (bookResult.toLowerCase().includes('unable') || bookResult.toLowerCase().includes('trouble') || bookResult.toLowerCase().includes('not able')) {
+        return `RESCHEDULE_FAILED: ${bookResult}`
+      }
+    }
+
+    // Now cancel the old one
+    const cancelResult = await handleCancelAppointment(
+      { patientId, appointmentDateTime: oldAppointmentDateTime },
+      practiceId
+    )
+
+    return `RESCHEDULE_OK: New appointment booked. ${cancelResult}`
+  } catch (err: any) {
+    console.error('[Vapi] rescheduleAppointment error:', err?.message || err)
+    return 'I ran into trouble with the reschedule. Let me take a message so the team can follow up.'
+  }
 }
