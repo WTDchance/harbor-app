@@ -71,13 +71,12 @@ type PatientData = {
   }[];
   appointments: {
     id: string;
-    appointment_date: string;
-    appointment_time: string | null;
+    scheduled_at: string | null;
     duration_minutes: number | null;
     status: string;
-    provider_name: string | null;
-    type: string | null;
-    notes: string | null;
+    appointment_type: string | null;
+    source: string | null;
+    patient_name: string | null;
   }[];
   crisis_alerts: {
     id: string;
@@ -124,6 +123,27 @@ function formatTime(t: string | null) {
     return `${h % 12 || 12}:${m.toString().padStart(2, "0")} ${ampm}`;
   } catch {
     return t;
+  }
+}
+
+function formatDateTime(iso: string | null) {
+  if (!iso) return { date: "--", time: "" };
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return { date: iso, time: "" };
+    return {
+      date: d.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      }),
+      time: d.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+      }),
+    };
+  } catch {
+    return { date: iso, time: "" };
   }
 }
 
@@ -1570,44 +1590,26 @@ export default function PatientDetailPage() {
         </h2>
         {appointments.length > 0 ? (
           <div className="space-y-2">
-            {appointments.map((appt) => (
-              <div
-                key={appt.id}
-                className="flex items-center justify-between text-sm border-b pb-2 last:border-0"
-              >
-                <div>
-                  <span className="font-medium">
-                    {formatDate(appt.appointment_date)}
-                  </span>
-                  {appt.appointment_time && (
-                    <span className="text-gray-500 ml-1">
-                      at {formatTime(appt.appointment_time)}
-                    </span>
-                  )}
-                  {appt.provider_name && (
-                    <span className="text-gray-400 ml-2">
-                      w/ {appt.provider_name}
-                    </span>
-                  )}
-                </div>
-                <span
-                  className={`text-xs px-2 py-0.5 rounded ${
-                    appt.status === "confirmed"
-                      ? "bg-green-100 text-green-800"
-                      : appt.status === "cancelled"
-                      ? "bg-red-100 text-red-800"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
+            {appointments.map((appt) => {
+              const { date, time } = formatDateTime(appt.scheduled_at);
+              return (
+                <div
+                  key={appt.id}
+                  className="flex items-center justify-between text-sm border-b pb-2 last:border-0"
                 >
-                  {appt.status}
-                </span>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-gray-500">No appointments scheduled.</p>
-        )}
-      </div>
-    </div>
-  );
-}
+                  <div>
+                    <span className="font-medium">{date}</span>
+                    {time && (
+                      <span className="text-gray-500 ml-1">at {time}</span>
+                    )}
+                    {appt.appointment_type && (
+                      <span className="text-gray-400 ml-2">
+                        · {appt.appointment_type}
+                      </span>
+                    )}
+                    {appt.source && (
+                      <span className="text-gray-400 ml-2 text-xs">
+                        ({appt.source})
+                      </span>
+                    )}
+   

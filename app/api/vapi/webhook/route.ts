@@ -13,6 +13,35 @@ import { formatPhoneNumber } from '@/lib/twilio'
 import { analyzeTranscript } from '@/lib/transcriptAnalyzer'
 import { logCommunication } from '@/lib/patientCommunications'
 
+// ---- Network-call timeout guard ----
+// Vapi streams tool-call results into a live conversation; if we don't respond
+// within ~10s the call hits silence-timeout and the caller hears nothing. We
+// previously relied on the underlying HTTP client's default timeout, which in
+// practice let Google Calendar's listEvents() hang past Vapi's silence window
+// (see Chance's 4/18/26 test — Ellie said "Let me pull up the calendar" and
+// then went silent until the call dropped). Wrap any outbound call that can
+// block on the network so we degrade gracefully instead of going mute.
+async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${ms}ms`)),
+          ms
+        )
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 // ---- Shared practice resolution ----
 // Resolves the practice ID from Vapi webhook payloads using a robust fallback chain:
 // 1. Metadata (set by handleAssistantRequest on outbound config)
@@ -183,7 +212,7 @@ async function handleAssistantRequest(message: any) {
 
   const { data: practice } = await supabaseAdmin
     .from('practices')
-    .select('vapi_assistant_id, name, ai_name')
+    .select('vapi_assistant_id, name, ai_name, timezone')
     .eq('id', practiceId)
     .maybeSingle()
 
@@ -197,8 +226,9 @@ async function handleAssistantRequest(message: any) {
   // Look up returning caller by phone. When recognized, inject a personalized
   // firstMessage via assistantOverrides so Ellie opens with "Welcome back"
   // instead of running new-patient intake on someone already in the DB.
+  const practiceTimezone = practice.timezone || 'America/Los_Angeles'
   const callerContext = customerPhone
-    ? await lookupReturningCallerContext(practiceId, customerPhone)
+    ? await lookupReturningCallerContext(practiceId, customerPhone, practiceTimezone)
     : null
 
   const aiName = practice.ai_name || 'Ellie'
@@ -225,6 +255,8 @@ async function handleAssistantRequest(message: any) {
           caller_intake_completed: callerContext.intake_completed ? 'yes' : 'no',
           caller_last_appointment_at: callerContext.last_appointment_at || '',
           caller_last_appointment_status: callerContext.last_appointment_status || '',
+          caller_next_appointment_at: callerContext.next_appointment_at || '',
+          caller_next_appointment_status: callerContext.next_appointment_status || '',
           caller_insurance_provider: callerContext.insurance_provider || '',
         },
       },
@@ -246,7 +278,8 @@ async function handleAssistantRequest(message: any) {
  */
 async function lookupReturningCallerContext(
   practiceId: string,
-  phone: string
+  phone: string,
+  timezone: string = 'America/Los_Angeles'
 ): Promise<null | {
   patient_id: string
   first_name: string | null
@@ -256,6 +289,8 @@ async function lookupReturningCallerContext(
   insurance_provider: string | null
   last_appointment_at: string | null
   last_appointment_status: string | null
+  next_appointment_at: string | null
+  next_appointment_status: string | null
 }> {
   if (!phone) return null
 
@@ -280,12 +315,29 @@ async function lookupReturningCallerContext(
 
   if (!match) return null
 
-  const { data: lastAppt } = await supabaseAdmin
+  const nowIso = new Date().toISOString()
+
+  // Most recent PAST appointment (history only — never confuse with upcoming)
+  const { data: lastPast } = await supabaseAdmin
     .from('appointments')
     .select('scheduled_at, status')
     .eq('practice_id', practiceId)
     .eq('patient_id', match.id)
+    .lt('scheduled_at', nowIso)
+    .neq('status', 'cancelled')
     .order('scheduled_at', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  // Next UPCOMING appointment (what to use for reschedule/confirm conversations)
+  const { data: nextUpcoming } = await supabaseAdmin
+    .from('appointments')
+    .select('scheduled_at, status')
+    .eq('practice_id', practiceId)
+    .eq('patient_id', match.id)
+    .gte('scheduled_at', nowIso)
+    .neq('status', 'cancelled')
+    .order('scheduled_at', { ascending: true })
     .limit(1)
     .maybeSingle()
 
@@ -296,8 +348,43 @@ async function lookupReturningCallerContext(
     billing_mode: match.billing_mode || 'pending',
     intake_completed: !!match.intake_completed,
     insurance_provider: match.insurance_provider || null,
-    last_appointment_at: lastAppt?.scheduled_at || null,
-    last_appointment_status: lastAppt?.status || null,
+    last_appointment_at: formatAppointmentForSpeech(lastPast?.scheduled_at, timezone),
+    last_appointment_status: lastPast?.status || null,
+    next_appointment_at: formatAppointmentForSpeech(nextUpcoming?.scheduled_at, timezone),
+    next_appointment_status: nextUpcoming?.status || null,
+  }
+}
+
+/**
+ * Render an ISO timestamp in the practice's timezone as a natural-language
+ * string Ellie can speak aloud. Returns '' when input is empty.
+ *
+ * Example output: "Monday, April 20 at 2:30 PM (Pacific time)"
+ */
+function formatAppointmentForSpeech(
+  iso: string | null | undefined,
+  timezone: string
+): string | null {
+  if (!iso) return null
+  try {
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return null
+    const dateStr = d.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      timeZone: timezone,
+    })
+    const timeStr = d.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: timezone,
+      timeZoneName: 'short',
+    })
+    return `${dateStr} at ${timeStr}`
+  } catch {
+    return iso
   }
 }
 
@@ -954,7 +1041,11 @@ async function processEndOfCall(opts: {
       let calendarEventId: string | null = null
       if (parsedDate) {
         try {
-          const router = await getCalendarRouter(practiceId)
+          const router = await withTimeout(
+            getCalendarRouter(practiceId),
+            5000,
+            'getCalendarRouter'
+          )
           if (router) {
             const endDate = new Date(parsedDate.getTime() + durationMinutes * 60_000)
             const summary = `Therapy: ${info.patientName || 'New patient'}`
@@ -966,12 +1057,16 @@ async function processEndOfCall(opts: {
             ]
               .filter(Boolean)
               .join('\n')
-            const ev = await router.createEvent({
-              summary,
-              start: parsedDate,
-              end: endDate,
-              description,
-            })
+            const ev = await withTimeout(
+              router.createEvent({
+                summary,
+                start: parsedDate,
+                end: endDate,
+                description,
+              }),
+              6000,
+              'router.createEvent'
+            )
             calendarEventId = ev.id
             console.log(`[Vapi] Calendar event created (${router.provider}): ${calendarEventId}`)
           } else {
@@ -1109,7 +1204,11 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
   }
 
   try {
-    const router = await getCalendarRouter(practiceId)
+    const router = await withTimeout(
+      getCalendarRouter(practiceId),
+      5000,
+      'getCalendarRouter'
+    )
     if (!router) {
       return 'The calendar is not connected for this practice yet. Let me take down your preferred times and someone will confirm your appointment.'
     }
@@ -1160,7 +1259,11 @@ async function handleCheckAvailability(params: any, practiceId: string | null): 
       businessHours = { startHour: 16, endHour: 20 }
     }
 
-    const events = await router.listEvents(searchStart, searchEnd)
+    const events = await withTimeout(
+      router.listEvents(searchStart, searchEnd),
+      6000,
+      'router.listEvents'
+    )
     const slots = findFreeSlots(events, searchStart, searchEnd, 60, businessHours)
 
     if (slots.length === 0) {
@@ -1220,7 +1323,11 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
     // Push to the practice's connected calendar
     let calendarEventId: string | null = null
     try {
-      const router = await getCalendarRouter(practiceId)
+      const router = await withTimeout(
+        getCalendarRouter(practiceId),
+        5000,
+        'getCalendarRouter'
+      )
       if (router) {
         const summary = `Therapy: ${patientName || 'New patient'}`
         const description = [
@@ -1230,12 +1337,16 @@ async function handleBookAppointment(params: any, practiceId: string | null, vap
           reason ? `Reason: ${reason}` : null,
         ].filter(Boolean).join('\n')
 
-        const ev = await router.createEvent({
-          summary,
-          start: parsedDate,
-          end: endDate,
-          description,
-        })
+        const ev = await withTimeout(
+          router.createEvent({
+            summary,
+            start: parsedDate,
+            end: endDate,
+            description,
+          }),
+          6000,
+          'router.createEvent'
+        )
         calendarEventId = ev.id
         console.log(`[Vapi] bookAppointment: calendar event created (${router.provider}): ${calendarEventId}`)
       } else {
@@ -1572,96 +1683,4 @@ function buildFallbackAssistant() {
   }
 }
 
-function formatHours(hoursJson: any): string {
-  if (!hoursJson) return 'Monday through Friday, 9am to 5pm'
-  if (typeof hoursJson === 'string') return hoursJson
-  try {
-    const days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
-    const dayLabels: Record<string, string> = {
-      monday: 'Monday', tuesday: 'Tuesday', wednesday: 'Wednesday',
-      thursday: 'Thursday', friday: 'Friday', saturday: 'Saturday', sunday: 'Sunday',
-    }
-    const parts: string[] = []
-    for (const day of days) {
-      const h = hoursJson[day]
-      if (!h) continue
-      // Handle structured format: { enabled, openTime, closeTime }
-      if (typeof h === 'object' && 'enabled' in h) {
-        if (h.enabled && h.openTime && h.closeTime) {
-          parts.push(`${dayLabels[day]}: ${fmtTime(h.openTime)} - ${fmtTime(h.closeTime)}`)
-        }
-      } else if (typeof h === 'string' && h !== 'closed') {
-        parts.push(`${dayLabels[day]}: ${h}`)
-      }
-    }
-    return parts.length > 0 ? parts.join(', ') : 'Monday through Friday, 9am to 5pm'
-  } catch {
-    return 'Monday through Friday, 9am to 5pm'
-  }
-}
-
-function fmtTime(t: string): string {
-  const [hh, mm] = t.split(':').map(Number)
-  if (isNaN(hh)) return t
-  const suffix = hh >= 12 ? 'PM' : 'AM'
-  const h12 = hh === 0 ? 12 : hh > 12 ? hh - 12 : hh
-  return mm === 0 ? `${h12} ${suffix}` : `${h12}:${mm.toString().padStart(2, '0')} ${suffix}`
-}
-
-function parseAppointmentDate(timeStr: string): Date | null {
-  if (!timeStr) return null
-  const now = new Date()
-  const lower = timeStr.toLowerCase()
-  const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
-  let targetDate: Date | null = null
-  if (lower.includes('tomorrow')) {
-    targetDate = new Date(now)
-    targetDate.setDate(targetDate.getDate() + 1)
-  }
-  if (!targetDate) {
-    for (let i = 0; i < dayNames.length; i++) {
-      if (lower.includes(dayNames[i])) {
-        const currentDay = now.getDay()
-        let daysUntil = i - currentDay
-        if (daysUntil <= 0) daysUntil += 7
-        targetDate = new Date(now)
-        targetDate.setDate(targetDate.getDate() + daysUntil)
-        break
-      }
-    }
-  }
-  if (!targetDate) {
-    const months = ['january','february','march','april','may','june','july','august','september','october','november','december']
-    const monthDayMatch = lower.match(/(\w+)\s+(\d{1,2})/)
-    if (monthDayMatch) {
-      const monthIdx = months.indexOf(monthDayMatch[1])
-      if (monthIdx >= 0) {
-        targetDate = new Date(now.getFullYear(), monthIdx, parseInt(monthDayMatch[2]))
-        if (targetDate < now) targetDate.setFullYear(targetDate.getFullYear() + 1)
-      }
-    }
-  }
-  if (!targetDate) return null
-  let hours = 9
-  let minutes = 0
-  if (lower.includes('noon')) {
-    hours = 12; minutes = 0
-  } else if (lower.includes('morning') && !lower.match(/\d{1,2}/)) {
-    hours = 9
-  } else if (lower.includes('afternoon') && !lower.match(/\d{1,2}/)) {
-    hours = 14
-  } else if (lower.includes('evening') && !lower.match(/\d{1,2}/)) {
-    hours = 17
-  } else {
-    const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/)
-    if (timeMatch) {
-      hours = parseInt(timeMatch[1])
-      minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0
-      const period = timeMatch[3]
-      if (period === 'pm' && hours < 12) hours += 12
-      if (period === 'am' && hours === 12) hours = 0
-    }
-  }
-  targetDate.setHours(hours, minutes, 0, 0)
-  return targetDate
-}
+functi
