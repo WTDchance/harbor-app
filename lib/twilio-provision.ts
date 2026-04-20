@@ -53,6 +53,9 @@ export async function purchaseTwilioNumber(opts: {
         voiceUrl: 'https://api.vapi.ai/twilio/inbound_call',
         voiceMethod: 'POST',
       })
+      // Auto-attach to the A2P Messaging Service so outbound SMS from this
+      // number is campaign-compliant on first use. Best-effort; never blocks.
+      await attachNumberToMessagingService(purchased.sid)
       return { phoneNumber: purchased.phoneNumber, sid: purchased.sid }
     } catch (error) {
       console.error(`Failed to purchase specific number ${opts.specificNumber}:`, error)
@@ -98,6 +101,10 @@ export async function purchaseTwilioNumber(opts: {
     voiceMethod: 'POST',
   })
 
+  // Auto-attach to the A2P Messaging Service so outbound SMS from this
+  // number is campaign-compliant on first use. Best-effort; never blocks.
+  await attachNumberToMessagingService(purchased.sid)
+
   return { phoneNumber: purchased.phoneNumber, sid: purchased.sid }
 }
 
@@ -111,5 +118,59 @@ export async function releaseTwilioNumber(sid: string): Promise<void> {
     await client.incomingPhoneNumbers(sid).remove()
   } catch (e) {
     console.error(`Failed to release Twilio number ${sid}:`, e)
+  }
+}
+
+/**
+ * Attach a freshly-purchased Twilio number to the approved A2P-campaign-bound
+ * Messaging Service so outbound SMS from that number is carrier-compliant.
+ * Must be called after purchaseTwilioNumber so the number exists on the account.
+ *
+ * Required env: TWILIO_MESSAGING_SERVICE_SID. If unset, this is a no-op so
+ * local dev + pre-A2P environments keep working.
+ *
+ * Safe to call on a number that is already in the pool - Twilio's API is
+ * idempotent: attaching an already-attached PN returns the existing entry.
+ *
+ * Does NOT throw on failure. SMS sending degrades gracefully (error 30034 on
+ * the specific message) rather than blocking the whole signup.
+ */
+export async function attachNumberToMessagingService(phoneNumberSid: string): Promise<boolean> {
+  const msSid = process.env.TWILIO_MESSAGING_SERVICE_SID
+  if (!msSid) {
+    console.log('[twilio-provision] TWILIO_MESSAGING_SERVICE_SID unset — skipping MS attach')
+    return false
+  }
+  if (!accountSid || !authToken) {
+    console.warn('[twilio-provision] Twilio creds missing — skipping MS attach')
+    return false
+  }
+  try {
+    const b64 = Buffer.from(accountSid + ':' + authToken).toString('base64')
+    const form = new URLSearchParams()
+    form.set('PhoneNumberSid', phoneNumberSid)
+    const resp = await fetch(
+      'https://messaging.twilio.com/v1/Services/' + msSid + '/PhoneNumbers',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Basic ' + b64,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: form.toString(),
+      }
+    )
+    if (!resp.ok) {
+      const txt = await resp.text().catch(() => '')
+      // 409 = already in another pool (rare - new numbers should not be). Log
+      // but do not throw so signup completes.
+      console.error('[twilio-provision] MS attach failed', resp.status, txt)
+      return false
+    }
+    console.log('[twilio-provision] Attached ' + phoneNumberSid + ' to MS ' + msSid)
+    return true
+  } catch (err: any) {
+    console.error('[twilio-provision] MS attach threw', err?.message || err)
+    return false
   }
 }
