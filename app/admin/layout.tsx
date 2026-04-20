@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import clsx from 'clsx'
+import { useState } from 'react'
 import {
   LayoutDashboard,
   Users,
@@ -16,6 +17,8 @@ import {
   LifeBuoy,
   HeartPulse,
   Shield,
+  Menu,
+  X,
 } from 'lucide-react'
 
 const navItems = [
@@ -33,6 +36,7 @@ const navItems = [
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const supabase = createClient()
+  const [mobileOpen, setMobileOpen] = useState(false)
 
   const handleSignOut = async () => {
     await supabase.auth.signOut()
@@ -41,18 +45,58 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex h-screen bg-gray-50">
+      {/* Mobile top bar — visible only below md breakpoint */}
+      <div className="md:hidden fixed top-0 inset-x-0 z-40 bg-slate-900 text-white flex items-center justify-between px-4 h-14 border-b border-slate-800">
+        <button
+          onClick={() => setMobileOpen(true)}
+          className="p-2 -ml-2 rounded-md hover:bg-slate-800"
+          aria-label="Open admin menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+        <Link href="/admin" className="text-sm font-semibold tracking-wide">
+          Harbor Admin
+        </Link>
+        <div className="w-9" />
+      </div>
+
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-40 md:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
       {/* Admin sidebar — slate/dark tone to differentiate from therapist view */}
-      <aside className="w-64 bg-slate-900 text-white min-h-screen flex flex-col">
-        <div className="p-6 border-b border-slate-700">
-          <Link href="/" className="flex items-center gap-2 hover:opacity-80 transition-opacity">
+      <aside
+        className={clsx(
+          'fixed md:static inset-y-0 left-0 z-50 w-64 bg-slate-900 text-white flex flex-col',
+          'transform transition-transform duration-200',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        )}
+      >
+        <div className="p-6 border-b border-slate-700 flex items-center justify-between">
+          <Link
+            href="/"
+            className="flex items-center gap-2 hover:opacity-80 transition-opacity"
+            onClick={() => setMobileOpen(false)}
+          >
             <img src="/harbor-logo.svg" alt="Harbor" className="h-10" />
             <div>
               <p className="text-xs text-slate-400 mt-0.5">Admin Console</p>
             </div>
           </Link>
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden p-1.5 -mr-1 rounded-md hover:bg-slate-800"
+            aria-label="Close admin menu"
+          >
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        <nav className="flex-1 px-4 py-6">
+        <nav className="flex-1 px-4 py-6 overflow-y-auto">
           <ul className="space-y-1">
             {navItems.map(({ href, label, icon: Icon, exact }) => {
               const isActive = exact ? pathname === href : pathname.startsWith(href)
@@ -60,6 +104,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <li key={href}>
                   <Link
                     href={href}
+                    onClick={() => setMobileOpen(false)}
                     className={clsx(
                       'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors text-sm',
                       isActive
@@ -79,6 +124,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="p-4 border-t border-slate-700 space-y-1">
           <Link
             href="/dashboard"
+            onClick={() => setMobileOpen(false)}
             className="flex items-center gap-3 w-full px-3 py-2.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white transition-colors text-sm font-medium"
           >
             <ArrowLeftRight className="w-4 h-4" />
@@ -95,8 +141,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
-        <div className="p-8">{children}</div>
+      <main className="flex-1 overflow-auto pt-14 md:pt-0">
+        <div className="p-4 md:p-8">{children}</div>
       </main>
     </div>
   )
