@@ -79,7 +79,14 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             __html: `(function(){
   if (typeof window === 'undefined') return;
-  var CHUNK_ERROR_RE = /ChunkLoadError|Loading chunk \d+ failed|Loading CSS chunk|Failed to fetch dynamically imported module|Importing a module script failed|a\[e\] is not a function/i;
+  var CHUNK_SIGNATURES = [
+    'ChunkLoadError',
+    'Loading chunk',
+    'Loading CSS chunk',
+    'Failed to fetch dynamically imported module',
+    'Importing a module script failed',
+    'a[e] is not a function',
+  ];
   function isChunkError(reason) {
     if (!reason) return false;
     var msg = '';
@@ -87,7 +94,10 @@ export default function RootLayout({
     else if (reason.message) msg = String(reason.message);
     else if (reason.name) msg = String(reason.name);
     if (reason && reason.name === 'ChunkLoadError') return true;
-    return CHUNK_ERROR_RE.test(msg);
+    for (var i = 0; i < CHUNK_SIGNATURES.length; i++) {
+      if (msg.indexOf(CHUNK_SIGNATURES[i]) !== -1) return true;
+    }
+    return false;
   }
   function reloadOnce() {
     try {
