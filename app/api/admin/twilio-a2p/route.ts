@@ -105,6 +105,56 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}))
   const action = req.nextUrl.searchParams.get("action") || "attach"
 
+  if (action === "move" || action === "move_by_number") {
+    // Move a phone number OUT of every other Messaging Service sender pool
+    // and INTO the specified one. Required after a campaign approval attaches
+    // the campaign to a different MS than where the numbers currently live
+    // (Twilio error 21712 on direct attach).
+    const targetSid = body?.messaging_service_sid
+    let phoneSid: string | undefined = body?.phone_number_sid
+    if (!targetSid) return NextResponse.json({ error: "messaging_service_sid required" }, { status: 400 })
+
+    if (!phoneSid && action === "move_by_number") {
+      const e164 = body?.phone_number
+      if (!e164) return NextResponse.json({ error: "phone_number required" }, { status: 400 })
+      const acct = process.env.TWILIO_ACCOUNT_SID
+      const r = await tw(BASE + "/Accounts/" + acct + "/IncomingPhoneNumbers.json?PhoneNumber=" + encodeURIComponent(e164))
+      const match = (r.json?.incoming_phone_numbers || [])[0]
+      if (!match) return NextResponse.json({ error: "phone_number not found on account: " + e164 }, { status: 404 })
+      phoneSid = match.sid
+    }
+    if (!phoneSid) return NextResponse.json({ error: "phone_number_sid required" }, { status: 400 })
+
+    // 1. Find every other Messaging Service that currently holds this PN.
+    const servicesRes = await tw("/Services?PageSize=50")
+    const services = servicesRes.json?.services || []
+    const removedFrom: string[] = []
+    for (const s of services) {
+      if (s.sid === targetSid) continue
+      const poolRes = await tw("/Services/" + s.sid + "/PhoneNumbers?PageSize=50")
+      const pool = poolRes.json?.phone_numbers || []
+      const has = pool.some((p: any) => p.sid === phoneSid)
+      if (has) {
+        const delRes = await tw("/Services/" + s.sid + "/PhoneNumbers/" + phoneSid, { method: "DELETE" })
+        if (!delRes.ok) {
+          return NextResponse.json({ ok: false, step: "detach", from: s.sid, error: delRes.json }, { status: 502 })
+        }
+        removedFrom.push(s.sid)
+      }
+    }
+
+    // 2. Attach to target service.
+    const form = new URLSearchParams()
+    form.set("PhoneNumberSid", phoneSid)
+    const addRes = await tw("/Services/" + targetSid + "/PhoneNumbers", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+    })
+    if (!addRes.ok) return NextResponse.json({ ok: false, step: "attach", error: addRes.json }, { status: 502 })
+    return NextResponse.json({ ok: true, detached_from: removedFrom, attached: addRes.json })
+  }
+
   if (action === "attach" || action === "attach_by_number") {
     const serviceSid = body?.messaging_service_sid
     let phoneSid: string | undefined = body?.phone_number_sid
