@@ -12,10 +12,14 @@ export const metadata: Metadata = {
     template: '%s | Harbor Receptionist',
   },
   description:
-    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
+    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $397/mo.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
-    icon: '/favicon.ico',
+    icon: [
+      { url: '/harbor-icon-clean.png', type: 'image/png' },
+    ],
+    shortcut: '/harbor-icon-clean.png',
+    apple: '/harbor-icon-clean.png',
   },
   manifest: '/manifest.json',
   appleWebApp: {
@@ -72,9 +76,9 @@ export default function RootLayout({
         <meta name="application-name" content="Harbor" />
         <meta name="theme-color" content="#0d9488" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" type="image/png" href="/favicon.ico" />
-        {/* iOS home-screen icon — Safari ignores manifest icons and uses this. */}
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="icon" type="image/png" href="/harbor-icon-clean.png" />
+        <link rel="shortcut icon" type="image/png" href="/harbor-icon-clean.png" />
+        {/* Sized apple-touch-icon for sharp home-screen rendering on iOS. */}
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
         {/* Chunk-load error recovery. Catches stale-chunk 404s after a deploy
@@ -172,4 +176,18 @@ y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
             {children}
           </PostHogProvider>
         </Suspense>
-       
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(function(error) {
+              console.log('Service Worker registration failed:', error)
+            })
+          }
+        `,
+          }}
+        />
+      </body>
+    </html>
+  )
+}
