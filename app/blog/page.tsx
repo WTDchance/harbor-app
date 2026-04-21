@@ -3,15 +3,15 @@ import Link from 'next/link'
 import { getAllPosts } from '@/lib/blog'
 
 export const metadata: Metadata = {
-  title: 'Blog | Harbor Receptionist',
+  title: 'Blog | Harbor',
   description:
     'Insights on AI receptionists, therapy practice management, patient communication, and HIPAA compliance from the Harbor team.',
   openGraph: {
-    title: 'Harbor Receptionist Blog',
+    title: 'Harbor Blog',
     description:
       'Insights on AI receptionists, therapy practice management, and patient communication.',
     url: 'https://harborreceptionist.com/blog',
-    siteName: 'Harbor Receptionist',
+    siteName: 'Harbor',
     type: 'website',
   },
 }

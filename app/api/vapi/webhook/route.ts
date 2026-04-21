@@ -2029,7 +2029,7 @@ function buildTools(serverUrl: string) {
 
 function buildFallbackAssistant() {
   return {
-    name: 'Harbor Receptionist',
+    name: 'Harbor',
     firstMessage: 'Thank you for calling. How can I help you today?',
     model: {
       provider: 'anthropic',

@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
   const lines: string[] = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Harbor Receptionist//Harbor//EN',
+    'PRODID:-//Harbor//Harbor//EN',
     `X-WR-CALNAME:${calName}`,
     'X-WR-TIMEZONE:America/New_York',
     'CALSCALE:GREGORIAN',

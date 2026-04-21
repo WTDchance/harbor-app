@@ -239,7 +239,7 @@ export async function createEvent(
   const ical = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//Harbor Receptionist//Harbor//EN',
+    'PRODID:-//Harbor//Harbor//EN',
     'BEGIN:VEVENT',
     `UID:${uid}`,
     `DTSTAMP:${toICalDate(new Date())}`,

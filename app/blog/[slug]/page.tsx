@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!post) return { title: 'Post Not Found' }
 
   return {
-    title: `${post.title} | Harbor Receptionist Blog`,
+    title: `${post.title} | Harbor Blog`,
     description: post.description,
     openGraph: {
       title: post.title,
@@ -26,7 +26,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
       publishedTime: post.date,
       authors: [post.author],
       url: `https://harborreceptionist.com/blog/${post.slug}`,
-      siteName: 'Harbor Receptionist',
+      siteName: 'Harbor',
       ...(post.image && { images: [{ url: post.image }] }),
     },
     twitter: {
@@ -139,7 +139,7 @@ export default function BlogPostPage({ params }: Props) {
             </div>
             <div>
               <p className="font-semibold" style={{ color: '#1f375d' }}>{post.author}</p>
-              <p className="text-sm text-gray-500">Harbor Receptionist</p>
+              <p className="text-sm text-gray-500">Harbor</p>
             </div>
           </div>
         </div>

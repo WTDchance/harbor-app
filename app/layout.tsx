@@ -9,7 +9,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
     default: 'Harbor — AI Receptionist for Therapy Practices',
-    template: '%s | Harbor Receptionist',
+    template: '%s | Harbor',
   },
   description:
     "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $397/mo.",
@@ -31,7 +31,7 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'en_US',
     url: siteUrl,
-    siteName: 'Harbor Receptionist',
+    siteName: 'Harbor',
     title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",

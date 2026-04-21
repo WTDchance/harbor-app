@@ -121,7 +121,7 @@ function buildNoShowMessage({
     const next = futureAppointments[0]
     const nextLabel = formatFutureAppt(next.scheduled_at)
     return [
-      `Harbor Receptionist: Hi ${firstName}, we missed you today (${missedLabel}) with ${providerName}.`,
+      `Harbor: Hi ${firstName}, we missed you today (${missedLabel}) with ${providerName}.`,
       `No worries — your next session is already scheduled for ${nextLabel}.`,
       `If you need to talk sooner or want to reschedule, just reply to this message and we'll take care of it.`,
     ].join(' ')
@@ -135,7 +135,7 @@ function buildNoShowMessage({
       ? ` (looks like you usually come in on ${preferredDays.map(d => DAY_NAMES[d]).join('/')})`
       : ''
     return [
-      `Harbor Receptionist: Hi ${firstName}, we noticed you missed your appointment on ${missedLabel}.`,
+      `Harbor: Hi ${firstName}, we noticed you missed your appointment on ${missedLabel}.`,
       `We have openings that fit your usual schedule${prefNote}: ${slotLines}.`,
       `Reply with your preferred time or just say RESCHEDULE and we'll get you booked. We'd love to see you soon.`,
     ].join(' ')
@@ -146,7 +146,7 @@ function buildNoShowMessage({
     const topSlots = openSlots.slice(0, 3)
     const slotLines = topSlots.map(s => formatSlotTime(s.scheduled_at)).join(', ')
     return [
-      `Harbor Receptionist: Hi ${firstName}, we missed you at your appointment on ${missedLabel}.`,
+      `Harbor: Hi ${firstName}, we missed you at your appointment on ${missedLabel}.`,
       `We have the following openings available: ${slotLines}.`,
       `Reply with a time that works or say RESCHEDULE and we'll find something that fits.`,
     ].join(' ')
@@ -154,7 +154,7 @@ function buildNoShowMessage({
 
   // Case 4: No open slots at all — gentle nudge to reach out
   return [
-    `Harbor Receptionist: Hi ${firstName}, we missed you at your appointment on ${missedLabel} with ${providerName}.`,
+    `Harbor: Hi ${firstName}, we missed you at your appointment on ${missedLabel} with ${providerName}.`,
     `We don't have any openings showing right now, but reach out and we'll do our best to find a time that works for you.`,
   ].join(' ')
 }

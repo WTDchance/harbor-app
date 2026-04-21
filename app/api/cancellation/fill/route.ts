@@ -176,7 +176,7 @@ async function sendFillSMS(
       const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID
         const messageParams: Record<string, string> = {
                 to: phone,
-                body: `Harbor Receptionist: Hi ${name}, a ${sessionType} appointment just opened at ${practiceName} on ${slotFormatted}. Reply YES to claim it — you have 10 minutes. Reply STOP to opt out. Harbor AI`,
+                body: `Harbor: Hi ${name}, a ${sessionType} appointment just opened at ${practiceName} on ${slotFormatted}. Reply YES to claim it — you have 10 minutes. Reply STOP to opt out. Harbor AI`,
         }
         if (messagingServiceSid) {
                 messageParams.messagingServiceSid = messagingServiceSid

@@ -127,7 +127,7 @@ export default function LandingPage() {
     '@graph': [
       {
         '@type': 'Organization',
-        name: 'Harbor Receptionist',
+        name: 'Harbor',
         url: 'https://harborreceptionist.com',
         logo: 'https://harborreceptionist.com/harbor-logo.svg',
         description: 'AI receptionist built for therapy practices. Answers calls 24/7, screens patients, sends summaries.',
