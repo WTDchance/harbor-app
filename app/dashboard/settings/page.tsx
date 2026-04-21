@@ -1555,32 +1555,47 @@ export default function SettingsPage() {
           </button>
         ) : (
           <div className="space-y-3">
-            <div className="flex flex-wrap gap-3">
-              <a
-                href={(calFeedUrl || '').replace('https://', 'webcal://')}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                Open in Apple Calendar
-              </a>
-              <button
-                onClick={copyCalUrl}
-                className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                {calCopied ? '\u2713 Copied!' : 'Copy Link'}
-              </button>
+            <div className="flex flex-col sm:flex-row gap-4 items-start">
+              <div className="flex-1 min-w-0 w-full">
+                <div className="flex flex-wrap gap-3">
+                  <a
+                    href={(calFeedUrl || '').replace('https://', 'webcal://')}
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 transition-colors"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                    </svg>
+                    Open in Apple Calendar
+                  </a>
+                  <button
+                    onClick={copyCalUrl}
+                    className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    {calCopied ? '\u2713 Copied!' : 'Copy Link'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-400 mt-3">
+                  Works with Apple Calendar, Google Calendar, and Outlook.
+                </p>
+                <button
+                  onClick={regenerateCalToken}
+                  className="text-xs text-red-400 hover:text-red-600 mt-3"
+                >
+                  Regenerate Link (breaks existing subscriptions)
+                </button>
+              </div>
+              {/* QR code — scannable by the therapist's phone camera, opens
+                  the native calendar "Subscribe" prompt instantly. Endpoint
+                  is session-authed + honors admin act-as cookie. */}
+              <div className="flex flex-col items-center gap-2 shrink-0 self-start">
+                <img
+                  src={`/api/calendar/ics-qr?v=${calFeedUrl ? encodeURIComponent(calFeedUrl) : ''}`}
+                  alt="QR code for Harbor calendar subscription"
+                  className="w-32 h-32 rounded-lg border border-gray-200 bg-white p-1"
+                />
+                <p className="text-xs text-gray-400">Scan on phone</p>
+              </div>
             </div>
-            <p className="text-xs text-gray-400">
-              Works with Apple Calendar, Google Calendar, and Outlook.
-            </p>
-            <button
-              onClick={regenerateCalToken}
-              className="text-xs text-red-400 hover:text-red-600"
-            >
-              Regenerate Link (breaks existing subscriptions)
-            </button>
           </div>
         )}
       </div>
