@@ -179,6 +179,12 @@ export default function SettingsPage() {
   const [schedulingSaved, setSchedulingSaved] = useState(false)
 
   // Google Calendar state
+  // HIPAA BAA attestation modal state. The Connect Google Calendar button
+  // now opens this modal FIRST; the actual OAuth handoff only happens
+  // after the practice owner confirms both attestations.
+  const [gcalBaaModalOpen, setGcalBaaModalOpen] = useState(false)
+  const [gcalAttestWorkspace, setGcalAttestWorkspace] = useState(false)
+  const [gcalAttestBaa, setGcalAttestBaa] = useState(false)
   const [gcal, setGcal] = useState<GCalStatus>(null)
   const [gcalLoading, setGcalLoading] = useState(true)
   const [gcalDisconnecting, setGcalDisconnecting] = useState(false)
@@ -1535,8 +1541,9 @@ export default function SettingsPage() {
                   {gcalDisconnecting ? 'Disconnecting\u2026' : 'Disconnect'}
                 </button>
               ) : (
-                <a
-                  href="/api/integrations/google-calendar/auth"
+                <button
+                  type="button"
+                  onClick={() => { setGcalAttestWorkspace(false); setGcalAttestBaa(false); setGcalBaaModalOpen(true) }}
                   className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
@@ -1546,10 +1553,92 @@ export default function SettingsPage() {
                     <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                   </svg>
                   Connect Google Calendar
-                </a>
+                </button>
               )}
             </div>
           </div>
+
+          {/* HIPAA BAA attestation modal — gate before Google OAuth handoff.
+              Calendar events carry patient name + time (PHI). Google only
+              signs a BAA for paid Workspace plans where the admin has
+              accepted the BAA in the admin console. We refuse to connect
+              without both attestations from the practice owner. */}
+          {gcalBaaModalOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="bg-white rounded-2xl max-w-lg w-full shadow-xl p-6">
+                <h3 className="text-lg font-semibold text-gray-900">Before connecting Google Calendar</h3>
+                <p className="mt-2 text-sm text-gray-600">
+                  Harbor writes patient appointment details (name + time) to your calendar. That is
+                  Protected Health Information. Google only covers PHI under HIPAA for paid
+                  <strong> Google Workspace</strong> plans where your admin has
+                  <strong> accepted Google&rsquo;s BAA</strong>. Free <code className="text-xs bg-gray-100 px-1 rounded">@gmail.com</code> accounts are not covered.
+                </p>
+                <p className="mt-3 text-sm text-gray-600">
+                  If you are not sure, <strong>skip this</strong> and use Harbor&rsquo;s dashboard
+                  directly — you can save it to your phone&rsquo;s home screen like an app.
+                </p>
+                <div className="mt-4 space-y-3">
+                  <label className="flex items-start gap-2 text-sm text-gray-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={gcalAttestWorkspace}
+                      onChange={e => setGcalAttestWorkspace(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span>
+                      My Google account is a paid <strong>Google Workspace</strong> plan (Business Starter or higher), not free Gmail.
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 text-sm text-gray-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={gcalAttestBaa}
+                      onChange={e => setGcalAttestBaa(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
+                    />
+                    <span>
+                      My Workspace admin has signed the Google Workspace BAA in the admin console.{' '}
+                      <a
+                        href="https://support.google.com/a/answer/3407054"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-teal-600 underline"
+                      >
+                        How to sign Google&rsquo;s BAA
+                      </a>
+                    </span>
+                  </label>
+                </div>
+                <div className="mt-6 flex flex-col-reverse sm:flex-row gap-2 sm:justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setGcalBaaModalOpen(false)}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <a
+                    aria-disabled={!(gcalAttestWorkspace && gcalAttestBaa)}
+                    href={gcalAttestWorkspace && gcalAttestBaa ? '/api/integrations/google-calendar/auth?baa_attested=1' : '#'}
+                    onClick={e => {
+                      if (!(gcalAttestWorkspace && gcalAttestBaa)) { e.preventDefault() }
+                    }}
+                    className={`px-4 py-2 text-sm font-medium text-white rounded-lg text-center ${
+                      gcalAttestWorkspace && gcalAttestBaa
+                        ? 'bg-teal-600 hover:bg-teal-700'
+                        : 'bg-gray-300 cursor-not-allowed'
+                    }`}
+                  >
+                    Continue to Google
+                  </a>
+                </div>
+                <p className="mt-4 text-xs text-gray-400">
+                  By checking the boxes above you confirm these statements are accurate. Harbor records
+                  your attestation timestamp for our compliance audit.
+                </p>
+              </div>
+            </div>
+          )}
 
         </div>
       </div>
