@@ -185,6 +185,21 @@ export default function SettingsPage() {
   const [gcalBaaModalOpen, setGcalBaaModalOpen] = useState(false)
   const [gcalAttestWorkspace, setGcalAttestWorkspace] = useState(false)
   const [gcalAttestBaa, setGcalAttestBaa] = useState(false)
+
+  // Crisis resources: per-practice referral list Ellie reads to crisis
+  // callers. is_crisis_capable governs whether Ellie promises therapist
+  // follow-up (true) or routes to 988 + local resources (false, default).
+  type CrisisResource = {
+    id: string; name: string; phone: string | null; text_line: string | null;
+    description: string | null; coverage_area: string | null; availability: string | null;
+    is_primary: boolean; active: boolean;
+  }
+  const [crisisResources, setCrisisResources] = useState<CrisisResource[]>([])
+  const [crisisResourcesLoading, setCrisisResourcesLoading] = useState(true)
+  const [isCrisisCapable, setIsCrisisCapable] = useState(false)
+  const [crisisDraft, setCrisisDraft] = useState<Partial<CrisisResource>>({ name: '', phone: '', text_line: '', description: '', availability: '' })
+  const [savingCrisis, setSavingCrisis] = useState(false)
+  const [crisisCapableSaving, setCrisisCapableSaving] = useState(false)
   const [gcal, setGcal] = useState<GCalStatus>(null)
   const [gcalLoading, setGcalLoading] = useState(true)
   const [gcalDisconnecting, setGcalDisconnecting] = useState(false)
@@ -322,7 +337,80 @@ export default function SettingsPage() {
     setLoading(false)
   }, [resolvedPractice, practiceLoading, practiceError])
 
-  // Load Google Calendar connection status
+  // Load crisis resources + is_crisis_capable flag on mount
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setCrisisResourcesLoading(true)
+      try {
+        const [resRes, meRes] = await Promise.all([
+          fetch('/api/crisis-resources'),
+          fetch('/api/practice/me'),
+        ])
+        if (!cancelled && resRes.ok) {
+          const j = await resRes.json()
+          setCrisisResources(j.resources || [])
+        }
+        if (!cancelled && meRes.ok) {
+          const j = await meRes.json()
+          setIsCrisisCapable(!!j.practice?.is_crisis_capable)
+        }
+      } finally {
+        if (!cancelled) setCrisisResourcesLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  async function addCrisisResource() {
+    if (!crisisDraft.name) return
+    setSavingCrisis(true)
+    try {
+      const res = await fetch('/api/crisis-resources', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(crisisDraft),
+      })
+      if (res.ok) {
+        const j = await res.json()
+        setCrisisResources(rs => [...rs, j.resource])
+        setCrisisDraft({ name: '', phone: '', text_line: '', description: '', availability: '' })
+      } else {
+        const j = await res.json().catch(() => ({}))
+        alert('Failed to add resource: ' + (j.error || res.statusText))
+      }
+    } finally {
+      setSavingCrisis(false)
+    }
+  }
+
+  async function deleteCrisisResource(id: string) {
+    if (!confirm('Remove this crisis resource? Ellie will no longer read it to callers.')) return
+    const res = await fetch('/api/crisis-resources/' + id, { method: 'DELETE' })
+    if (res.ok) setCrisisResources(rs => rs.filter(r => r.id !== id))
+  }
+
+  async function toggleCrisisCapable(next: boolean) {
+    setIsCrisisCapable(next)
+    setCrisisCapableSaving(true)
+    try {
+      const res = await fetch('/api/practice/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_crisis_capable: next }),
+      })
+      if (!res.ok) {
+        // Revert on failure
+        setIsCrisisCapable(!next)
+        alert('Failed to update crisis-capability flag.')
+      }
+    } finally {
+      setCrisisCapableSaving(false)
+    }
+  }
+
+    // Load Google Calendar connection status
   useEffect(() => {
     const loadGcal = async () => {
       setGcalLoading(true)
@@ -1334,6 +1422,112 @@ export default function SettingsPage() {
           >
             {intakeSaving ? 'Saving...' : intakeSaved ? '\u2713 Saved' : 'Save Intake Settings'}
           </button>
+        </div>
+      </div>
+
+      {/* Crisis Resources — per-practice referral list Ellie reads to callers
+          in crisis, and toggle for whether this practice provides clinical
+          crisis intervention. Critical for non-crisis-capable providers:
+          when OFF, Ellie routes to 988 + local resources and does not
+          promise therapist callback for crisis. */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Crisis Resources</h2>
+          <p className="text-xs text-gray-400 mt-1">Ellie reads these to callers who show signs of crisis, one at a time with pauses in between. Every crisis call also triggers an email to your notification address and an SMS to the practice phone on file.</p>
+        </div>
+        <div className="p-5 space-y-5">
+
+          <label className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
+            <input
+              type="checkbox"
+              checked={isCrisisCapable}
+              disabled={crisisCapableSaving}
+              onChange={e => toggleCrisisCapable(e.target.checked)}
+              className="mt-1 h-4 w-4 rounded border-amber-300 text-teal-600 focus:ring-teal-500"
+            />
+            <span className="text-sm text-amber-900">
+              <strong>I provide clinical crisis intervention.</strong> Leave OFF if you do not &mdash; Ellie will route callers to 988 + the local resources below without implying you&rsquo;ll call back for crisis response. Only turn this ON if you are trained and available for crisis work.
+            </span>
+          </label>
+
+          {crisisResourcesLoading ? (
+            <div className="text-sm text-gray-400">Loading resources&hellip;</div>
+          ) : (
+            <>
+              {crisisResources.length > 0 ? (
+                <div className="space-y-2">
+                  {crisisResources.map(r => (
+                    <div key={r.id} className="flex items-start justify-between gap-3 p-3 border border-gray-200 rounded-lg">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-900">{r.name}{r.is_primary ? <span className="ml-2 text-xs text-teal-600">(primary)</span> : null}</p>
+                        {r.phone && <p className="text-xs text-gray-600">Call: {r.phone}</p>}
+                        {r.text_line && <p className="text-xs text-gray-600">Text: {r.text_line}</p>}
+                        {r.availability && <p className="text-xs text-gray-500">Hours: {r.availability}</p>}
+                        {r.coverage_area && <p className="text-xs text-gray-500">Area: {r.coverage_area}</p>}
+                        {r.description && <p className="text-xs text-gray-500 mt-1">{r.description}</p>}
+                      </div>
+                      <button
+                        onClick={() => deleteCrisisResource(r.id)}
+                        className="text-xs text-red-600 hover:text-red-800 underline shrink-0"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-gray-400 italic">No local crisis resources yet. Ellie will always refer to 988; add local options below if you want her to mention them too.</div>
+              )}
+
+              <div className="border border-dashed border-gray-300 rounded-lg p-4 space-y-3">
+                <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Add a crisis resource</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    placeholder="Name (e.g. Klamath County Crisis Line)"
+                    value={crisisDraft.name || ''}
+                    onChange={e => setCrisisDraft(d => ({...d, name: e.target.value}))}
+                    className="border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-teal-400"
+                  />
+                  <input
+                    type="tel"
+                    placeholder="Phone (e.g. 541-883-1030)"
+                    value={crisisDraft.phone || ''}
+                    onChange={e => setCrisisDraft(d => ({...d, phone: e.target.value}))}
+                    className="border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-teal-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Text line (optional)"
+                    value={crisisDraft.text_line || ''}
+                    onChange={e => setCrisisDraft(d => ({...d, text_line: e.target.value}))}
+                    className="border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-teal-400"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Hours (e.g. 24/7 or M-F 8-5)"
+                    value={crisisDraft.availability || ''}
+                    onChange={e => setCrisisDraft(d => ({...d, availability: e.target.value}))}
+                    className="border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-teal-400"
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Short description (what makes this resource useful)"
+                  value={crisisDraft.description || ''}
+                  onChange={e => setCrisisDraft(d => ({...d, description: e.target.value}))}
+                  className="w-full border border-gray-200 rounded-md px-3 py-2 text-sm focus:outline-none focus:border-teal-400"
+                />
+                <button
+                  onClick={addCrisisResource}
+                  disabled={!crisisDraft.name || savingCrisis}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-700 disabled:bg-gray-300 rounded-lg"
+                >
+                  {savingCrisis ? 'Adding\u2026' : 'Add Resource'}
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
         </>
