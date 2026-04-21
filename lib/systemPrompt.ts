@@ -28,6 +28,19 @@ export interface SystemPromptData {
   // Practice fax number, used when callers request a fax of ROI or other
   // paperwork. Only exposed in the prompt when set.
   fax_number?: string | null
+  // Crisis handling. When is_crisis_capable=false (default), the CRISIS
+  // PROTOCOL is rewritten so Ellie does NOT promise therapist follow-up —
+  // she redirects to 988 + the configured local resources.
+  is_crisis_capable?: boolean
+  crisis_resources?: Array<{
+    name: string
+    phone?: string | null
+    text_line?: string | null
+    description?: string | null
+    availability?: string | null
+    coverage_area?: string | null
+    is_primary?: boolean
+  }>
 }
 
 export function buildSystemPrompt(data: SystemPromptData): string {
@@ -142,9 +155,14 @@ CRISIS PROTOCOL:
 If a caller mentions suicide, self-harm, wanting to die, hurting themselves, overdose, or any immediate safety concern:
 1. Say: "I hear you, and I'm really glad you called. Your safety is the most important thing right now. Please call or text 988 - that's the Suicide and Crisis Lifeline. They're available 24/7 and can help you right now."
 2. If they seem in immediate danger, encourage them to call 911.
-3. Say: "I'm also going to make sure ${data.therapist_name} knows you called so they can follow up with you personally."
-4. Try to get their name and phone number.
-5. Stay compassionate. Do NOT minimize what they are feeling.`
+${data.is_crisis_capable
+  ? `3. Say: "I'm also going to make sure ${data.therapist_name} knows you called so they can follow up with you personally."`
+  : `3. Say: "I'm going to let ${data.therapist_name} know you called, but please don't wait for a call back if you're in immediate danger — ${data.therapist_name} doesn't provide crisis intervention, so 988 is the fastest way to reach someone trained for this exact moment."`}
+${(data.crisis_resources && data.crisis_resources.length > 0)
+  ? `4. Offer the local crisis resources below ONE AT A TIME, starting with the primary. Pause and check in between each. Do not rattle them all off at once.\n\nLOCAL CRISIS RESOURCES:\n` + data.crisis_resources.map((r, i) => `  ${i + 1}. ${r.name}${r.phone ? ` — call ${r.phone}` : ''}${r.text_line ? ` (text ${r.text_line})` : ''}${r.availability ? ` (${r.availability})` : ''}${r.description ? `. ${r.description}` : ''}`).join('\n')
+  : '4. If they need additional resources beyond 988, offer to connect them but acknowledge you do not have specific local crisis contacts on file.'}
+5. Try to get their name and phone number so we can document the call, but safety first — do not block on this.
+6. Stay compassionate. Do NOT minimize what they are feeling. Do NOT rush them off the phone.`
 
   if (data.emotional_support_enabled !== false) {
     prompt += `

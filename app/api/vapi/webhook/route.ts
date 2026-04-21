@@ -228,7 +228,7 @@ async function handleAssistantRequest(message: any) {
     .select(
       `id, vapi_assistant_id, name, ai_name, timezone, greeting,
        provider_name, specialties, location, telehealth, insurance_accepted,
-       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number`
+       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number, is_crisis_capable, notification_email, notification_emails`
     )
     .eq('id', practiceId)
     .maybeSingle()
@@ -263,6 +263,15 @@ async function handleAssistantRequest(message: any) {
       .order('is_primary', { ascending: false })
       .order('created_at', { ascending: true })
 
+    const { data: crisisResourceRows } = await supabaseAdmin
+      .from('practice_crisis_resources')
+      .select('name, phone, text_line, description, availability, coverage_area, is_primary')
+      .eq('practice_id', practiceId)
+      .eq('active', true)
+      .order('is_primary', { ascending: false })
+      .order('sort_order', { ascending: true })
+      .order('created_at', { ascending: true })
+
     freshSystemPrompt = buildSystemPrompt({
       therapist_name: practice.provider_name || aiName,
       practice_name: practice.name || practiceName,
@@ -279,6 +288,16 @@ async function handleAssistantRequest(message: any) {
         display_name: t.display_name,
         credentials: t.credentials,
         bio: t.bio,
+      })),
+      is_crisis_capable: (practice as any).is_crisis_capable === true,
+      crisis_resources: (crisisResourceRows || []).map((r: any) => ({
+        name: r.name,
+        phone: r.phone,
+        text_line: r.text_line,
+        description: r.description,
+        availability: r.availability,
+        coverage_area: r.coverage_area,
+        is_primary: r.is_primary,
       })),
     })
 
@@ -1140,6 +1159,34 @@ async function processEndOfCall(opts: {
       }
     } catch (err) {
       console.error('[Vapi] Crisis alert error:', err)
+    }
+
+    // Crisis email — independent of SMS path so a Twilio failure cannot
+    // suppress email notification. Fires for EVERY detected crisis, with or
+    // without an SMS send. Non-blocking on its own errors.
+    try {
+      const recipients: string[] = []
+      const pAny = practice as any
+      if (pAny.notification_email) recipients.push(pAny.notification_email)
+      if (Array.isArray(pAny.notification_emails)) {
+        for (const e of pAny.notification_emails) if (typeof e === 'string' && e && !recipients.includes(e)) recipients.push(e)
+      }
+      if (recipients.length > 0) {
+        const { sendEmail } = await import('@/lib/email')
+        const capable = pAny.is_crisis_capable === true
+        const subject = `⚠️ Harbor Crisis Alert — ${practiceName}`
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+        const safeSummary = (callSummary || '').slice(0, 800)
+        const html = `<div style="font-family:-apple-system,sans-serif;line-height:1.5;"><h2 style="color:#b91c1c;margin-bottom:4px;">Crisis alert — please review</h2><p style="margin:0 0 12px 0;color:#555;">A caller at <strong>${practiceName}</strong> showed signs of crisis.</p><table style="border-collapse:collapse;margin:12px 0;font-size:14px;"><tr><td style="padding:4px 12px 4px 0;color:#555;">Caller phone</td><td><strong>${customerPhone || 'unknown'}</strong></td></tr><tr><td style="padding:4px 12px 4px 0;color:#555;">Call duration</td><td>${Math.round(duration)}s</td></tr><tr><td style="padding:4px 12px 4px 0;color:#555;">988 referral</td><td>Provided by Ellie</td></tr><tr><td style="padding:4px 12px 4px 0;color:#555;">Practice handles crisis</td><td>${capable ? 'Yes' : 'No — routed to 988 + local resources'}</td></tr></table>${safeSummary ? `<div style="background:#fef2f2;border:1px solid #fecaca;padding:12px;border-radius:8px;"><p style="margin:0;font-weight:600;">Summary</p><p style="margin:4px 0 0 0;white-space:pre-wrap;">${safeSummary}</p></div>` : ''}<p style="margin-top:16px;"><a href="${appUrl}/dashboard/crisis" style="background:#0d9488;color:white;padding:8px 16px;text-decoration:none;border-radius:6px;display:inline-block;">Open Crisis Dashboard</a></p></div>`
+        for (const rcpt of recipients) {
+          await sendEmail({ to: rcpt, subject, html })
+        }
+        console.log(`[Vapi] Crisis email sent to ${recipients.length} recipient(s)`)
+      } else {
+        console.warn('[Vapi] Crisis detected but no notification_email configured')
+      }
+    } catch (emailErr: any) {
+      console.error('[Vapi] Crisis email failed (non-blocking):', emailErr?.message)
     }
   }
 
