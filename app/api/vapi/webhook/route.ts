@@ -130,6 +130,18 @@ const CRISIS_CONCERNS = [
   'hurting myself',
 ]
 
+// Phrases that appear in Claude-generated call summaries when a crisis or
+// passive ideation was observed clinically — even when the raw transcript
+// phrased it obliquely ("not worth shit" rather than "suicidal"). Scanning
+// the summary catches ideation our transcript-phrase lists miss.
+const SUMMARY_CRISIS_MARKERS = [
+  'suicidal ideation', 'passive suicidal', 'active suicidal',
+  'crisis referral', '988 referral', 'safety concern',
+  'self-harm', 'self harm', 'suicidality',
+  'crisis intervention', 'crisis protocol', 'immediate risk',
+  'safety planning',
+]
+
 // ---- POST handler ----
 export async function POST(request: NextRequest) {
   try {
@@ -743,14 +755,23 @@ async function processEndOfCall(opts: {
     }
   }
 
-  // 2. Crisis detection
-  // Tier 1: fast keyword scan
+  // 2. Crisis detection — Tier 1 keywords + Tier 2 Claude contextual.
+  //
+  // We scan BOTH the raw transcript AND the Claude-generated summary. The
+  // summary regularly labels passive ideation the keyword lists miss
+  // (e.g. a caller says 'not worth shit'; the summary calls it 'passive
+  // suicidal ideation'). If either surface fires, we record the alert.
+  //
+  // We run Claude contextual analysis UNCONDITIONALLY when the summary
+  // contains any SUMMARY_CRISIS_MARKER. This catches ideation whose raw
+  // transcript phrasing is oblique enough to bypass both phrase lists.
   const transcriptLower = transcriptText.toLowerCase()
+  const summaryLower = (callSummary || '').toLowerCase()
   let crisisDetected = false
-  let crisisLevel = ''
+  let crisisLevel: '' | 'concern' | 'immediate' = ''
 
   for (const phrase of IMMEDIATE_CRISIS) {
-    if (transcriptLower.includes(phrase)) {
+    if (transcriptLower.includes(phrase) || summaryLower.includes(phrase)) {
       crisisDetected = true
       crisisLevel = 'immediate'
       break
@@ -758,20 +779,43 @@ async function processEndOfCall(opts: {
   }
   if (!crisisDetected) {
     for (const phrase of CRISIS_CONCERNS) {
-      if (transcriptLower.includes(phrase)) {
+      if (transcriptLower.includes(phrase) || summaryLower.includes(phrase)) {
         crisisLevel = 'concern'
         break
       }
     }
   }
 
-  // Tier 2: Claude deep analysis (only if keywords flagged something)
-  if (crisisLevel && !crisisDetected) {
-    try {
-      crisisDetected = await detectCrisisIndicators(transcriptText)
-    } catch {
-      crisisDetected = crisisLevel === 'immediate'
+  // Summary-marker scan: these are labels that only appear when Claude
+  // (post-call) concluded the caller was in crisis. A hit here means the
+  // intelligence already did the work; we just have to record the alert.
+  let summaryFlagged = false
+  for (const marker of SUMMARY_CRISIS_MARKERS) {
+    if (summaryLower.includes(marker)) {
+      summaryFlagged = true
+      crisisLevel = crisisLevel === 'immediate' ? 'immediate' : 'concern'
+      break
     }
+  }
+
+  // Claude contextual — runs if concerning keywords hit OR summary flagged,
+  // not only when Tier-1 matched something. This is the fix that catches
+  // passive ideation expressed obliquely in the transcript.
+  if (!crisisDetected && (crisisLevel || summaryFlagged)) {
+    try {
+      const sample = `${callSummary ? callSummary + '\n\n' : ''}${transcriptText.slice(0, 4000)}`
+      crisisDetected = await detectCrisisIndicators(sample)
+    } catch (contextErr: any) {
+      console.warn('[Vapi] Claude crisis contextual failed; failing-safe based on tier', contextErr?.message)
+      // Fail-safe: any summary marker OR immediate keyword treated as crisis.
+      crisisDetected = crisisLevel === 'immediate' || summaryFlagged
+    }
+  }
+  if (!crisisDetected && summaryFlagged) {
+    // Summary marker alone is enough to open an alert — we do NOT require
+    // Claude agreement. Clinical language in the summary means Ellie already
+    // acted as if there was a crisis during the call; the record must match.
+    crisisDetected = true
   }
 
   // 3. Analyze transcript for Tier 1 data moat metrics
@@ -833,7 +877,10 @@ async function processEndOfCall(opts: {
   if (callLogError) {
     console.error('[Vapi] Failed to upsert call log:', callLogError.message, callLogError.details)
     // Fallback: try plain insert (in case upsert conflict on empty/null vapi_call_id)
-    const { error: insertError } = await supabaseAdmin.from('call_logs').insert(callLogData)
+    const { data: insertedCallLog, error: insertError } = await supabaseAdmin.from('call_logs')
+      .insert(callLogData)
+      .select('id')
+      .single()
     if (insertError) {
       console.error('[Vapi] Fallback insert also failed:', insertError.message)
     } else {
@@ -1041,16 +1088,35 @@ async function processEndOfCall(opts: {
     },
   })
 
-  // 5. Crisis alert â save and SMS the therapist
+    // 5. Crisis alert — save and SMS the therapist.
+  //
+  // Schema note: crisis_alerts real columns are practice_id, call_log_id,
+  // patient_phone, triggered_at, sms_sent, reviewed, keywords_found. Earlier
+  // versions of this handler wrote call_id / severity / transcript_excerpt /
+  // created_at which silently failed every insert. Keep the payload aligned
+  // with the table definition or these rows never land.
   if (crisisDetected) {
+    const callLogRowId: string | null = insertedCallLog?.id ?? null
+    const keywordsFound: string[] = []
+    for (const p of IMMEDIATE_CRISIS) {
+      if (transcriptLower.includes(p) || (callSummary || '').toLowerCase().includes(p)) keywordsFound.push(p)
+    }
+    for (const p of CRISIS_CONCERNS) {
+      if (transcriptLower.includes(p) || (callSummary || '').toLowerCase().includes(p)) keywordsFound.push(p)
+    }
+    for (const p of SUMMARY_CRISIS_MARKERS) {
+      if ((callSummary || '').toLowerCase().includes(p)) keywordsFound.push(`summary:${p}`)
+    }
+    if (keywordsFound.length === 0) keywordsFound.push('claude_contextual')
     try {
       const { error: crisisError } = await supabaseAdmin.from('crisis_alerts').insert({
         practice_id: practiceId,
-        call_id: vapiCallId,
+        call_log_id: callLogRowId,
         patient_phone: customerPhone || null,
-        severity: crisisLevel === 'immediate' ? 'high' : 'medium',
-        transcript_excerpt: transcriptText.slice(0, 500),
-        created_at: new Date().toISOString(),
+        triggered_at: new Date().toISOString(),
+        sms_sent: false,
+        reviewed: false,
+        keywords_found: keywordsFound,
       })
       if (crisisError) console.error('[Vapi] Crisis alert save error:', crisisError.message)
 

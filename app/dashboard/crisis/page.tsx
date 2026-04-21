@@ -11,7 +11,7 @@ interface CrisisAlert {
   keywords_found: string[]
   reviewed: boolean
   reviewed_at: string | null
-  created_at: string
+  triggered_at: string
   call_logs?: {
     summary: string | null
     duration_seconds: number
@@ -58,9 +58,9 @@ export default function CrisisPage() {
     // Get crisis alerts
     let query = supabase
       .from('crisis_alerts')
-      .select('id, call_log_id, patient_phone, keywords_found, reviewed, reviewed_at, created_at, call_logs(summary, duration_seconds, transcript)')
+      .select('id, call_log_id, patient_phone, keywords_found, reviewed, reviewed_at, triggered_at, call_logs(summary, duration_seconds, transcript)')
       .eq('practice_id', practiceId)
-      .order('created_at', { ascending: false })
+      .order('triggered_at', { ascending: false })
 
     const { data } = await query
     setAlerts(data || [])
@@ -167,7 +167,7 @@ export default function CrisisPage() {
                       <p className="font-semibold text-gray-900">{alert.patient_phone}</p>
                     </div>
                     <div className="flex items-center gap-4 text-sm text-gray-500 mb-3">
-                      <span>{timeAgo(alert.created_at)}</span>
+                      <span>{timeAgo(alert.triggered_at)}</span>
                       {call && <span className="flex items-center gap-1"><Clock className="w-3.5 h-3.5" />{formatDuration(call.duration_seconds)}</span>}
                     </div>
                     {alert.keywords_found?.length > 0 && (
