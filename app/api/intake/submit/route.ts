@@ -455,4 +455,45 @@ export async function GET(req: NextRequest) {
     if (!intake) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     let practiceName = ''
-    let intakeConfig: Record<string, boolean> | null =
+    let intakeConfig: Record<string, boolean> | null = null
+    if (intake.practice_id) {
+      const { data: practice } = await supabase
+        .from('practices')
+        .select('name, provider_name, intake_config')
+        .eq('id', intake.practice_id)
+        .single()
+      practiceName = practice?.provider_name || practice?.name || ''
+      intakeConfig = practice?.intake_config?.sections || null
+    }
+
+    let documents: Array<{
+      id: string; name: string; requires_signature: boolean;
+      content_url: string | null; description: string | null
+    }> = []
+    if (intake.practice_id) {
+      const { data: docs } = await supabase
+        .from('intake_documents')
+        .select('id, name, requires_signature, content_url, description')
+        .eq('practice_id', intake.practice_id)
+        .eq('active', true)
+        .order('sort_order', { ascending: true })
+      documents = docs || []
+    }
+
+    return NextResponse.json({
+      valid: intake.status === 'pending' && new Date(intake.expires_at) > new Date(),
+      status: intake.status,
+      patient_name: intake.patient_name,
+      patient_phone: intake.patient_phone,
+      patient_email: intake.patient_email,
+      practice_name: practiceName,
+      questionnaire_type: intake.questionnaire_type,
+      expires_at: intake.expires_at,
+      documents,
+      intake_config: intakeConfig
+    })
+  } catch (error) {
+    console.error('Intake GET error:', error)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}

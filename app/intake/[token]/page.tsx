@@ -1166,4 +1166,21 @@ export default function IntakePage() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">Type your full name to sign *</label>
                   <input type="text" value={signedName} onChange={e => setSignedName(e.target.value)}
                     placeholder="e.g., John M. Doe"
-                    className="w-full border bord
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
+                </div>
+                <SignaturePad label="Your signature *" onSignatureChange={setMainSignature} />
+              </div>
+            )}
+
+            <button onClick={handleSubmit}
+              disabled={!signedName || !mainSignature}
+              className="w-full mt-4 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
+              Submit Intake Forms ✓
+            </button>
+            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

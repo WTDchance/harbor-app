@@ -195,4 +195,32 @@ async function handleReminders(request: NextRequest) {
 function formatTime(timeStr: string): string {
   try {
     const [hours, minutes] = timeStr.split(':').map(Number)
-    const ampm = hours >= 12 ? 'P
+    const ampm = hours >= 12 ? 'PM' : 'AM'
+    const displayHour = hours % 12 || 12
+    return `${displayHour}:${minutes.toString().padStart(2, '0')} ${ampm}`
+  } catch {
+    return timeStr
+  }
+}
+
+// Helper to format "2026-04-04" \u2192 "Friday, April 4"
+function formatDate(dateStr: string): string {
+  try {
+    const date = new Date(dateStr + 'T12:00:00')
+    return date.toLocaleDateString('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    })
+  } catch {
+    return dateStr
+  }
+}
+
+export async function POST(request: NextRequest) {
+  return handleReminders(request)
+}
+
+export async function GET(request: NextRequest) {
+  return handleReminders(request)
+}
