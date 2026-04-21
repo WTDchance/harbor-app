@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { sendSMS } from '@/lib/twilio'
 import { sendReminderEmail } from '@/lib/reminder-email'
+import { checkSmsConsent } from '@/lib/sms-consent'
 
 const REMINDER_SECRET = process.env.REMINDER_SECRET
 // Set to 'email' to only send email, 'sms' for only SMS, 'both' for both
@@ -124,18 +125,29 @@ async function handleReminders(request: NextRequest) {
 
         // --- Send SMS reminder ---
         if ((channel === 'sms' || channel === 'both') && patient?.phone) {
-          try {
-            const timeDisplay = timeStr ? ` at ${timeStr}` : ''
-            const greeting = patient.first_name ? `Hi ${patient.first_name}!` : 'Hi!'
-            const message = `${greeting} This is a reminder of your appointment with ${practiceName} tomorrow${timeDisplay}. Reply STOP to opt out.`
+          // HIPAA/TCPA consent gate: appointment reminders include therapist
+          // name + time which IS PHI. We only send if the patient has
+          // explicitly consented via intake (sms_consent_given_at set) and
+          // hasn't subsequently opted out via STOP.
+          const consent = await checkSmsConsent(practice.id, patient.phone)
+          if (!consent.allowed) {
+            console.log(
+              `[reminders] SMS skipped for appt ${appt.id} — reason=${consent.reason} (patient ${consent.patientId ?? '?'})`
+            )
+          } else {
+            try {
+              const timeDisplay = timeStr ? ` at ${timeStr}` : ''
+              const greeting = patient.first_name ? `Hi ${patient.first_name}!` : 'Hi!'
+              const message = `${greeting} This is a reminder of your appointment with ${practiceName} tomorrow${timeDisplay}. Reply STOP to opt out.`
 
-            await sendSMS(patient.phone, message)
-            smsSent++
-            reminderSent = true
-            console.log(`\u2713 SMS reminder sent to ${firstName}`)
-          } catch (smsErr) {
-            console.error(`SMS error for appt ${appt.id}:`, smsErr)
-            errors.push(`sms:${appt.id}`)
+              await sendSMS(patient.phone, message, practice.id)
+              smsSent++
+              reminderSent = true
+              console.log(`\u2713 SMS reminder sent to ${firstName}`)
+            } catch (smsErr) {
+              console.error(`SMS error for appt ${appt.id}:`, smsErr)
+              errors.push(`sms:${appt.id}`)
+            }
           }
         }
 
@@ -183,32 +195,4 @@ async function handleReminders(request: NextRequest) {
 function formatTime(timeStr: string): string {
   try {
     const [hours, minutes] = timeStr.split(':').map(Number)
-    const ampm = hours >= 12 ? 'PM' : 'AM'
-    const displayHour = hours % 12 || 12
-    return `${displayHour}:${minutes.toString().padStart(2, '0')} ${ampm}`
-  } catch {
-    return timeStr
-  }
-}
-
-// Helper to format "2026-04-04" \u2192 "Friday, April 4"
-function formatDate(dateStr: string): string {
-  try {
-    const date = new Date(dateStr + 'T12:00:00')
-    return date.toLocaleDateString('en-US', {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    })
-  } catch {
-    return dateStr
-  }
-}
-
-export async function POST(request: NextRequest) {
-  return handleReminders(request)
-}
-
-export async function GET(request: NextRequest) {
-  return handleReminders(request)
-}
+    const ampm = hours >= 12 ? 'P

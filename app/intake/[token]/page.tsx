@@ -596,7 +596,9 @@ export default function IntakePage() {
               </div>
 
               
-          {/* SMS Consent */}
+          {/* SMS Consent — covers TCPA + HIPAA minimum-necessary risk disclosure.
+              Version string is persisted on the patient record when this box is
+              checked, so future wording changes don't orphan past consent. */}
           <div className="mt-6 p-4 border border-gray-200 rounded-lg bg-gray-50">
             <label className="flex items-start gap-3 cursor-pointer">
               <input
@@ -606,8 +608,14 @@ export default function IntakePage() {
                 className="mt-1 h-4 w-4 rounded border-gray-300 text-teal-600 focus:ring-teal-500"
               />
               <span className="text-sm text-gray-700">
-                I agree to receive appointment-related SMS messages from this practice via Harbor Receptionist.
-                Message frequency varies based on your scheduled appointments. Message and data rates may apply.
+                <strong>SMS consent (optional).</strong> I agree to receive text messages from this practice
+                about my care — including appointment reminders, confirmations, cancellations, intake forms,
+                and scheduling follow-ups. These messages may include limited identifying details such as my
+                name, the therapist&rsquo;s name, and my appointment date/time.
+                <br /><br />
+                <strong>I understand that standard SMS is not end-to-end encrypted</strong> and
+                could potentially be seen by someone with access to my phone or mobile carrier. I accept
+                this risk. Message frequency varies based on my appointments. Message and data rates may apply.
                 Reply <strong>STOP</strong> to opt out at any time. Reply <strong>HELP</strong> for help.
                 View our <a href="/privacy-policy" target="_blank" className="text-teal-600 underline">Privacy Policy</a> and{' '}
                 <a href="/sms" target="_blank" className="text-teal-600 underline">SMS Terms</a>.
@@ -1158,21 +1166,4 @@ export default function IntakePage() {
                   <label className="block text-xs font-medium text-gray-600 mb-1">Type your full name to sign *</label>
                   <input type="text" value={signedName} onChange={e => setSignedName(e.target.value)}
                     placeholder="e.g., John M. Doe"
-                    className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-teal-400" />
-                </div>
-                <SignaturePad label="Your signature *" onSignatureChange={setMainSignature} />
-              </div>
-            )}
-
-            <button onClick={handleSubmit}
-              disabled={!signedName || !mainSignature}
-              className="w-full mt-4 bg-teal-500 hover:bg-teal-600 disabled:bg-gray-200 disabled:text-gray-400 text-white font-semibold py-3 rounded-xl transition">
-              Submit Intake Forms ✓
-            </button>
-            <button onClick={prevStep} className="w-full mt-2 text-gray-400 text-sm py-2">← Back</button>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
+                    className="w-full border bord

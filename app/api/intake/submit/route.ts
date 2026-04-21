@@ -3,6 +3,14 @@ import { createServiceClient } from '@/lib/supabase-service'
 import { logCommunication } from '@/lib/patientCommunications'
 import { runAndPersistEligibilityCheck } from '@/lib/stedi/eligibility'
 
+/**
+ * Bumped any time the SMS-consent wording on the intake form changes.
+ * Keep in sync with the text displayed in app/intake/[token]/page.tsx
+ * near the `SMS Consent` comment. Patients get this tag stamped on their
+ * record so we can prove which wording they agreed to, even after updates.
+ */
+const SMS_CONSENT_TEXT_VERSION = 'v2-2026-04-20-hipaa-disclosure'
+
 // PHQ-9 scoring
 function scorePHQ9(answers: number[]): { score: number; severity: string; recommendation: string } {
   const score = answers.reduce((a, b) => a + b, 0)
@@ -117,8 +125,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Failed to save your responses' }, { status: 500 })
     }
 
+    // Capture client IP for consent audit trail. x-forwarded-for is the
+    // Railway/Next front-door; fall back to the Next request hint.
+    const clientIp =
+      req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      req.headers.get('x-real-ip') ||
+      null
+
     // FIX: Update the PATIENT record with demographics from intake
-    await updatePatientFromIntake(supabase, intake, demographics, insurance, phq9Result, gad7Result)
+    await updatePatientFromIntake(supabase, intake, demographics, insurance, phq9Result, gad7Result, clientIp)
 
     // Eligibility pre-check: create/update insurance_records and fire a Stedi
     // 270. Non-blocking on failure — intake submission must always succeed.
@@ -210,7 +225,8 @@ async function updatePatientFromIntake(
   demographics: any,
   insurance: any,
   phq9Result: any,
-  gad7Result: any
+  gad7Result: any,
+  clientIp: string | null = null
 ) {
   try {
     let patientId = intake.patient_id
@@ -273,6 +289,16 @@ async function updatePatientFromIntake(
 
     updates.intake_completed = true
     updates.intake_completed_at = new Date().toISOString()
+
+    // SMS consent audit trail. Only set when the patient ACTIVELY checked the
+    // box — don't overwrite a prior 'true' with 'false' (a patient might
+    // complete a second intake form later; consent withdrawal flows through
+    // the STOP keyword / sms_opt_outs table, not this form).
+    if (demographics?.sms_consent === true) {
+      updates.sms_consent_given_at = new Date().toISOString()
+      updates.sms_consent_text_version = SMS_CONSENT_TEXT_VERSION
+      if (clientIp) updates.sms_consent_ip = clientIp
+    }
 
     const { error: updateError } = await supabase
       .from('patients')
@@ -428,38 +454,4 @@ export async function GET(req: NextRequest) {
         .select('name, provider_name, intake_config')
         .eq('id', intake.practice_id)
         .single()
-      practiceName = practice?.provider_name || practice?.name || ''
-      intakeConfig = practice?.intake_config?.sections || null
-    }
-
-    let documents: Array<{
-      id: string; name: string; requires_signature: boolean;
-      content_url: string | null; description: string | null
-    }> = []
-    if (intake.practice_id) {
-      const { data: docs } = await supabase
-        .from('intake_documents')
-        .select('id, name, requires_signature, content_url, description')
-        .eq('practice_id', intake.practice_id)
-        .eq('active', true)
-        .order('sort_order', { ascending: true })
-      documents = docs || []
-    }
-
-    return NextResponse.json({
-      valid: intake.status === 'pending' && new Date(intake.expires_at) > new Date(),
-      status: intake.status,
-      patient_name: intake.patient_name,
-      patient_phone: intake.patient_phone,
-      patient_email: intake.patient_email,
-      practice_name: practiceName,
-      questionnaire_type: intake.questionnaire_type,
-      expires_at: intake.expires_at,
-      documents,
-      intake_config: intakeConfig
-    })
-  } catch (error) {
-    console.error('Intake GET error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
+      practiceName = practice?.provider_nam
