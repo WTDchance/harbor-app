@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 import { createClient } from '@/lib/supabase-server'
 
 export const dynamic = 'force-dynamic'
@@ -8,9 +9,9 @@ async function resolvePracticeId(): Promise<string | null> {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
-  const { data } = await supabaseAdmin
-    .from('users').select('practice_id').eq('id', user.id).maybeSingle()
-  return data?.practice_id ?? null
+  // Honor the admin act-as cookie so an admin viewing Harbor Demo gets the
+  // Harbor Demo feed URL, not their own user.practice_id.
+  return await getEffectivePracticeId(supabase, user)
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
