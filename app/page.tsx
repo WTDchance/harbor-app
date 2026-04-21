@@ -1,4 +1,5 @@
 'use client'
+// Build marker: 2026-04-21 — post-Railway-trial resume (crisis UI + email)
 
 import Link from 'next/link'
 import Image from 'next/image'
