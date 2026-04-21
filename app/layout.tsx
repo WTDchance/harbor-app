@@ -12,14 +12,10 @@ export const metadata: Metadata = {
     template: '%s | Harbor Receptionist',
   },
   description:
-    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $397/mo.",
+    "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries — starting at $197/mo.",
   viewport: 'width=device-width, initial-scale=1',
   icons: {
-    icon: [
-      { url: '/harbor-icon-clean.png', type: 'image/png' },
-    ],
-    shortcut: '/harbor-icon-clean.png',
-    apple: '/harbor-icon-clean.png',
+    icon: '/favicon.ico',
   },
   manifest: '/manifest.json',
   appleWebApp: {
@@ -70,13 +66,16 @@ export default function RootLayout({
       <head>
         <meta charSet="utf-8" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
         <meta name="apple-mobile-web-app-title" content="Harbor" />
-        <meta name="theme-color" content="#1f375d" />
+        <meta name="application-name" content="Harbor" />
+        <meta name="theme-color" content="#0d9488" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" type="image/png" href="/harbor-icon-clean.png" />
-        <link rel="shortcut icon" type="image/png" href="/harbor-icon-clean.png" />
-        <link rel="apple-touch-icon" href="/harbor-icon-clean.png" />
+        <link rel="icon" type="image/png" href="/favicon.ico" />
+        {/* iOS home-screen icon — Safari ignores manifest icons and uses this. */}
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
         {/* Chunk-load error recovery. Catches stale-chunk 404s after a deploy
             and force-reloads once per 30s to get fresh HTML. Silent no-op
@@ -173,18 +172,4 @@ y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
             {children}
           </PostHogProvider>
         </Suspense>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-          if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('/sw.js').catch(function(error) {
-              console.log('Service Worker registration failed:', error)
-            })
-          }
-        `,
-          }}
-        />
-      </body>
-    </html>
-  )
-}
+       
