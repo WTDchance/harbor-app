@@ -58,7 +58,12 @@ export async function GET(req: NextRequest) {
       scope: scopes.join(' '),
       access_type: 'offline',
       prompt: 'consent',
-      state: Buffer.from(JSON.stringify({ practiceId })).toString('base64')
+      // Propagate the attestation into OAuth state so the callback can
+      // enforce that sync is only enabled after Workspace-BAA attestation.
+      state: Buffer.from(JSON.stringify({
+        practiceId,
+        baaAttested: req.nextUrl.searchParams.get('baa_attested') === '1',
+      })).toString('base64')
     })
 
     const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`

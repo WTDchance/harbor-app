@@ -69,6 +69,13 @@ export default function CalendarPage() {
   const [saveMsg, setSaveMsg] = useState('')
   const [connections, setConnections] = useState<CalendarConnection[]>([])
 
+  // Harbor ICS feed state — read-only subscription URL per practice.
+  const [feedUrls, setFeedUrls] = useState<{ https: string; webcal: string } | null>(null)
+  const [feedLoading, setFeedLoading] = useState(true)
+  const [feedCopied, setFeedCopied] = useState(false)
+  const [feedRegenerating, setFeedRegenerating] = useState(false)
+  const [feedRevision, setFeedRevision] = useState(0)
+
   const supabase = createClient()
   const days = buildCalendarDays(year, month)
   const monthStart = toDateStr(new Date(year, month, 1))
@@ -78,6 +85,49 @@ export default function CalendarPage() {
     fetchAppointments()
     fetchConnections()
   }, [year, month])
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      setFeedLoading(true)
+      try {
+        const res = await fetch('/api/calendar/ics-token')
+        if (!res.ok) throw new Error('fetch failed')
+        const data = await res.json()
+        if (!cancelled) setFeedUrls({ https: data.https_url, webcal: data.webcal_url })
+      } catch {
+        if (!cancelled) setFeedUrls(null)
+      } finally {
+        if (!cancelled) setFeedLoading(false)
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [feedRevision])
+
+  async function regenerateFeed() {
+    if (!confirm('Regenerate the feed URL? Subscribed calendar apps will stop syncing and need the new URL.')) return
+    setFeedRegenerating(true)
+    try {
+      const res = await fetch('/api/calendar/ics-token', { method: 'POST' })
+      if (!res.ok) throw new Error('regen failed')
+      const data = await res.json()
+      setFeedUrls({ https: data.https_url, webcal: data.webcal_url })
+      setFeedRevision(r => r + 1)
+    } catch {
+      alert('Failed to regenerate. Try again or contact support.')
+    } finally {
+      setFeedRegenerating(false)
+    }
+  }
+
+  function copyFeedUrl() {
+    if (!feedUrls) return
+    navigator.clipboard.writeText(feedUrls.webcal).then(() => {
+      setFeedCopied(true)
+      setTimeout(() => setFeedCopied(false), 2000)
+    })
+  }
 
   async function fetchAppointments() {
     setLoading(true)
@@ -157,6 +207,69 @@ export default function CalendarPage() {
           <Plus className="w-4 h-4" />
           New Appointment
         </Link>
+      </div>
+
+      {/* Harbor ICS subscription feed */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">
+        <div className="flex items-start justify-between gap-4 mb-4">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700">Subscribe to your Harbor calendar</h2>
+            <p className="text-xs text-gray-500 mt-1">One URL per practice. Paste into Apple Calendar, Google Calendar, or Outlook to see all Harbor appointments natively. PHI is minimized — event titles are &ldquo;Harbor appointment&rdquo; with a reference ID; full details stay in Harbor.</p>
+          </div>
+          {feedUrls && (
+            <button
+              onClick={regenerateFeed}
+              disabled={feedRegenerating}
+              className="text-xs text-gray-500 hover:text-gray-700 underline disabled:opacity-50 whitespace-nowrap"
+              title="Revokes existing subscribers"
+            >
+              {feedRegenerating ? 'Regenerating\u2026' : 'Regenerate URL'}
+            </button>
+          )}
+        </div>
+        {feedLoading ? (
+          <div className="h-20 flex items-center justify-center text-sm text-gray-400">Loading feed\u2026</div>
+        ) : !feedUrls ? (
+          <div className="h-20 flex items-center justify-center text-sm text-red-500">Feed unavailable. Refresh or contact support.</div>
+        ) : (
+          <div className="flex flex-col md:flex-row gap-5 items-start">
+            <div className="flex-1 min-w-0 w-full">
+              <label className="block text-xs font-medium text-gray-600 mb-1">Subscription URL</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={feedUrls.webcal}
+                  onClick={e => (e.target as HTMLInputElement).select()}
+                  className="flex-1 min-w-0 px-3 py-2 text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg text-gray-700"
+                />
+                <button
+                  onClick={copyFeedUrl}
+                  className="px-3 py-2 text-xs font-medium text-white bg-teal-600 hover:bg-teal-700 rounded-lg whitespace-nowrap"
+                >
+                  {feedCopied ? '\u2713 Copied' : 'Copy'}
+                </button>
+              </div>
+              <p className="text-xs text-gray-400 mt-2">Tip: tap the URL on your phone to add it to Apple Calendar or Google Calendar automatically.</p>
+              <details className="mt-3 text-xs">
+                <summary className="cursor-pointer text-gray-500 hover:text-gray-700">Setup instructions for Apple, Google, and Outlook</summary>
+                <div className="mt-2 space-y-2 text-gray-600 pl-2 border-l-2 border-gray-100">
+                  <p><strong>iPhone/Mac (Apple Calendar):</strong> tap the URL above on your phone, or scan the QR code. Confirm &ldquo;Subscribe&rdquo;.</p>
+                  <p><strong>Google Calendar:</strong> click &ldquo;Other calendars&rdquo; &rarr; &ldquo;From URL&rdquo; and paste the <code className="bg-gray-100 px-1 rounded">{feedUrls.https}</code> form.</p>
+                  <p><strong>Outlook:</strong> File &rarr; Account Settings &rarr; Internet Calendars &rarr; New &rarr; paste the URL.</p>
+                </div>
+              </details>
+            </div>
+            <div className="flex flex-col items-center gap-2 shrink-0">
+              <img
+                src={`/api/calendar/ics-qr?v=${feedRevision}`}
+                alt="QR code for Harbor calendar subscription"
+                className="w-32 h-32 md:w-40 md:h-40 rounded-lg border border-gray-200 bg-white p-1"
+              />
+              <p className="text-xs text-gray-400">Scan on phone</p>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 mb-6">

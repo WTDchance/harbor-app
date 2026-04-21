@@ -36,7 +36,7 @@ export async function GET(req: NextRequest) {
       )
     }
 
-    let stateData: { practiceId: string }
+    let stateData: { practiceId: string; baaAttested?: boolean }
     try {
       stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'))
     } catch {
@@ -52,6 +52,16 @@ export async function GET(req: NextRequest) {
     if (!clientId || !clientSecret) {
       return NextResponse.redirect(
         appUrl('/dashboard/settings?error=server_misconfigured')
+      )
+    }
+
+    // HIPAA gate: Google signs a BAA only for paid Workspace + admin-accepted.
+    // We refuse to store an active Google connection unless the practice owner
+    // attested to both in the modal at the OAuth start.
+    if (!stateData.baaAttested) {
+      console.warn('[google-calendar/callback] BAA not attested; refusing', { practiceId: stateData.practiceId })
+      return NextResponse.redirect(
+        appUrl('/dashboard/settings?error=baa_not_attested')
       )
     }
 
@@ -108,6 +118,8 @@ export async function GET(req: NextRequest) {
           token_expires_at: expiresAt,
           connected_email: userInfo.email,
           sync_enabled: true,
+          hipaa_baa_attested_at: new Date().toISOString(),
+          hipaa_workspace_attested: true,
           updated_at: new Date().toISOString(),
           created_at: new Date().toISOString()
         },
