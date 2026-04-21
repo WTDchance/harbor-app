@@ -127,10 +127,18 @@ export async function POST(req: NextRequest) {
 
     // Capture client IP for consent audit trail. x-forwarded-for is the
     // Railway/Next front-door; fall back to the Next request hint.
-    const clientIp =
-      req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
-      req.headers.get('x-real-ip') ||
-      null
+    function pickClientIp(headers: Headers): string | null {
+      const fwd = headers.get('x-forwarded-for')
+      if (fwd) {
+        const first = fwd.split(',')[0]
+        if (first) {
+          const trimmed = first.trim()
+          if (trimmed.length > 0) return trimmed
+        }
+      }
+      return headers.get('x-real-ip')
+    }
+    const clientIp: string | null = pickClientIp(req.headers)
 
     // FIX: Update the PATIENT record with demographics from intake
     await updatePatientFromIntake(supabase, intake, demographics, insurance, phq9Result, gad7Result, clientIp)
@@ -447,11 +455,4 @@ export async function GET(req: NextRequest) {
     if (!intake) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
     let practiceName = ''
-    let intakeConfig: Record<string, boolean> | null = null
-    if (intake.practice_id) {
-      const { data: practice } = await supabase
-        .from('practices')
-        .select('name, provider_name, intake_config')
-        .eq('id', intake.practice_id)
-        .single()
-      practiceName = practice?.provider_nam
+    let intakeConfig: Record<string, boolean> | null =
