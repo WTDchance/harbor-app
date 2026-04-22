@@ -113,6 +113,29 @@ const EHR_SCHED_REQ_NAV = {
   ),
 }
 
+const EHR_OUTCOMES_NAV = {
+  href: "/dashboard/ehr/outcomes",
+  label: "Practice Outcomes",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M2 14L6 9L10 12L16 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 4h4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_CREDENTIALING_NAV = {
+  href: "/dashboard/ehr/credentialing",
+  label: "Credentialing",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 1l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V4l7-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
 const EHR_PREFERENCES_NAV = {
   href: "/dashboard/ehr/preferences",
   label: "EHR Preferences",
@@ -405,7 +428,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             items.push(...NAV.slice(4, -1))
             // Analytics group (if show_analytics + feature enabled)
             if (s.show_analytics !== false && f.reports !== false) items.push(EHR_REPORTS_NAV)
+            if (s.show_analytics !== false && f.assessments !== false) items.push(EHR_OUTCOMES_NAV)
             if (f.supervision !== false) items.push(EHR_SUPERVISION_NAV)
+            items.push(EHR_CREDENTIALING_NAV)
             if (f.mandatory_reports !== false) items.push(EHR_MAND_REPORTS_NAV)
             if (s.show_billing !== false && f.billing !== false) items.push(EHR_BILLING_NAV)
             if (s.show_analytics !== false && f.audit_log !== false) items.push(EHR_AUDIT_NAV)
