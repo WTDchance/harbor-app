@@ -228,7 +228,7 @@ async function handleAssistantRequest(message: any) {
     .select(
       `id, vapi_assistant_id, name, ai_name, timezone, greeting,
        provider_name, specialties, location, telehealth, insurance_accepted,
-       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number, is_crisis_capable, notification_email, notification_emails`
+       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number, is_crisis_capable, transfer_enabled, notification_email, notification_emails`
     )
     .eq('id', practiceId)
     .maybeSingle()
@@ -290,6 +290,7 @@ async function handleAssistantRequest(message: any) {
         bio: t.bio,
       })),
       is_crisis_capable: (practice as any).is_crisis_capable === true,
+      transfer_enabled: (practice as any).transfer_enabled === true,
       crisis_resources: (crisisResourceRows || []).map((r: any) => ({
         name: r.name,
         phone: r.phone,

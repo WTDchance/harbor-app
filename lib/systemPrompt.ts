@@ -41,11 +41,34 @@ export interface SystemPromptData {
     coverage_area?: string | null
     is_primary?: boolean
   }>
+  // When true AND a transfer number is on file, Ellie is given the
+  // transferCall tool + TRANSFER RULES. When false (default), the tool
+  // is unregistered by the provisioner and Ellie is explicitly instructed
+  // to refuse transfers and take a message instead.
+  transfer_enabled?: boolean
 }
 
 export function buildSystemPrompt(data: SystemPromptData): string {
   const aiName = data.ai_name || 'Ellie'
   const hours = data.hours || 'during business hours'
+  const transferBullet = data.transfer_enabled
+    ? `\n- Transfer the caller to ${data.therapist_name} directly when warranted (use the transferCall tool — see TRANSFER RULES below)`
+    : ''
+  const transferRules = data.transfer_enabled
+    ? `\n\nTRANSFER RULES (conservative default — tighter triggers coming):
+- Default behavior is to NOT transfer. Taking a message is almost always the right choice.
+- Do NOT transfer in any crisis scenario — 988 and your crisis protocol above override everything.
+- Do NOT transfer for routine scheduling, intake, or general questions — handle those yourself.
+- You MAY invoke the transferCall tool when all of these are true:
+  1. The caller self-identifies as another clinician, referral partner, insurance representative, or similarly professional contact where the therapist would clearly want to speak with them
+  2. No crisis language or distress signals are present
+  3. The caller has given a clear reason that you cannot resolve yourself
+- When you do transfer, announce it briefly ("Just a moment — let me get ${data.therapist_name} on the line for you") and invoke the tool. The tool will handle the warm handoff with a spoken summary to ${data.therapist_name} before bridging.
+- If you are unsure whether to transfer, don't. Take a thorough message instead and use the takeMessage tool. ${data.therapist_name} can return the call.`
+    : `\n\nTRANSFERS ARE DISABLED FOR THIS PRACTICE:
+- You do NOT have a transferCall tool. Do not offer to transfer anyone to ${data.therapist_name}, even if they ask by name or claim to be a clinician or referral partner.
+- If a caller asks to be transferred, politely decline and take a detailed message instead using the takeMessage tool. Example: "I'm not able to put calls through directly, but I can take down a message and ${data.therapist_name} will get back to you — what's the best way to reach you?"
+- This rule is absolute. Never attempt a transfer under any circumstance while this is in effect.`
   const specialties = data.specialties?.length
     ? data.specialties.join(', ')
     : 'therapy and mental health support'
@@ -183,23 +206,11 @@ WHAT YOU CAN DO:
 - Check the calendar for available appointment times (use the checkAvailability tool)
 - Book appointments directly on the calendar (use the bookAppointment tool)
 - Take messages for the therapist
-- Handle cancellation and reschedule requests
-- Transfer the caller to ${data.therapist_name} directly when warranted (use the transferCall tool — see TRANSFER RULES below). Only available when the practice has configured a transfer number.
+- Handle cancellation and reschedule requests${transferBullet}
 
 WHAT YOU CANNOT DO:
 - Provide therapy, clinical advice, or diagnoses
-- Prescribe medication
-
-TRANSFER RULES (conservative default — tighter triggers coming):
-- Default behavior is to NOT transfer. Taking a message is almost always the right choice.
-- Do NOT transfer in any crisis scenario — 988 and your crisis protocol above override everything.
-- Do NOT transfer for routine scheduling, intake, or general questions — handle those yourself.
-- You MAY invoke the transferCall tool when all of these are true:
-  1. The caller self-identifies as another clinician, referral partner, insurance representative, or similarly professional contact where the therapist would clearly want to speak with them
-  2. No crisis language or distress signals are present
-  3. The caller has given a clear reason that you cannot resolve yourself
-- When you do transfer, announce it briefly ("Just a moment — let me get ${data.therapist_name} on the line for you") and invoke the tool. The tool will handle the warm handoff with a spoken summary to ${data.therapist_name} before bridging.
-- If you are unsure whether to transfer, don't. Take a thorough message instead and use the takeMessage tool. ${data.therapist_name} can return the call.
+- Prescribe medication${transferRules}
 
 APPOINTMENT INTAKE:
 When someone wants to schedule, collect the following in this order:

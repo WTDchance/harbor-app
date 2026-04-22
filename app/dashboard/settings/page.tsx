@@ -966,11 +966,11 @@ export default function SettingsPage() {
       {activeTab === 'practice' && (
         <>
 
-      {/* Call Forwarding */}
+      {/* Call Routing */}
       <div className="bg-white rounded-xl border border-gray-200 mb-6">
         <div className="p-5 border-b border-gray-100">
-          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Call Forwarding</h2>
-          <p className="text-xs text-gray-400 mt-1">Bypass {practice?.ai_name || 'Ellie'} and send calls straight to your phone when you need to take them yourself</p>
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Call Routing</h2>
+          <p className="text-xs text-gray-400 mt-1">Forward every call to your phone, or let {practice?.ai_name || 'Ellie'} screen callers and transfer only when warranted</p>
         </div>
         <div className="p-5">
           <ForwardingToggle />

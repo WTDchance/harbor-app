@@ -264,6 +264,7 @@ export async function PATCH(req: NextRequest) {
       credentials: t.credentials,
       bio: t.bio,
     })),
+    transfer_enabled: p.transfer_enabled === true,
   })
 
   const aiName = p.ai_name || 'Ellie'
@@ -496,7 +497,8 @@ export async function PATCH(req: NextRequest) {
   // If the two diverge later, add a dedicated `transfer_number` column and
   // split here.
   const transferNumber: string | null = p.call_forwarding_number || null
-  if (transferNumber) {
+  const transferEnabled: boolean = p.transfer_enabled === true
+  if (transferEnabled && transferNumber) {
     const providerName = p.provider_name || p.name
     vapiTools.push({
       type: 'transferCall',
