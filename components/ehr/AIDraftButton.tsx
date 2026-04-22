@@ -14,6 +14,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Sparkles, X, AlertTriangle, Mic, Phone } from 'lucide-react'
+import { VoiceRecorder } from './VoiceRecorder'
 
 type Tab = 'brief' | 'call'
 
@@ -176,11 +177,18 @@ export function AIDraftButton({ patientId }: { patientId: string }) {
 
             {tab === 'brief' && (
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Describe what happened in the session
-                </label>
+                <div className="flex items-start justify-between gap-2 mb-1">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Describe what happened in the session
+                  </label>
+                  <VoiceRecorder
+                    disabled={drafting}
+                    label="Dictate"
+                    onAppend={(chunk) => setBrief((b) => (b ? b + ' ' : '') + chunk)}
+                  />
+                </div>
                 <p className="text-xs text-gray-500 mb-2">
-                  A few sentences is enough. Mention what was discussed, any techniques used, homework assigned, and anything notable. Claude fills in the rest using clinical language.
+                  A few sentences is enough — or hit <strong>Dictate</strong> and talk. Mention what was discussed, any techniques used, homework assigned, and anything notable. Claude fills in the rest using clinical language.
                 </p>
                 <textarea
                   disabled={drafting}

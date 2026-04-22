@@ -7,6 +7,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
+import { CodePicker } from '@/components/ehr/CodePicker'
+import { CPT_CODES, ICD10_CODES } from '@/lib/ehr/codes'
 
 type Patient = { id: string; first_name: string; last_name: string }
 
@@ -49,8 +51,8 @@ export function NoteEditor({ patients, initial, mode }: Props) {
       icd10_codes: [],
     },
   )
-  const [cptInput, setCptInput] = useState((initial?.cpt_codes ?? []).join(', '))
-  const [icdInput, setIcdInput] = useState((initial?.icd10_codes ?? []).join(', '))
+  const [cptCodes, setCptCodes] = useState<string[]>(initial?.cpt_codes ?? [])
+  const [icdCodes, setIcdCodes] = useState<string[]>(initial?.icd10_codes ?? [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -67,8 +69,8 @@ export function NoteEditor({ patients, initial, mode }: Props) {
     try {
       const payload: any = {
         ...form,
-        cpt_codes: cptInput.split(',').map((s) => s.trim()).filter(Boolean),
-        icd10_codes: icdInput.split(',').map((s) => s.trim()).filter(Boolean),
+        cpt_codes: cptCodes,
+        icd10_codes: icdCodes,
       }
 
       const url = mode === 'edit' && initial?.id ? `/api/ehr/notes/${initial.id}` : '/api/ehr/notes'
@@ -180,32 +182,24 @@ export function NoteEditor({ patients, initial, mode }: Props) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            CPT codes <span className="text-xs text-gray-500 font-normal">(comma-separated)</span>
-          </label>
-          <input
-            disabled={isLocked}
-            type="text"
-            value={cptInput}
-            onChange={(e) => setCptInput(e.target.value)}
-            placeholder="90834, 90837"
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            ICD-10 codes <span className="text-xs text-gray-500 font-normal">(comma-separated)</span>
-          </label>
-          <input
-            disabled={isLocked}
-            type="text"
-            value={icdInput}
-            onChange={(e) => setIcdInput(e.target.value)}
-            placeholder="F41.1, F32.1"
-            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50"
-          />
-        </div>
+        <CodePicker
+          label="CPT codes"
+          hint="procedure"
+          options={CPT_CODES}
+          value={cptCodes}
+          onChange={setCptCodes}
+          disabled={isLocked}
+          placeholder="Type 90 or 'intake'…"
+        />
+        <CodePicker
+          label="ICD-10 codes"
+          hint="diagnosis"
+          options={ICD10_CODES}
+          value={icdCodes}
+          onChange={setIcdCodes}
+          disabled={isLocked}
+          placeholder="Type F41 or 'anxiety'…"
+        />
       </div>
 
       {error && <div className="text-sm text-red-600">{error}</div>}

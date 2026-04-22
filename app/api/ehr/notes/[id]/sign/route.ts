@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase'
 import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { auditEhrAccess } from '@/lib/ehr/audit'
 
 function contentHash(note: Record<string, any>): string {
   // Hash the fields that make up the clinical content, in a stable order.
@@ -56,10 +57,13 @@ export async function POST(
   }
 
   const hash = contentHash(note)
+  // Amendments sign into status='amended' so the lineage stays visible.
+  // First-time signatures sign into status='signed'.
+  const nextStatus = note.amendment_of ? 'amended' : 'signed'
   const { data, error } = await supabaseAdmin
     .from('ehr_progress_notes')
     .update({
-      status: 'signed',
+      status: nextStatus,
       signed_at: new Date().toISOString(),
       signed_by: auth.user.id,
       signature_hash: hash,
@@ -70,5 +74,13 @@ export async function POST(
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.sign',
+    resourceId: id,
+    details: { status: nextStatus, amendment_of: note.amendment_of ?? null, hash },
+  })
   return NextResponse.json({ note: data, success: true })
 }

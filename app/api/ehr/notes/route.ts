@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { auditEhrAccess } from '@/lib/ehr/audit'
 
 export async function GET(req: NextRequest) {
   const auth = await requireEhrAuth()
@@ -30,6 +31,12 @@ export async function GET(req: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.list',
+    details: { patient_id: patientId ?? null, count: data?.length ?? 0 },
+  })
   return NextResponse.json({ notes: data })
 }
 
@@ -91,5 +98,12 @@ export async function POST(req: NextRequest) {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.create',
+    resourceId: data.id,
+    details: { patient_id, title: insertRow.title, format: insertRow.note_format },
+  })
   return NextResponse.json({ note: data }, { status: 201 })
 }

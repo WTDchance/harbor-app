@@ -7,11 +7,12 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { createServerClient } from '@supabase/ssr'
-import { ChevronLeft } from 'lucide-react'
+import { ChevronLeft, GitBranch } from 'lucide-react'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { NoteEditor, type NoteFormValue } from '@/components/ehr/NoteEditor'
 import { SignButton } from './SignButton'
+import { AmendButton } from './AmendButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -73,6 +74,25 @@ export default async function NoteDetailPage({
   }
 
   const isDraft = note.status === 'draft'
+  const isSigned = note.status === 'signed' || note.status === 'amended'
+
+  // Lineage — if this note amends another, or has amendments pointing at it.
+  let parent: { id: string; title: string; signed_at: string | null } | null = null
+  if (note.amendment_of) {
+    const { data } = await supabaseAdmin
+      .from('ehr_progress_notes')
+      .select('id, title, signed_at')
+      .eq('id', note.amendment_of)
+      .eq('practice_id', practiceId!)
+      .maybeSingle()
+    if (data) parent = data
+  }
+  const { data: childAmendments = [] } = await supabaseAdmin
+    .from('ehr_progress_notes')
+    .select('id, title, status, created_at, signed_at')
+    .eq('amendment_of', note.id)
+    .eq('practice_id', practiceId!)
+    .order('created_at', { ascending: true })
 
   return (
     <div className="max-w-3xl mx-auto py-8 px-4">
@@ -95,7 +115,49 @@ export default async function NoteDetailPage({
           </div>
         </div>
         {isDraft && <SignButton noteId={note.id} />}
+        {isSigned && <AmendButton noteId={note.id} />}
       </div>
+
+      {/* Lineage banner — shown above the editor when this note is part of a chain */}
+      {(parent || (childAmendments && childAmendments.length > 0)) && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-4 text-sm">
+          <div className="flex items-center gap-2 text-blue-800 font-medium mb-2">
+            <GitBranch className="w-4 h-4" />
+            Note lineage
+          </div>
+          {parent && (
+            <div className="text-blue-800">
+              Amends:{' '}
+              <Link href={`/dashboard/ehr/notes/${parent.id}`} className="underline hover:text-blue-900">
+                {parent.title}
+              </Link>
+              {parent.signed_at && (
+                <span className="text-blue-600 text-xs ml-1">
+                  (signed {new Date(parent.signed_at).toLocaleDateString()})
+                </span>
+              )}
+            </div>
+          )}
+          {childAmendments && childAmendments.length > 0 && (
+            <div className="text-blue-800 mt-1">
+              This note has {childAmendments.length} amendment{childAmendments.length === 1 ? '' : 's'}:
+              <ul className="mt-1 space-y-0.5">
+                {childAmendments.map((a: any) => (
+                  <li key={a.id}>
+                    <Link
+                      href={`/dashboard/ehr/notes/${a.id}`}
+                      className="underline hover:text-blue-900"
+                    >
+                      {a.title}
+                    </Link>
+                    <span className="text-blue-600 text-xs ml-1">({a.status})</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <NoteEditor patients={patients ?? []} mode="edit" initial={initial} />

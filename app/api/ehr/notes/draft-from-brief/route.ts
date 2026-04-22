@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { auditEhrAccess } from '@/lib/ehr/audit'
 import { draftNoteFromBrief, type HistoryContext } from '@/lib/ehr/draft-note'
 
 export async function POST(req: NextRequest) {
@@ -118,6 +119,14 @@ export async function POST(req: NextRequest) {
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.draft_from_brief',
+    resourceId: data.id,
+    details: { patient_id: patientId, brief_length: brief.length, flagged_concerns: draft.flagged_concerns },
+  })
 
   return NextResponse.json(
     {

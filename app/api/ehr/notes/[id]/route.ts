@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { auditEhrAccess } from '@/lib/ehr/audit'
 
 const UPDATABLE_FIELDS = new Set([
   'title',
@@ -40,6 +41,12 @@ export async function GET(
 
   const note = await loadNote(id, auth.practiceId)
   if (!note) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.view',
+    resourceId: id,
+  })
   return NextResponse.json({ note })
 }
 
@@ -84,6 +91,13 @@ export async function PATCH(
     .single()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.update',
+    resourceId: id,
+    details: { fields: Object.keys(patch) },
+  })
   return NextResponse.json({ note: data })
 }
 
@@ -111,5 +125,12 @@ export async function DELETE(
     .eq('practice_id', auth.practiceId)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  await auditEhrAccess({
+    user: auth.user,
+    practiceId: auth.practiceId,
+    action: 'note.delete',
+    resourceId: id,
+    severity: 'warn',
+  })
   return NextResponse.json({ success: true })
 }
