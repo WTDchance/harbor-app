@@ -13,8 +13,9 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Activity, Plus, Sparkles, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react'
+import { Activity, Plus, Sparkles, AlertTriangle, ChevronDown, ChevronUp, Repeat } from 'lucide-react'
 import { INSTRUMENTS, getInstrument } from '@/lib/ehr/instruments'
+import { getNorm, percentile } from '@/lib/ehr/norms'
 
 type Assessment = {
   id: string
@@ -44,6 +45,7 @@ export function AssessmentsCard({ patientId }: { patientId: string }) {
   const [formNotes, setFormNotes] = useState('')
   const [working, setWorking] = useState(false)
   const [interpreting, setInterpreting] = useState<string | null>(null)
+  const [formCadence, setFormCadence] = useState<string>('') // '' means one-off
 
   async function load() {
     try {
@@ -75,12 +77,25 @@ export function AssessmentsCard({ patientId }: { patientId: string }) {
   async function assignToPatient() {
     setWorking(true)
     try {
+      // Always assign a one-off now so there's something pending.
       const res = await fetch('/api/ehr/assessments/assign', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ patient_id: patientId, assessment_type: formType }),
       })
       if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-      setMode('idle')
+
+      // If they chose a cadence, also set up a recurring schedule.
+      if (formCadence) {
+        const weeks = parseInt(formCadence, 10)
+        if (Number.isInteger(weeks) && weeks > 0) {
+          const s = await fetch('/api/ehr/assessment-schedules', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ patient_id: patientId, assessment_type: formType, cadence_weeks: weeks }),
+          })
+          if (!s.ok) throw new Error((await s.json()).error || 'Schedule create failed')
+        }
+      }
+      setMode('idle'); setFormCadence('')
       await load()
     } catch (err) { alert(err instanceof Error ? err.message : 'Failed') }
     finally { setWorking(false) }
@@ -163,7 +178,7 @@ export function AssessmentsCard({ patientId }: { patientId: string }) {
       {mode === 'assign' && (
         <div className="mb-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
           <div className="text-sm font-medium text-gray-700 mb-2">Assign to the patient&apos;s portal</div>
-          <div className="grid grid-cols-[1fr_auto_auto] gap-2 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Instrument</label>
               <select
@@ -178,17 +193,38 @@ export function AssessmentsCard({ patientId }: { patientId: string }) {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1 flex items-center gap-1">
+                <Repeat className="w-3 h-3" />
+                Repeat automatically
+              </label>
+              <select
+                value={formCadence}
+                onChange={(e) => setFormCadence(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-sm"
+              >
+                <option value="">One-off — don&apos;t repeat</option>
+                <option value="1">Every week</option>
+                <option value="2">Every 2 weeks</option>
+                <option value="4">Every 4 weeks</option>
+                <option value="8">Every 8 weeks</option>
+                <option value="12">Every 12 weeks</option>
+              </select>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2">
             <button onClick={() => setMode('idle')} className="text-xs text-gray-600 px-3 py-1.5">Cancel</button>
             <button
               onClick={assignToPatient}
               disabled={working}
               className="text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-md disabled:opacity-50"
             >
-              {working ? 'Assigning…' : 'Assign'}
+              {working ? 'Assigning…' : formCadence ? 'Assign + schedule' : 'Assign'}
             </button>
           </div>
           <p className="text-xs text-gray-500 mt-2">
-            The patient sees this on their portal next time they sign in. Auto-scored on submit. Alerts fire immediately.
+            Patient sees this on their portal. Auto-scored on submit; alerts fire immediately.
+            {formCadence && <> A new one is sent automatically every {formCadence} week{formCadence === '1' ? '' : 's'} until you stop it.</>}
           </p>
         </div>
       )}
@@ -322,6 +358,9 @@ function InstrumentPanel({ type, data, onInterpret, interpreting }: {
 
       <TrendChart inst={inst} data={data} />
 
+      {/* Clinical context strip */}
+      {inst && <ClinicalContext inst={inst} data={data} />}
+
       {/* Symptom breakdown */}
       {hasItemLevel && inst && (
         <div className="mt-2">
@@ -384,22 +423,73 @@ function InstrumentPanel({ type, data, onInterpret, interpreting }: {
 // sourced from the library instead of hard-coded per type.
 // ---------------------------------------------------------------------------
 
+function ClinicalContext({ inst, data }: { inst: NonNullable<ReturnType<typeof getInstrument>>; data: Assessment[] }) {
+  const norm = getNorm(inst.id)
+  if (!norm) return null
+  const latest = data[data.length - 1]
+  const first = data[0]
+  if (latest.score == null) return null
+
+  const pct = percentile(latest.score, norm)
+  const delta = first && first.score != null ? latest.score - first.score : 0
+  const rci = norm.reliable_change
+  const reliableChange = Math.abs(delta) >= rci && data.length > 1
+
+  const directionLabel =
+    data.length === 1
+      ? null
+      : delta <= -rci
+      ? `Reliable improvement (−${Math.abs(delta)}; RCI ≥ ${rci})`
+      : delta >= rci
+      ? `Reliable worsening (+${delta}; RCI ≥ ${rci})`
+      : `Within reliable-change band (±${rci})`
+
+  return (
+    <div className="mt-2 flex items-center gap-3 text-[11px] text-gray-600 flex-wrap">
+      <span className="inline-flex items-center gap-1 bg-gray-50 border border-gray-200 rounded-full px-2 py-0.5">
+        {pct}<span className="text-gray-400">th</span> percentile vs. baseline outpatient norm
+      </span>
+      {directionLabel && (
+        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 border ${
+          delta <= -rci ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          : delta >= rci ? 'bg-red-50 border-red-200 text-red-800'
+          : 'bg-gray-50 border-gray-200 text-gray-600'
+        }`}>
+          {directionLabel}
+        </span>
+      )}
+      {reliableChange && (
+        <span className="text-gray-400">MCID {norm.mcid} · SD {norm.sd}</span>
+      )}
+    </div>
+  )
+}
+
 function TrendChart({ inst, data }: { inst: ReturnType<typeof getInstrument>; data: Assessment[] }) {
   const max = inst?.max_score ?? Math.max(...data.map((d) => d.score ?? 0), 10)
+  const norm = inst ? getNorm(inst.id) : null
 
   const W = 560, H = 110, PAD_L = 32, PAD_R = 8, PAD_T = 8, PAD_B = 20
   const innerW = W - PAD_L - PAD_R
   const innerH = H - PAD_T - PAD_B
 
+  function yFor(score: number) {
+    return PAD_T + innerH - (innerH * score) / max
+  }
+
   const points = data.map((d, i) => {
     const x = PAD_L + (data.length === 1 ? innerW / 2 : (innerW * i) / (data.length - 1))
-    const y = PAD_T + innerH - (innerH * (d.score ?? 0)) / max
-    return { x, y, d }
+    return { x, y: yFor(d.score ?? 0), d }
   })
   const path = points.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ')
 
   const first = data[0]
   const latest = data[data.length - 1]
+
+  // Reliable Change Index band around the FIRST (baseline) score
+  const baseline = first?.score ?? null
+  const rciTop = norm && baseline != null ? Math.min(max, baseline + norm.reliable_change) : null
+  const rciBot = norm && baseline != null ? Math.max(0, baseline - norm.reliable_change) : null
 
   return (
     <svg width="100%" viewBox={`0 0 ${W} ${H}`} className="overflow-visible">
@@ -409,14 +499,42 @@ function TrendChart({ inst, data }: { inst: ReturnType<typeof getInstrument>; da
       <text x={PAD_L - 4} y={PAD_T + innerH} textAnchor="end" fontSize={10} fill="#9ca3af">0</text>
       {/* Severity bands from the instrument itself */}
       {inst?.bands.map((b, i) => {
-        const yTop = PAD_T + innerH - (innerH * b.max) / max
-        const yBot = PAD_T + innerH - (innerH * b.min) / max
+        const yTop = yFor(b.max)
+        const yBot = yFor(b.min)
         const color = b.color === 'green' ? '#ecfdf5'
           : b.color === 'amber' ? '#fef3c7'
           : b.color === 'orange' ? '#fed7aa'
           : '#fecaca'
         return <rect key={i} x={PAD_L} y={yTop} width={innerW} height={yBot - yTop} fill={color} opacity={0.45} />
       })}
+      {/* Population mean dashed line */}
+      {norm && (
+        <>
+          <line
+            x1={PAD_L} x2={W - PAD_R}
+            y1={yFor(norm.mean)} y2={yFor(norm.mean)}
+            stroke="#6b7280" strokeWidth={1} strokeDasharray="3 3" opacity={0.6}
+          />
+          <text x={W - PAD_R - 4} y={yFor(norm.mean) - 2} textAnchor="end" fontSize={9} fill="#6b7280">
+            population mean {norm.mean}
+          </text>
+        </>
+      )}
+      {/* Reliable Change band around baseline */}
+      {rciTop != null && rciBot != null && data.length > 1 && (
+        <>
+          <line
+            x1={PAD_L} x2={W - PAD_R}
+            y1={yFor(rciTop)} y2={yFor(rciTop)}
+            stroke="#0ea5e9" strokeWidth={1} strokeDasharray="2 2" opacity={0.4}
+          />
+          <line
+            x1={PAD_L} x2={W - PAD_R}
+            y1={yFor(rciBot)} y2={yFor(rciBot)}
+            stroke="#0ea5e9" strokeWidth={1} strokeDasharray="2 2" opacity={0.4}
+          />
+        </>
+      )}
       <path d={path} fill="none" stroke="#0d9488" strokeWidth={2} strokeLinejoin="round" />
       {points.map((p, i) => {
         const hasAlert = Array.isArray(p.d.alerts_triggered) && p.d.alerts_triggered.length > 0
@@ -429,6 +547,7 @@ function TrendChart({ inst, data }: { inst: ReturnType<typeof getInstrument>; da
             />
             <title>
               {p.d.completed_at ? new Date(p.d.completed_at).toLocaleDateString() : ''} — {p.d.score}{p.d.severity ? ` (${p.d.severity})` : ''}
+              {norm && p.d.score != null ? ` · ${percentile(p.d.score, norm)}th pctile` : ''}
               {hasAlert ? ' — RISK FLAG' : ''}
             </title>
           </g>

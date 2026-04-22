@@ -104,6 +104,25 @@ export default function PortalHome() {
         </p>
       </div>
 
+      {/* Daily check-in CTA */}
+      <Link
+        href="/portal/mood"
+        className="block bg-white border border-gray-200 rounded-lg p-5 shadow-sm hover:border-teal-500 transition"
+      >
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center shrink-0">
+              <Activity className="w-5 h-5 text-teal-700" />
+            </div>
+            <div>
+              <div className="font-semibold text-gray-900">Daily check-in</div>
+              <div className="text-xs text-gray-500">Takes 30 seconds. Helps your therapist see how you&apos;re doing between sessions.</div>
+            </div>
+          </div>
+          <span className="text-teal-700 text-sm font-medium">Start →</span>
+        </div>
+      </Link>
+
       {/* Pending assessments — prominent when present */}
       {assessments && assessments.filter((a) => a.status === 'pending').length > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-5">
