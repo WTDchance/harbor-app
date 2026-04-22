@@ -5,6 +5,7 @@ import { useSearchParams } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { usePractice } from '@/lib/hooks/usePractice'
 import MFAEnroll from '@/components/MFAEnroll'
+import { ForwardingToggle } from '@/components/ForwardingToggle'
 
 const TIMEZONES = [
   'America/Los_Angeles',
@@ -965,6 +966,17 @@ export default function SettingsPage() {
       {activeTab === 'practice' && (
         <>
 
+      {/* Call Forwarding */}
+      <div className="bg-white rounded-xl border border-gray-200 mb-6">
+        <div className="p-5 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Call Forwarding</h2>
+          <p className="text-xs text-gray-400 mt-1">Bypass {practice?.ai_name || 'Ellie'} and send calls straight to your phone when you need to take them yourself</p>
+        </div>
+        <div className="p-5">
+          <ForwardingToggle />
+        </div>
+      </div>
+
       {/* Scheduling Mode */}
       <div className="bg-white rounded-xl border border-gray-200 mb-6">
         <div className="p-5 border-b border-gray-100">
@@ -1424,6 +1436,8 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
+        </>
+      )}
 
       {/* Crisis Resources — per-practice referral list Ellie reads to callers
           in crisis, and toggle for whether this practice provides clinical

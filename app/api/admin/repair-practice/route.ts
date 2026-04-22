@@ -487,6 +487,47 @@ export async function PATCH(req: NextRequest) {
     },
   ]
 
+  // Conditionally add the warm-transfer tool. Only register it when the
+  // practice has a forwarding number configured — otherwise Ellie shouldn't
+  // be advertising a capability she can't actually execute.
+  //
+  // Destination reuses `call_forwarding_number` (the same column that powers
+  // bypass-forwarding). v1 assumption: same "reach me" number for both modes.
+  // If the two diverge later, add a dedicated `transfer_number` column and
+  // split here.
+  const transferNumber: string | null = p.call_forwarding_number || null
+  if (transferNumber) {
+    const providerName = p.provider_name || p.name
+    vapiTools.push({
+      type: 'transferCall',
+      destinations: [
+        {
+          type: 'number',
+          number: transferNumber,
+          message: `Just a moment — let me get ${providerName} on the line for you.`,
+          description: `Transfers the call to ${providerName} (the therapist) at ${transferNumber} in warm-handoff mode. Ellie will announce the caller and context first, then bridge.`,
+          transferPlan: {
+            mode: 'warm-transfer-say-summary',
+            summaryPlan: {
+              enabled: true,
+              messages: [
+                {
+                  role: 'system',
+                  content:
+                    `You are briefing ${providerName} about an incoming call you are transferring. ` +
+                    `In 2-3 short sentences, tell them: who is calling (name if known, otherwise "an unidentified caller"), ` +
+                    `whether they are an existing patient, why they are calling, and anything urgent. ` +
+                    `Keep it under 15 seconds of spoken content. Do not include medical details beyond what is necessary. ` +
+                    `End with: "I'll connect you now."`,
+                },
+              ],
+            },
+          },
+        },
+      ],
+    } as any)
+  }
+
   // Set model and tools on the Vapi assistant
   vapiPatch.model = {
     provider: 'anthropic',

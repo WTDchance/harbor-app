@@ -166,6 +166,37 @@ export async function POST(req: NextRequest) {
       forwarding_number: enabled ? forwarding_number : null,
     })
 
+    // Re-sync the Vapi assistant so the warm-transfer tool's destination
+    // matches the forwarding number we just saved. Non-fatal — if the sync
+    // fails (bad secret, Vapi outage, etc.) the forwarding UI change still
+    // applies; only the in-call transfer destination might be stale until
+    // the next successful sync.
+    try {
+      const cronSecret = process.env.CRON_SECRET
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+      if (cronSecret) {
+        const syncRes = await fetch(
+          `${appUrl}/api/admin/repair-practice?practice_id=${practice.id}`,
+          {
+            method: 'PATCH',
+            headers: { Authorization: `Bearer ${cronSecret}` },
+          }
+        )
+        if (!syncRes.ok) {
+          console.warn(
+            `[Forwarding POST] Vapi resync non-fatal failure (${syncRes.status}):`,
+            await syncRes.text().catch(() => '')
+          )
+        } else {
+          console.log(`[Forwarding POST] Vapi assistant resynced with new transfer destination`)
+        }
+      } else {
+        console.warn('[Forwarding POST] CRON_SECRET unset — skipping Vapi resync')
+      }
+    } catch (syncErr) {
+      console.warn('[Forwarding POST] Vapi resync threw (non-fatal):', syncErr)
+    }
+
     return NextResponse.json(
       {
         success: true,

@@ -45,7 +45,7 @@ export function ForwardingToggle() {
   }
 
   const formatPhoneNumber = (value: string): string => {
-    const cleaned = value.replace(/\\D/g, '')
+    const cleaned = value.replace(/\D/g, '')
     if (cleaned.length === 0) return ''
     if (cleaned.length <= 3) return cleaned
     if (cleaned.length <= 6) return `(${cleaned.slice(0, 3)}) ${cleaned.slice(3)}`
@@ -58,7 +58,7 @@ export function ForwardingToggle() {
   }
 
   const validatePhoneNumber = (phone: string): boolean => {
-    const cleaned = phone.replace(/\\D/g, '')
+    const cleaned = phone.replace(/\D/g, '')
     return cleaned.length === 10
   }
 
@@ -93,7 +93,7 @@ export function ForwardingToggle() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled,
-          forwarding_number: enabled ? forwardingNumber?.replace(/\\D/g, '').replace(/^(\\d{10})$/, '+1$1') : null,
+          forwarding_number: enabled ? forwardingNumber?.replace(/\D/g, '').replace(/^(\d{10})$/, '+1$1') : null,
         }),
       })
 
@@ -156,8 +156,7 @@ export function ForwardingToggle() {
       <div className="border border-gray-200 rounded-lg p-6">
         <div className="flex items-center justify-between gap-4">
           <div className="flex-1">
-            <h3 className="text-lg font-semibold text-gray-900">Call Forwarding</h3>
-            <p className="mt-1 text-sm text-gray-600">
+            <p className="text-sm text-gray-600">
               {state.enabled ? (
                 <span className="flex items-center gap-2">
                   <span className="w-2 h-2 bg-orange-500 rounded-full"></span>
@@ -166,7 +165,7 @@ export function ForwardingToggle() {
               ) : (
                 <span className="flex items-center gap-2">
                   <span className="w-2 h-2 bg-green-500 rounded-full"></span>
-                  Ellie is answering your calls
+                  Your AI receptionist is answering your calls
                 </span>
               )}
             </p>
