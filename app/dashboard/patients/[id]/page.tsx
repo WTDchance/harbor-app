@@ -15,6 +15,8 @@ import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard";
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard";
 import { AssessmentsCard } from "@/components/ehr/AssessmentsCard";
 import { ConsentsCard } from "@/components/ehr/ConsentsCard";
+import { ExportPatientButton } from "@/components/ehr/ExportPatientButton";
+import { PortalLinkCard } from "@/components/ehr/PortalLinkCard";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
@@ -941,6 +943,7 @@ export default function PatientDetailPage() {
             </svg>
             Edit Patient
           </button>
+          <ExportPatientButton patientId={patient.id} />
           <IntakeStatusBadge status={intake_status} />
         </div>
       </div>
@@ -1170,6 +1173,7 @@ export default function PatientDetailPage() {
       <PatientProgressNotes patientId={patient.id} />
       <AssessmentsCard patientId={patient.id} />
       <ConsentsCard patientId={patient.id} />
+      <PortalLinkCard patientId={patient.id} />
 
       {/* Intake Packet Progress (new) */}
       <IntakeProgress patientId={patient.id} />

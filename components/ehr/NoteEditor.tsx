@@ -4,11 +4,12 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase-browser'
 import { CodePicker } from '@/components/ehr/CodePicker'
 import { CPT_CODES, ICD10_CODES } from '@/lib/ehr/codes'
+import { Target } from 'lucide-react'
 
 type Patient = { id: string; first_name: string; last_name: string }
 
@@ -24,8 +25,12 @@ export type NoteFormValue = {
   body?: string | null
   cpt_codes?: string[]
   icd10_codes?: string[]
+  linked_goal_ids?: string[]
+  appointment_id?: string | null
   status?: string
 }
+
+type PlanGoal = { id: string; text: string }
 
 type Props = {
   patients: Patient[]
@@ -53,8 +58,36 @@ export function NoteEditor({ patients, initial, mode }: Props) {
   )
   const [cptCodes, setCptCodes] = useState<string[]>(initial?.cpt_codes ?? [])
   const [icdCodes, setIcdCodes] = useState<string[]>(initial?.icd10_codes ?? [])
+  const [linkedGoalIds, setLinkedGoalIds] = useState<string[]>(initial?.linked_goal_ids ?? [])
+  const [planGoals, setPlanGoals] = useState<PlanGoal[] | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Load the patient's active treatment plan so we can show goal checkboxes.
+  useEffect(() => {
+    if (!form.patient_id) { setPlanGoals(null); return }
+    let cancelled = false
+    async function load() {
+      try {
+        const res = await fetch(`/api/ehr/treatment-plans?patient_id=${encodeURIComponent(form.patient_id)}`)
+        if (!res.ok) return
+        const json = await res.json()
+        const active = (json.plans || []).find((p: any) => p.status === 'active')
+        if (!cancelled) {
+          const goals: PlanGoal[] = (active?.goals || [])
+            .filter((g: any) => g?.id && g?.text)
+            .map((g: any) => ({ id: g.id, text: g.text }))
+          setPlanGoals(goals)
+        }
+      } catch {}
+    }
+    load()
+    return () => { cancelled = true }
+  }, [form.patient_id])
+
+  function toggleGoal(id: string) {
+    setLinkedGoalIds((ids) => ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id])
+  }
 
   const isLocked = initial?.status === 'signed' || initial?.status === 'amended'
 
@@ -71,6 +104,7 @@ export function NoteEditor({ patients, initial, mode }: Props) {
         ...form,
         cpt_codes: cptCodes,
         icd10_codes: icdCodes,
+        linked_goal_ids: linkedGoalIds,
       }
 
       const url = mode === 'edit' && initial?.id ? `/api/ehr/notes/${initial.id}` : '/api/ehr/notes'
@@ -179,6 +213,32 @@ export function NoteEditor({ patients, initial, mode }: Props) {
           rows={12}
           disabled={isLocked}
         />
+      )}
+
+      {planGoals && planGoals.length > 0 && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
+            <Target className="w-4 h-4 text-gray-500" />
+            Goals addressed in this session
+          </label>
+          <p className="text-xs text-gray-500 mb-2">
+            Check any treatment-plan goals this note advanced. Rolls up into goal-progress views.
+          </p>
+          <div className="space-y-1.5 border border-gray-200 rounded-lg p-3 bg-gray-50">
+            {planGoals.map((g) => (
+              <label key={g.id} className="flex items-start gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  disabled={isLocked}
+                  checked={linkedGoalIds.includes(g.id)}
+                  onChange={() => toggleGoal(g.id)}
+                  className="mt-1 rounded text-teal-600 focus:ring-teal-500 disabled:opacity-50"
+                />
+                <span className="text-gray-800">{g.text}</span>
+              </label>
+            ))}
+          </div>
+        </div>
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

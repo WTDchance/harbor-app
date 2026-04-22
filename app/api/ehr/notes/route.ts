@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const { patient_id, title, note_format, subjective, objective, assessment, plan, body: noteBody, appointment_id, therapist_id, cpt_codes, icd10_codes } = body
+  const { patient_id, title, note_format, subjective, objective, assessment, plan, body: noteBody, appointment_id, therapist_id, cpt_codes, icd10_codes, linked_goal_ids } = body
 
   if (!patient_id || typeof patient_id !== 'string') {
     return NextResponse.json({ error: 'patient_id is required' }, { status: 400 })
@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
     therapist_id: therapist_id ?? null,
     cpt_codes: Array.isArray(cpt_codes) ? cpt_codes : [],
     icd10_codes: Array.isArray(icd10_codes) ? icd10_codes : [],
+    linked_goal_ids: Array.isArray(linked_goal_ids) ? linked_goal_ids : [],
     status: 'draft',
     created_by: auth.user.id,
   }

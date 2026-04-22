@@ -19,6 +19,7 @@ const UPDATABLE_FIELDS = new Set([
   'therapist_id',
   'cpt_codes',
   'icd10_codes',
+  'linked_goal_ids',
 ])
 
 async function loadNote(noteId: string, practiceId: string) {

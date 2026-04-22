@@ -40,6 +40,19 @@ export default async function NewNotePage({
   const { data: { user } } = await supabase.auth.getUser()
   const practiceId = await getEffectivePracticeId(supabaseAdmin, user)
 
+  // If appointment_id was passed but patient_id wasn't, resolve the
+  // patient from the appointment so the editor's dropdown lands on it.
+  let resolvedPatientId = prefilledPatientId
+  if (!resolvedPatientId && prefilledAppointmentId) {
+    const { data: appt } = await supabaseAdmin
+      .from('appointments')
+      .select('patient_id')
+      .eq('id', prefilledAppointmentId)
+      .eq('practice_id', practiceId!)
+      .maybeSingle()
+    if (appt?.patient_id) resolvedPatientId = appt.patient_id
+  }
+
   const { data: patients = [] } = await supabaseAdmin
     .from('patients')
     .select('id, first_name, last_name')
@@ -49,9 +62,9 @@ export default async function NewNotePage({
   // If ?patient_id=X or ?template=Y is passed, seed the editor with a
   // partially-filled NoteFormValue. Templates come from NOTE_TEMPLATES.
   const tpl = templateId ? NOTE_TEMPLATES.find((t) => t.id === templateId) : undefined
-  const initial: NoteFormValue | undefined = (prefilledPatientId || tpl)
+  const initial: NoteFormValue | undefined = (resolvedPatientId || tpl || prefilledAppointmentId)
     ? {
-        patient_id: prefilledPatientId ?? '',
+        patient_id: resolvedPatientId ?? '',
         title: tpl?.title_prefix ?? '',
         note_format: tpl?.note_format ?? 'soap',
         subjective: tpl?.subjective ?? '',
@@ -61,6 +74,7 @@ export default async function NewNotePage({
         body: tpl?.body ?? '',
         cpt_codes: tpl?.suggested_cpt ?? [],
         icd10_codes: [],
+        appointment_id: prefilledAppointmentId ?? null,
       }
     : undefined
 
@@ -81,7 +95,7 @@ export default async function NewNotePage({
 
       {!tpl && (
         <NewNoteWrapper
-          patientId={prefilledPatientId}
+          patientId={resolvedPatientId}
           appointmentId={prefilledAppointmentId}
         />
       )}
