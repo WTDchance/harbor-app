@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import { Smile } from 'lucide-react'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type Log = {
   id: string
@@ -17,6 +18,7 @@ type Log = {
 }
 
 export function MoodLogsCard({ patientId }: { patientId: string }) {
+  const { prefs } = usePreferences()
   const [logs, setLogs] = useState<Log[] | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -36,6 +38,7 @@ export function MoodLogsCard({ patientId }: { patientId: string }) {
   }, [patientId])
 
   if (!enabled || loading) return null
+  if (prefs && prefs.features.mood_logs === false) return null
   if (!logs || logs.length === 0) return null
 
   const lastNote = [...logs].reverse().find((l) => l.note && l.note.trim())

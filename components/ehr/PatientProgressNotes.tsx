@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { FileText, Plus } from 'lucide-react'
 import { AIDraftButton } from './AIDraftButton'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type Note = {
   id: string
@@ -20,6 +21,7 @@ type Note = {
 }
 
 export function PatientProgressNotes({ patientId }: { patientId: string }) {
+  const { prefs } = usePreferences()
   const [notes, setNotes] = useState<Note[] | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -56,7 +58,7 @@ export function PatientProgressNotes({ patientId }: { patientId: string }) {
           Progress Notes ({notes?.length ?? 0})
         </h2>
         <div className="flex items-center gap-2">
-          <AIDraftButton patientId={patientId} />
+          {prefs?.features?.ai_draft !== false && <AIDraftButton patientId={patientId} />}
           <Link
             href={`/dashboard/ehr/notes/new?patient_id=${encodeURIComponent(patientId)}`}
             className="inline-flex items-center gap-1.5 text-sm bg-teal-600 text-white px-3 py-1.5 rounded-md hover:bg-teal-700 transition"

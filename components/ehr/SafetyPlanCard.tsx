@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { ShieldAlert, Plus } from 'lucide-react'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type SafetyPlan = {
   id: string
@@ -21,6 +22,7 @@ type SafetyPlan = {
 
 export function SafetyPlanCard({ patientId }: { patientId: string }) {
   const router = useRouter()
+  const { prefs } = usePreferences()
   const [plan, setPlan] = useState<SafetyPlan | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -60,6 +62,7 @@ export function SafetyPlanCard({ patientId }: { patientId: string }) {
   }
 
   if (!enabled) return null
+  if (prefs && prefs.features.safety_plans === false) return null
   if (loading) return null
 
   if (plan) {

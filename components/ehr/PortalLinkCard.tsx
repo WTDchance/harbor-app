@@ -6,11 +6,14 @@
 
 import { useState } from 'react'
 import { Link2, Copy, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 export function PortalLinkCard({ patientId }: { patientId: string }) {
+  const { prefs } = usePreferences()
   const [url, setUrl] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [copied, setCopied] = useState(false)
+  if (prefs && prefs.features.portal === false) return null
 
   async function generate() {
     setGenerating(true)

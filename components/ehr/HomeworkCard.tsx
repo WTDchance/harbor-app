@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react'
 import { ListTodo, Plus, CheckCircle2, Circle, X } from 'lucide-react'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type Homework = {
   id: string
@@ -20,6 +21,7 @@ type Homework = {
 }
 
 export function HomeworkCard({ patientId }: { patientId: string }) {
+  const { prefs } = usePreferences()
   const [items, setItems] = useState<Homework[] | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -64,6 +66,7 @@ export function HomeworkCard({ patientId }: { patientId: string }) {
   }
 
   if (!enabled || loading) return null
+  if (prefs && prefs.features.homework === false) return null
 
   const open = (items ?? []).filter((h) => h.status === 'assigned')
   const done = (items ?? []).filter((h) => h.status === 'completed' || h.status === 'skipped')

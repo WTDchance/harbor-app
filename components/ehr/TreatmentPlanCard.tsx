@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Target, Plus } from 'lucide-react'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type Goal = { id?: string; text: string; objectives?: Array<{ text: string }> }
 type Plan = {
@@ -25,6 +26,7 @@ type Plan = {
 
 export function TreatmentPlanCard({ patientId }: { patientId: string }) {
   const router = useRouter()
+  const { prefs } = usePreferences()
   const [plans, setPlans] = useState<Plan[] | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -63,6 +65,7 @@ export function TreatmentPlanCard({ patientId }: { patientId: string }) {
   }
 
   if (!enabled) return null
+  if (prefs && prefs.features.treatment_plans === false) return null
   if (loading) return null
 
   const active = plans?.find((p) => p.status === 'active')

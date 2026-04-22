@@ -76,6 +76,32 @@ const EHR_SUPERVISION_NAV = {
   ),
 }
 
+const EHR_BILLING_NAV = {
+  href: "/dashboard/ehr/billing",
+  label: "Billing",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="1" y="4" width="16" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M1 7h16" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="3" y="10" width="4" height="2" fill="currentColor" />
+    </svg>
+  ),
+}
+
+const EHR_PREFERENCES_NAV = {
+  href: "/dashboard/ehr/preferences",
+  label: "EHR Preferences",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M3 9h4M11 9h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 4h12M3 14h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
 // --- Nav items ----------------------------------------------------------------
 const NAV = [
   {
@@ -208,6 +234,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [practiceName, setPracticeName] = useState<string | null>(null);
   const [ehrEnabled, setEhrEnabled] = useState(false);
+  const [prefs, setPrefs] = useState<{
+    features: Record<string, boolean>
+    sidebar: { compact: boolean; show_analytics: boolean; show_billing: boolean }
+  } | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -247,6 +277,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const data = await res.json();
             if (data.practice?.name) setPracticeName(data.practice.name);
             if (data.practice?.ehr_enabled === true) setEhrEnabled(true);
+          }
+          // Also fetch preferences (respects ehr_enabled gate on server)
+          const pres = await fetch('/api/ehr/preferences');
+          if (pres.ok) {
+            const p = await pres.json();
+            if (p.preferences) setPrefs({
+              features: p.preferences.features,
+              sidebar: p.preferences.sidebar,
+            });
           }
         } catch {}
       }
@@ -326,19 +365,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {(ehrEnabled
-            ? [
-                ...NAV.slice(0, 4), // Overview, Appointments, Patients, Intake
-                EHR_NOTES_NAV,
-                ...NAV.slice(4, -1), // Calls, Messages, Crisis Alerts, Support, Audit Log
-                EHR_REPORTS_NAV,
-                EHR_SUPERVISION_NAV,
-                EHR_MAND_REPORTS_NAV,
-                EHR_AUDIT_NAV,
-                ...NAV.slice(-1),    // Settings
-              ]
-            : NAV
-          ).map((item) => {
+          {(() => {
+            if (!ehrEnabled) return NAV
+            const f = prefs?.features ?? {}
+            const s = prefs?.sidebar ?? { compact: false, show_analytics: true, show_billing: true }
+            const items: any[] = []
+            // Top section — Overview, Appointments, Patients, Intake
+            items.push(...NAV.slice(0, 4))
+            // Clinical — EHR Notes
+            items.push(EHR_NOTES_NAV)
+            // Middle — Calls, Messages, Crisis Alerts, Support, Audit Log (Harbor's)
+            items.push(...NAV.slice(4, -1))
+            // Analytics group (if show_analytics + feature enabled)
+            if (s.show_analytics !== false && f.reports !== false) items.push(EHR_REPORTS_NAV)
+            if (f.supervision !== false) items.push(EHR_SUPERVISION_NAV)
+            if (f.mandatory_reports !== false) items.push(EHR_MAND_REPORTS_NAV)
+            if (s.show_billing !== false && f.billing !== false) items.push(EHR_BILLING_NAV)
+            if (s.show_analytics !== false && f.audit_log !== false) items.push(EHR_AUDIT_NAV)
+            items.push(EHR_PREFERENCES_NAV)
+            // Bottom — Settings
+            items.push(...NAV.slice(-1))
+            return items
+          })().map((item: typeof NAV[number]) => {
             const active = isActive(item);
             return (
               <Link

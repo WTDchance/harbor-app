@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react'
 import { Activity, Plus, Sparkles, AlertTriangle, ChevronDown, ChevronUp, Repeat } from 'lucide-react'
 import { INSTRUMENTS, getInstrument } from '@/lib/ehr/instruments'
 import { getNorm, percentile } from '@/lib/ehr/norms'
+import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type Assessment = {
   id: string
@@ -36,6 +37,7 @@ type Assessment = {
 type Mode = 'idle' | 'assign' | 'record'
 
 export function AssessmentsCard({ patientId }: { patientId: string }) {
+  const { prefs } = usePreferences()
   const [items, setItems] = useState<Assessment[] | null>(null)
   const [enabled, setEnabled] = useState(true)
   const [loading, setLoading] = useState(true)
@@ -116,6 +118,7 @@ export function AssessmentsCard({ patientId }: { patientId: string }) {
   }
 
   if (!enabled || loading) return null
+  if (prefs && prefs.features.assessments === false) return null
 
   const completed = (items ?? []).filter((a) => a.status === 'completed')
   const pending = (items ?? []).filter((a) => a.status === 'pending')
