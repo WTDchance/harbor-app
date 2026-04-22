@@ -9,15 +9,17 @@ import { ChevronLeft } from 'lucide-react'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { NoteEditor, type NoteFormValue } from '@/components/ehr/NoteEditor'
+import { NOTE_TEMPLATES } from '@/lib/ehr/note-templates'
+import { NewNoteWrapper } from './NewNoteWrapper'
 
 export const dynamic = 'force-dynamic'
 
 export default async function NewNotePage({
   searchParams,
 }: {
-  searchParams: Promise<{ patient_id?: string }>
+  searchParams: Promise<{ patient_id?: string; appointment_id?: string; template?: string }>
 }) {
-  const { patient_id: prefilledPatientId } = await searchParams
+  const { patient_id: prefilledPatientId, appointment_id: prefilledAppointmentId, template: templateId } = await searchParams
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -44,19 +46,20 @@ export default async function NewNotePage({
     .eq('practice_id', practiceId!)
     .order('last_name', { ascending: true })
 
-  // If ?patient_id=X is passed (from the patient detail "New note" button),
-  // prefill the form so the dropdown starts on that patient.
-  const initial: NoteFormValue | undefined = prefilledPatientId
+  // If ?patient_id=X or ?template=Y is passed, seed the editor with a
+  // partially-filled NoteFormValue. Templates come from NOTE_TEMPLATES.
+  const tpl = templateId ? NOTE_TEMPLATES.find((t) => t.id === templateId) : undefined
+  const initial: NoteFormValue | undefined = (prefilledPatientId || tpl)
     ? {
-        patient_id: prefilledPatientId,
-        title: '',
-        note_format: 'soap',
-        subjective: '',
-        objective: '',
-        assessment: '',
-        plan: '',
-        body: '',
-        cpt_codes: [],
+        patient_id: prefilledPatientId ?? '',
+        title: tpl?.title_prefix ?? '',
+        note_format: tpl?.note_format ?? 'soap',
+        subjective: tpl?.subjective ?? '',
+        objective: tpl?.objective ?? '',
+        assessment: tpl?.assessment ?? '',
+        plan: tpl?.plan ?? '',
+        body: tpl?.body ?? '',
+        cpt_codes: tpl?.suggested_cpt ?? [],
         icd10_codes: [],
       }
     : undefined
@@ -73,8 +76,15 @@ export default async function NewNotePage({
 
       <h1 className="text-2xl font-semibold text-gray-900 mb-1">New progress note</h1>
       <p className="text-sm text-gray-500 mb-6">
-        Drafts auto-save when you click &quot;Create note&quot;. You can sign it from the detail view.
+        Pick a template to pre-fill structure, or start blank. Drafts save when you click &quot;Create note&quot;.
       </p>
+
+      {!tpl && (
+        <NewNoteWrapper
+          patientId={prefilledPatientId}
+          appointmentId={prefilledAppointmentId}
+        />
+      )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-6">
         <NoteEditor patients={patients ?? []} mode="create" initial={initial} />

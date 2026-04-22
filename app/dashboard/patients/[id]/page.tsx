@@ -11,6 +11,10 @@ import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import IntakeProgress from "@/components/IntakeProgress";
 import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes";
+import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard";
+import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard";
+import { AssessmentsCard } from "@/components/ehr/AssessmentsCard";
+import { ConsentsCard } from "@/components/ehr/ConsentsCard";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
@@ -1160,8 +1164,12 @@ export default function PatientDetailPage() {
         )}
       </div>
 
-      {/* Progress Notes (EHR) — renders nothing if ehr_enabled is false */}
+      {/* EHR cards — each renders nothing if ehr_enabled is false */}
+      <SafetyPlanCard patientId={patient.id} />
+      <TreatmentPlanCard patientId={patient.id} />
       <PatientProgressNotes patientId={patient.id} />
+      <AssessmentsCard patientId={patient.id} />
+      <ConsentsCard patientId={patient.id} />
 
       {/* Intake Packet Progress (new) */}
       <IntakeProgress patientId={patient.id} />

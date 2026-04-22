@@ -12,7 +12,7 @@ import SessionTimeout from "@/components/SessionTimeout";
 
 const supabase = createClient();
 
-// EHR "Progress Notes" nav item — only shown when practice.ehr_enabled is true.
+// EHR nav items — only shown when practice.ehr_enabled is true.
 const EHR_NOTES_NAV = {
   href: "/dashboard/ehr/notes",
   label: "Progress Notes",
@@ -22,6 +22,18 @@ const EHR_NOTES_NAV = {
       <rect x="3" y="2" width="12" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
       <path d="M6 6h6M6 9h6M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       <path d="M7 2v1M11 2v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_AUDIT_NAV = {
+  href: "/dashboard/ehr/audit",
+  label: "EHR Audit Log",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 1l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V4l7-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M6 9l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   ),
 }
@@ -280,7 +292,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             ? [
                 ...NAV.slice(0, 4), // Overview, Appointments, Patients, Intake
                 EHR_NOTES_NAV,
-                ...NAV.slice(4),    // Calls, Messages, Crisis Alerts, Support, Audit Log, Settings
+                ...NAV.slice(4, -1), // Calls, Messages, Crisis Alerts, Support, Audit Log
+                EHR_AUDIT_NAV,
+                ...NAV.slice(-1),    // Settings
               ]
             : NAV
           ).map((item) => {
