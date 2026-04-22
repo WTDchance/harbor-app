@@ -113,6 +113,48 @@ const EHR_SCHED_REQ_NAV = {
   ),
 }
 
+const EHR_CASELOAD_NAV = {
+  href: "/dashboard/ehr/caseload",
+  label: "Caseload",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="13" cy="6" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M1 15c0-2.5 2-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M11 13c0-1.5 1.5-2.5 3-2.5s3 1 3 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_GROUPS_NAV = {
+  href: "/dashboard/ehr/group-sessions",
+  label: "Group Sessions",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="9" cy="5" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="4" cy="11" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="14" cy="11" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9 7.5c-1.5 2-3 3-5 3.5M9 7.5c1.5 2 3 3 5 3.5M4 13c0 1.5 2 2 5 2s5-.5 5-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_REFERRALS_NAV = {
+  href: "/dashboard/ehr/referrals",
+  label: "Referrals",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="4" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="14" cy="4" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="14" cy="14" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 8l6-3M6 10l6 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
 const EHR_OUTCOMES_NAV = {
   href: "/dashboard/ehr/outcomes",
   label: "Practice Outcomes",
@@ -419,8 +461,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             const items: any[] = []
             // Top section — Overview, Appointments, Patients, Intake
             items.push(...NAV.slice(0, 4))
-            // Clinical — EHR Notes
+            // Clinical — EHR Notes + Caseload + Group Sessions
             items.push(EHR_NOTES_NAV)
+            items.push(EHR_CASELOAD_NAV)
+            items.push(EHR_GROUPS_NAV)
             // Patient-facing channels
             items.push(EHR_MESSAGES_NAV)
             items.push(EHR_SCHED_REQ_NAV)
@@ -428,6 +472,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             items.push(...NAV.slice(4, -1))
             // Analytics group (if show_analytics + feature enabled)
             if (s.show_analytics !== false && f.reports !== false) items.push(EHR_REPORTS_NAV)
+            if (s.show_analytics !== false) items.push(EHR_REFERRALS_NAV)
             if (s.show_analytics !== false && f.assessments !== false) items.push(EHR_OUTCOMES_NAV)
             if (f.supervision !== false) items.push(EHR_SUPERVISION_NAV)
             items.push(EHR_CREDENTIALING_NAV)
