@@ -4,7 +4,8 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Calendar, FileText, Target, CheckCircle2, Clock, Video } from 'lucide-react'
+import Link from 'next/link'
+import { Calendar, FileText, Target, CheckCircle2, Clock, Video, Activity, ClipboardList } from 'lucide-react'
 
 type Appt = {
   id: string
@@ -34,20 +35,39 @@ const CONSENT_LABELS: Record<string, string> = {
   sms_consent: 'SMS Communication Consent',
 }
 
+type PendingAssessment = {
+  id: string
+  assessment_type: string
+  status: string
+  assigned_at: string | null
+  expires_at: string | null
+  completed_at: string | null
+  score: number | null
+  severity: string | null
+}
+
 export default function PortalHome() {
   const router = useRouter()
   const [me, setMe] = useState<Me | null>(null)
+  const [assessments, setAssessments] = useState<PendingAssessment[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [signingName, setSigningName] = useState('')
   const [signing, setSigning] = useState<string | null>(null)
 
   async function load() {
     try {
-      const res = await fetch('/api/portal/me')
-      if (res.status === 401) { router.replace('/portal/login'); return }
-      const json = await res.json()
-      setMe(json)
-      setSigningName(`${json.patient?.first_name ?? ''} ${json.patient?.last_name ?? ''}`.trim())
+      const [meRes, asRes] = await Promise.all([
+        fetch('/api/portal/me'),
+        fetch('/api/portal/assessments'),
+      ])
+      if (meRes.status === 401) { router.replace('/portal/login'); return }
+      const meJson = await meRes.json()
+      setMe(meJson)
+      setSigningName(`${meJson.patient?.first_name ?? ''} ${meJson.patient?.last_name ?? ''}`.trim())
+      if (asRes.ok) {
+        const asJson = await asRes.json()
+        setAssessments(asJson.assessments || [])
+      }
     } finally { setLoading(false) }
   }
   useEffect(() => { load() /* eslint-disable-line */ }, [])
@@ -83,6 +103,61 @@ export default function PortalHome() {
           {me.practice.phone_number && <> · {me.practice.phone_number}</>}
         </p>
       </div>
+
+      {/* Pending assessments — prominent when present */}
+      {assessments && assessments.filter((a) => a.status === 'pending').length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-5">
+          <h2 className="font-semibold text-amber-900 flex items-center gap-2 mb-2">
+            <ClipboardList className="w-4 h-4" />
+            Questionnaires waiting for you
+          </h2>
+          <p className="text-sm text-amber-800 mb-3">
+            Your therapist has asked you to complete these. They help track how you&apos;re doing over time.
+          </p>
+          <ul className="space-y-2">
+            {assessments.filter((a) => a.status === 'pending').map((a) => (
+              <li key={a.id} className="flex items-center gap-3 bg-white rounded-lg border border-amber-200 px-3 py-2">
+                <div className="flex-1">
+                  <div className="text-sm font-medium text-gray-900">{a.assessment_type}</div>
+                  <div className="text-xs text-gray-500">
+                    {a.expires_at && <>By {new Date(a.expires_at).toLocaleDateString()}</>}
+                  </div>
+                </div>
+                <Link
+                  href={`/portal/assessments/${a.id}`}
+                  className="inline-flex items-center gap-1 text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-md font-medium"
+                >
+                  Start
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Recently-completed assessments (brief summary) */}
+      {assessments && assessments.filter((a) => a.status === 'completed').length > 0 && (
+        <div className="bg-white border rounded-lg p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2 mb-3">
+            <Activity className="w-4 h-4 text-gray-500" />
+            Recent questionnaire results
+          </h2>
+          <ul className="divide-y divide-gray-100">
+            {assessments.filter((a) => a.status === 'completed').slice(0, 3).map((a) => (
+              <li key={a.id} className="py-2 flex items-center justify-between gap-2">
+                <div className="flex-1">
+                  <div className="text-sm text-gray-900">{a.assessment_type}</div>
+                  <div className="text-xs text-gray-500">
+                    {a.completed_at && new Date(a.completed_at).toLocaleDateString()}
+                    {a.severity && <> · {a.severity}</>}
+                  </div>
+                </div>
+                <div className="text-sm font-semibold text-gray-900">{a.score}</div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Upcoming appointments */}
       <div className="bg-white border rounded-lg p-5 shadow-sm">
