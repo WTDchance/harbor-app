@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle, CreditCard, BarChart3, Bell, Plug, FileText, TrendingUp, CalendarDays, Calendar, Shield } from 'lucide-react'
+import { Phone, MessageSquare, Settings, Home, LogOut, Users, AlertTriangle, CreditCard, BarChart3, Bell, Plug, FileText, TrendingUp, CalendarDays, Calendar, Shield, ClipboardList } from 'lucide-react'
 import clsx from 'clsx'
 import { createClient } from '@/lib/supabase-browser'
 
@@ -16,26 +16,48 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
   const supabase = createClient()
   const [crisisCount, setCrisisCount] = useState(0)
   const [practiceId, setPracticeId] = useState<string | null>(null)
+  const [ehrEnabled, setEhrEnabled] = useState(false)
 
   useEffect(() => {
-    const fetchCrisisCount = async () => {
+    const fetchPracticeContext = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      // Prefer users-table lookup (robust); fall back to notification_email
+      // match for legacy rows that don't have a linked users row.
+      let resolvedPracticeId: string | null = null
+      const { data: userRow } = await supabase
+        .from('users')
+        .select('practice_id')
+        .eq('id', user.id)
+        .maybeSingle()
+      if (userRow?.practice_id) {
+        resolvedPracticeId = userRow.practice_id
+      } else {
+        const { data: practice } = await supabase
+          .from('practices')
+          .select('id')
+          .eq('notification_email', user.email)
+          .maybeSingle()
+        resolvedPracticeId = practice?.id ?? null
+      }
+      if (!resolvedPracticeId) return
+      setPracticeId(resolvedPracticeId)
+
       const { data: practice } = await supabase
         .from('practices')
-        .select('id')
-        .eq('notification_email', user.email)
-        .single()
-      if (!practice?.id) return
-      setPracticeId(practice.id)
+        .select('ehr_enabled')
+        .eq('id', resolvedPracticeId)
+        .maybeSingle()
+      setEhrEnabled(practice?.ehr_enabled === true)
+
       const { count } = await supabase
         .from('crisis_alerts')
         .select('*', { count: 'exact', head: true })
-        .eq('practice_id', practice.id)
+        .eq('practice_id', resolvedPracticeId)
         .eq('reviewed', false)
       setCrisisCount(count || 0)
     }
-    fetchCrisisCount()
+    fetchPracticeContext()
   }, [supabase])
 
   const navItems = [
@@ -45,6 +67,7 @@ export function Sidebar({ practiceName = 'Harbor' }: SidebarProps) {
     { href: '/dashboard/waitlist', label: 'Waitlist', icon: Users },
     { href: '/dashboard/crisis', label: 'Crisis Alerts', icon: AlertTriangle, badge: crisisCount > 0 ? crisisCount : null },
     { href: '/dashboard/notes', label: 'Notes', icon: FileText },
+    ...(ehrEnabled ? [{ href: '/dashboard/ehr/notes', label: 'Progress Notes', icon: ClipboardList }] : []),
     { href: '/dashboard/analytics', label: 'Analytics', icon: BarChart3 },
     { href: '/dashboard/outcomes', label: 'Outcomes', icon: TrendingUp },
     { href: '/dashboard/calendar', label: 'Calendar', icon: Calendar },

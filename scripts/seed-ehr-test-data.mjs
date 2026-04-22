@@ -35,15 +35,28 @@ const TEST_PRACTICE_ID = '00000000-0000-0000-0000-00000000ED01'
 const db = new Client({ connectionString: DB_URL })
 await db.connect()
 
-// --- 1. Ensure test practice exists ---
+// --- 1. Ensure test practice exists + EHR is enabled for it ---
 const practiceRes = await db.query(
-  `INSERT INTO practices (id, name, ai_name, phone_number, timezone)
-   VALUES ($1, $2, $3, $4, $5)
-   ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name
-   RETURNING id, name`,
-  [TEST_PRACTICE_ID, 'EHR Dev Test Practice', 'Ellie', '+15550000001', 'America/Los_Angeles'],
+  `INSERT INTO practices (id, name, ai_name, phone_number, timezone, notification_email, ehr_enabled)
+   VALUES ($1, $2, $3, $4, $5, $6, true)
+   ON CONFLICT (id) DO UPDATE
+     SET name = EXCLUDED.name,
+         notification_email = EXCLUDED.notification_email,
+         ehr_enabled = true
+   RETURNING id, name, ehr_enabled`,
+  [TEST_PRACTICE_ID, 'EHR Dev Test Practice', 'Ellie', '+15550000001', 'America/Los_Angeles', TEST_EMAIL],
 )
-console.log(`  practice: ${practiceRes.rows[0].id} (${practiceRes.rows[0].name})`)
+console.log(`  practice: ${practiceRes.rows[0].id} (${practiceRes.rows[0].name}, ehr_enabled=${practiceRes.rows[0].ehr_enabled})`)
+
+// --- 1b. Ensure one test patient exists so the EHR has something to attach notes to ---
+const TEST_PATIENT_ID = '00000000-0000-0000-0000-00000000ED10'
+await db.query(
+  `INSERT INTO patients (id, practice_id, first_name, last_name, phone, email, reason_for_seeking)
+   VALUES ($1, $2, 'Sample', 'Patient', '+15550000010', 'sample.patient@example.com', 'Anxiety — dev seed')
+   ON CONFLICT (id) DO UPDATE SET first_name = EXCLUDED.first_name`,
+  [TEST_PATIENT_ID, TEST_PRACTICE_ID],
+)
+console.log(`  patient:  ${TEST_PATIENT_ID} (Sample Patient)`)
 
 await db.end()
 
