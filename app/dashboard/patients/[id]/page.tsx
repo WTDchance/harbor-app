@@ -20,6 +20,7 @@ import { PortalLinkCard } from "@/components/ehr/PortalLinkCard";
 import { MoodLogsCard } from "@/components/ehr/MoodLogsCard";
 import { HomeworkCard } from "@/components/ehr/HomeworkCard";
 import { BillingCard } from "@/components/ehr/BillingCard";
+import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
@@ -1171,6 +1172,7 @@ export default function PatientDetailPage() {
       </div>
 
       {/* EHR cards — each renders nothing if ehr_enabled is false */}
+      <PatientAISummaryCard patientId={patient.id} />
       <SafetyPlanCard patientId={patient.id} />
       <TreatmentPlanCard patientId={patient.id} />
       <PatientProgressNotes patientId={patient.id} />
