@@ -12,6 +12,20 @@ import SessionTimeout from "@/components/SessionTimeout";
 
 const supabase = createClient();
 
+// EHR "Progress Notes" nav item — only shown when practice.ehr_enabled is true.
+const EHR_NOTES_NAV = {
+  href: "/dashboard/ehr/notes",
+  label: "Progress Notes",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="3" y="2" width="12" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 6h6M6 9h6M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7 2v1M11 2v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
 // --- Nav items ----------------------------------------------------------------
 const NAV = [
   {
@@ -143,6 +157,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [practiceName, setPracticeName] = useState<string | null>(null);
+  const [ehrEnabled, setEhrEnabled] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -181,6 +196,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           if (res.ok) {
             const data = await res.json();
             if (data.practice?.name) setPracticeName(data.practice.name);
+            if (data.practice?.ehr_enabled === true) setEhrEnabled(true);
           }
         } catch {}
       }
@@ -260,7 +276,14 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {NAV.map((item) => {
+          {(ehrEnabled
+            ? [
+                ...NAV.slice(0, 4), // Overview, Appointments, Patients, Intake
+                EHR_NOTES_NAV,
+                ...NAV.slice(4),    // Calls, Messages, Crisis Alerts, Support, Audit Log, Settings
+              ]
+            : NAV
+          ).map((item) => {
             const active = isActive(item);
             return (
               <Link

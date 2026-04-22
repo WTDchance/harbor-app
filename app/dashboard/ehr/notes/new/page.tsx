@@ -8,11 +8,16 @@ import { createServerClient } from '@supabase/ssr'
 import { ChevronLeft } from 'lucide-react'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
-import { NoteEditor } from '@/components/ehr/NoteEditor'
+import { NoteEditor, type NoteFormValue } from '@/components/ehr/NoteEditor'
 
 export const dynamic = 'force-dynamic'
 
-export default async function NewNotePage() {
+export default async function NewNotePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ patient_id?: string }>
+}) {
+  const { patient_id: prefilledPatientId } = await searchParams
   const cookieStore = await cookies()
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -39,6 +44,23 @@ export default async function NewNotePage() {
     .eq('practice_id', practiceId!)
     .order('last_name', { ascending: true })
 
+  // If ?patient_id=X is passed (from the patient detail "New note" button),
+  // prefill the form so the dropdown starts on that patient.
+  const initial: NoteFormValue | undefined = prefilledPatientId
+    ? {
+        patient_id: prefilledPatientId,
+        title: '',
+        note_format: 'soap',
+        subjective: '',
+        objective: '',
+        assessment: '',
+        plan: '',
+        body: '',
+        cpt_codes: [],
+        icd10_codes: [],
+      }
+    : undefined
+
   return (
     <div className="max-w-3xl mx-auto py-8 px-4">
       <Link
@@ -55,7 +77,7 @@ export default async function NewNotePage() {
       </p>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <NoteEditor patients={patients ?? []} mode="create" />
+        <NoteEditor patients={patients ?? []} mode="create" initial={initial} />
       </div>
     </div>
   )

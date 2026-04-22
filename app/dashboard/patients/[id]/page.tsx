@@ -10,6 +10,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import IntakeProgress from "@/components/IntakeProgress";
+import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
@@ -1158,6 +1159,9 @@ export default function PatientDetailPage() {
           <p className="text-sm text-gray-500">No appointments scheduled.</p>
         )}
       </div>
+
+      {/* Progress Notes (EHR) — renders nothing if ehr_enabled is false */}
+      <PatientProgressNotes patientId={patient.id} />
 
       {/* Intake Packet Progress (new) */}
       <IntakeProgress patientId={patient.id} />
