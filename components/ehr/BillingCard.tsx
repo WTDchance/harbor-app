@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { DollarSign, CreditCard, FileDown, Plus } from 'lucide-react'
+import { DollarSign, CreditCard, FileDown, Plus, Send } from 'lucide-react'
 import { usePreferences } from '@/lib/ehr/use-preferences'
 
 type Charge = {
@@ -43,6 +43,7 @@ export function BillingCard({ patientId }: { patientId: string }) {
   const [loading, setLoading] = useState(true)
   const [paymentOpen, setPaymentOpen] = useState(false)
   const [superbillOpen, setSuperbillOpen] = useState(false)
+  const [invoiceOpen, setInvoiceOpen] = useState(false)
 
   async function load() {
     try {
@@ -65,13 +66,20 @@ export function BillingCard({ patientId }: { patientId: string }) {
           <DollarSign className="w-4 h-4 text-gray-500" />
           Billing
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => setPaymentOpen(true)}
             className="inline-flex items-center gap-1 text-xs bg-white border border-gray-300 text-gray-700 px-2.5 py-1.5 rounded-md hover:bg-gray-50"
           >
             <Plus className="w-3.5 h-3.5" />
             Record payment
+          </button>
+          <button
+            onClick={() => setInvoiceOpen(true)}
+            className="inline-flex items-center gap-1 text-xs bg-white border border-teal-600 text-teal-700 px-2.5 py-1.5 rounded-md hover:bg-teal-50"
+          >
+            <Send className="w-3.5 h-3.5" />
+            Send invoice
           </button>
           <button
             onClick={() => setSuperbillOpen(true)}
@@ -143,6 +151,108 @@ export function BillingCard({ patientId }: { patientId: string }) {
       {superbillOpen && (
         <SuperbillModal patientId={patientId} onClose={() => setSuperbillOpen(false)} />
       )}
+      {invoiceOpen && (
+        <InvoiceModal
+          patientId={patientId}
+          charges={summary.charges.filter((c) => (c.billed_to === 'both' || c.billed_to === 'patient_self_pay') && c.status !== 'paid' && c.status !== 'void' && c.status !== 'written_off')}
+          onClose={() => setInvoiceOpen(false)}
+          onSent={() => { setInvoiceOpen(false); load() }}
+        />
+      )}
+    </div>
+  )
+}
+
+function InvoiceModal({ patientId, charges, onClose, onSent }: {
+  patientId: string
+  charges: Charge[]
+  onClose: () => void
+  onSent: () => void
+}) {
+  const [selected, setSelected] = useState<Record<string, boolean>>(
+    Object.fromEntries(charges.map((c) => [c.id, true])),
+  )
+  const [sending, setSending] = useState(false)
+  const [result, setResult] = useState<{ url: string } | null>(null)
+  const ids = Object.keys(selected).filter((k) => selected[k])
+  const total = charges
+    .filter((c) => selected[c.id])
+    .reduce((s, c) => s + (c.billed_to === 'both' ? c.copay_cents : c.allowed_cents), 0)
+
+  async function submit() {
+    if (ids.length === 0) return
+    setSending(true)
+    try {
+      const res = await fetch('/api/ehr/billing/invoices', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patient_id: patientId, charge_ids: ids }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed')
+      setResult({ url: json.pay_url })
+    } catch (err) { alert(err instanceof Error ? err.message : 'Failed') }
+    finally { setSending(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-xl shadow-xl max-w-md w-full p-6" onClick={(e) => e.stopPropagation()}>
+        {result ? (
+          <div className="space-y-3">
+            <div className="text-lg font-semibold text-emerald-700">Invoice sent</div>
+            <p className="text-sm text-gray-600">Patient received an email with a secure pay link.</p>
+            {result.url && (
+              <div>
+                <div className="text-xs uppercase tracking-wider text-gray-500 mb-1">Pay link (copy + share)</div>
+                <input readOnly value={result.url} onClick={(e) => (e.target as HTMLInputElement).select()}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-xs font-mono bg-gray-50" />
+              </div>
+            )}
+            <div className="flex justify-end">
+              <button onClick={onSent} className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg">
+                Done
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="text-lg font-semibold text-gray-900">Send invoice</div>
+            <p className="text-sm text-gray-500">Select the patient-billable charges to include. Stripe emails the patient with a pay link.</p>
+            {charges.length === 0 ? (
+              <p className="text-sm text-gray-500 italic py-4">No patient-billable charges to invoice right now.</p>
+            ) : (
+              <ul className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg divide-y divide-gray-100">
+                {charges.map((c) => {
+                  const amt = c.billed_to === 'both' ? c.copay_cents : c.allowed_cents
+                  return (
+                    <li key={c.id} className="p-2 flex items-center gap-2 text-sm">
+                      <input type="checkbox" checked={!!selected[c.id]}
+                        onChange={(e) => setSelected({ ...selected, [c.id]: e.target.checked })} />
+                      <div className="flex-1">
+                        <div className="font-mono text-xs font-semibold text-teal-700">{c.cpt_code}</div>
+                        <div className="text-xs text-gray-500">{new Date(c.service_date).toLocaleDateString()} · {c.billed_to.replace('_', ' ')}</div>
+                      </div>
+                      <span className="font-mono text-xs font-semibold">{cents(amt)}</span>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+            <div className="flex items-center justify-between pt-2 border-t">
+              <span className="text-sm text-gray-600">Total</span>
+              <span className="text-lg font-bold font-mono">{cents(total)}</span>
+            </div>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600">Cancel</button>
+              <button onClick={submit} disabled={sending || ids.length === 0}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg disabled:opacity-50">
+                <Send className="w-4 h-4" />
+                {sending ? 'Sending…' : 'Send via email'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

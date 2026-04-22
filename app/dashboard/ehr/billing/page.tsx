@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { DollarSign, Filter } from 'lucide-react'
+import { DollarSign, Filter, SendHorizonal } from 'lucide-react'
 
 type Charge = {
   id: string; patient_id: string; cpt_code: string; units: number
@@ -28,14 +28,43 @@ export default function BillingPage() {
   const [charges, setCharges] = useState<Charge[] | null>(null)
   const [patients, setPatients] = useState<Map<string, { first_name: string; last_name: string }>>(new Map())
   const [filter, setFilter] = useState<string>('pending')
+  const [submitting, setSubmitting] = useState(false)
+  const [submitResult, setSubmitResult] = useState<string | null>(null)
+
+  async function reload() {
+    const res = await fetch(`/api/ehr/billing/charges?limit=500`)
+    if (res.ok) {
+      const json = await res.json()
+      setCharges(json.charges || [])
+    }
+  }
+
+  async function submitAllPendingClaims() {
+    if (!charges) return
+    const toSubmit = charges.filter((c) => c.status === 'pending' && (c.billed_to === 'insurance' || c.billed_to === 'both'))
+    if (toSubmit.length === 0) { setSubmitResult('No pending insurance-billable charges to submit.'); return }
+    if (!confirm(`Submit ${toSubmit.length} charge${toSubmit.length === 1 ? '' : 's'} to insurance?`)) return
+    setSubmitting(true); setSubmitResult(null)
+    try {
+      const res = await fetch('/api/ehr/billing/claims/submit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ charge_ids: toSubmit.map((c) => c.id) }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed')
+      const submitted = json.results.filter((r: any) => r.status === 'submitted').length
+      const rejected = json.results.filter((r: any) => r.status === 'rejected').length
+      const errored = json.results.filter((r: any) => r.status === 'error').length
+      setSubmitResult(`${submitted} submitted · ${rejected} rejected · ${errored} error`)
+      await reload()
+    } catch (err) {
+      setSubmitResult(err instanceof Error ? err.message : 'Failed')
+    } finally { setSubmitting(false) }
+  }
 
   useEffect(() => {
     (async () => {
-      const res = await fetch(`/api/ehr/billing/charges?limit=500`)
-      if (res.ok) {
-        const json = await res.json()
-        setCharges(json.charges || [])
-      }
+      await reload()
       // Best-effort fetch of patients for display. Harbor has an admin
       // route; fall back to empty map if not available in this env.
       try {
@@ -117,14 +146,30 @@ export default function BillingPage() {
       )}
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3">
+        <div className="flex items-center gap-2 border-b border-gray-200 px-4 py-3 flex-wrap">
           <Filter className="w-4 h-4 text-gray-400" />
           <select value={filter} onChange={(e) => setFilter(e.target.value)}
             className="border border-gray-200 rounded-lg px-2 py-1 text-sm">
             <option value="all">All statuses</option>
             {STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
-          <div className="text-xs text-gray-500 ml-auto">{filtered.length} charges</div>
+          <div className="text-xs text-gray-500">{filtered.length} charges</div>
+          {filter === 'pending' && (
+            <button
+              type="button"
+              onClick={submitAllPendingClaims}
+              disabled={submitting || !charges || charges.filter(c => c.status === 'pending' && (c.billed_to === 'insurance' || c.billed_to === 'both')).length === 0}
+              className="ml-auto inline-flex items-center gap-2 text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-md disabled:opacity-50"
+            >
+              <SendHorizonal className="w-3.5 h-3.5" />
+              {submitting ? 'Submitting…' : 'Submit pending claims (Stedi)'}
+            </button>
+          )}
+          {submitResult && (
+            <div className="text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded-md px-2 py-1 ml-2">
+              {submitResult}
+            </div>
+          )}
         </div>
         {!charges ? (
           <div className="p-8 text-center text-sm text-gray-500">Loading…</div>
