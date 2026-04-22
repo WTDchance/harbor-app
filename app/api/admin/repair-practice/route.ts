@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { HARBOR_SUMMARY_PROMPT } from '@/lib/vapi-provision'
 
 const VAPI_API_KEY = process.env.VAPI_API_KEY || ''
 const VAPI_BASE_URL = 'https://api.vapi.ai'
@@ -308,6 +309,12 @@ export async function PATCH(req: NextRequest) {
     endCallFunctionEnabled: true,
     silenceTimeoutSeconds: 30,
     maxDurationSeconds: 900,
+    // Structured post-call summary — CALLER / REASON / OUTCOME /
+    // ACTION ITEMS / NOTES — so the dashboard renders scannable sections
+    // instead of a run-on paragraph.
+    analysisPlan: {
+      summaryPrompt: HARBOR_SUMMARY_PROMPT,
+    },
     server: { url: serverUrl },
     metadata: {
       practiceId: p.id,

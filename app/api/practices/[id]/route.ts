@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { buildSystemPrompt } from '@/lib/systemPrompt'
+import { HARBOR_SUMMARY_PROMPT } from '@/lib/vapi-provision'
 
 const VAPI_API_KEY = process.env.VAPI_API_KEY
 const VAPI_BASE_URL = 'https://api.vapi.ai'
@@ -149,6 +150,12 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
         endCallFunctionEnabled: true,
         silenceTimeoutSeconds: 30,
         maxDurationSeconds: 900,
+        // Structured post-call summary — pinned on every PATCH so existing
+        // assistants inherit the new format. Matches lib/vapi-provision and
+        // /api/admin/repair-practice.
+        analysisPlan: {
+          summaryPrompt: HARBOR_SUMMARY_PROMPT,
+        },
       }
 
       // Sync greeting as firstMessage if it was updated
