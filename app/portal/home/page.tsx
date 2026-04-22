@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calendar, FileText, Target, CheckCircle2, Clock, Video, Activity, ClipboardList, ListTodo } from 'lucide-react'
+import { Calendar, FileText, Target, CheckCircle2, Clock, Video, Activity, ClipboardList, ListTodo, MessageSquare, DollarSign, CalendarPlus, Download } from 'lucide-react'
 
 type Appt = {
   id: string
@@ -104,8 +104,28 @@ export default function PortalHome() {
         </p>
       </div>
 
-      {/* Quick actions row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {/* Quick actions — 2x3 grid */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <PortalTile href="/portal/schedule" icon={<CalendarPlus className="w-5 h-5" />} title="Request an appointment" hint="Send preferred times to your therapist." />
+        <PortalTile href="/portal/messages" icon={<MessageSquare className="w-5 h-5" />} title="Messages" hint="Secure thread with your therapist." />
+        <PortalTile href="/portal/invoices" icon={<DollarSign className="w-5 h-5" />} title="Invoices" hint="View + pay bills." />
+        <PortalTile href="/portal/superbills" icon={<Download className="w-5 h-5" />} title="Superbills" hint="Receipts for insurance reimbursement." />
+        <PortalTile href="/portal/homework" icon={<ListTodo className="w-5 h-5" />} title="Homework" hint="Open assignments." />
+        <PortalTile href="/portal/mood" icon={<Activity className="w-5 h-5" />} title="Daily check-in" hint="30-second mood + sleep." />
+      </div>
+
+      {/* Legacy hidden blocks — consolidated into PortalTile grid above */}
+      <Link
+        href="/portal/homework"
+        className="hidden items-center gap-3"
+      ><span /></Link>
+      <Link
+        href="/portal/mood"
+        className="hidden items-center gap-3"
+      ><span /></Link>
+
+      {/* Legacy, hidden */}
+      <div className="hidden">
         <Link
           href="/portal/homework"
           className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:border-teal-500 transition flex items-center gap-3"
@@ -330,5 +350,22 @@ export default function PortalHome() {
         </div>
       )}
     </div>
+  )
+}
+
+function PortalTile({ href, icon, title, hint }: {
+  href: string; icon: React.ReactNode; title: string; hint: string
+}) {
+  return (
+    <Link
+      href={href}
+      className="bg-white border border-gray-200 rounded-lg p-3 shadow-sm hover:border-teal-500 transition flex flex-col items-start gap-1"
+    >
+      <div className="w-8 h-8 rounded-full bg-teal-100 flex items-center justify-center text-teal-700">
+        {icon}
+      </div>
+      <div className="font-semibold text-gray-900 text-sm">{title}</div>
+      <div className="text-[11px] text-gray-500">{hint}</div>
+    </Link>
   )
 }

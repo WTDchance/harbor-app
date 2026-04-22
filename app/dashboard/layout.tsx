@@ -89,6 +89,30 @@ const EHR_BILLING_NAV = {
   ),
 }
 
+const EHR_MESSAGES_NAV = {
+  href: "/dashboard/ehr/messages",
+  label: "Patient Messages",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M16 12a2 2 0 01-2 2H6l-4 4V4a2 2 0 012-2h10a2 2 0 012 2v8z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
+const EHR_SCHED_REQ_NAV = {
+  href: "/dashboard/ehr/scheduling-requests",
+  label: "Scheduling Requests",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="2" y="3" width="14" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 1v4M12 1v4M2 7h14M8 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6 11l1 1 2-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
 const EHR_PREFERENCES_NAV = {
   href: "/dashboard/ehr/preferences",
   label: "EHR Preferences",
@@ -374,6 +398,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             items.push(...NAV.slice(0, 4))
             // Clinical — EHR Notes
             items.push(EHR_NOTES_NAV)
+            // Patient-facing channels
+            items.push(EHR_MESSAGES_NAV)
+            items.push(EHR_SCHED_REQ_NAV)
             // Middle — Calls, Messages, Crisis Alerts, Support, Audit Log (Harbor's)
             items.push(...NAV.slice(4, -1))
             // Analytics group (if show_analytics + feature enabled)
