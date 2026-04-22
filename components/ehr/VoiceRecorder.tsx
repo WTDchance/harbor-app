@@ -1,13 +1,17 @@
 // components/ehr/VoiceRecorder.tsx
-// Browser-native speech-to-text via the Web Speech API (SpeechRecognition).
-// Pros: no API key, free, works offline in Chrome/Edge, streams tokens live.
-// Cons: Chromium-only, quality varies. Therapist edits the result anyway.
-// Gracefully hides itself if the browser doesn't support it.
+// Two transcription paths, chosen automatically per browser:
+//   - Chrome / Edge / Brave / Arc: browser-native Web Speech API.
+//     Free, streaming, works offline. No server round-trip.
+//   - Safari / iPad / Firefox: record audio via MediaRecorder, POST to
+//     /api/ehr/notes/transcribe which calls OpenAI Whisper.
+//
+// Either way the therapist hits Dictate, talks, hits Stop; whatever text
+// we get back gets appended to the host field (a brief textarea).
 
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Mic, StopCircle } from 'lucide-react'
+import { Mic, StopCircle, Loader2 } from 'lucide-react'
 
 type Props = {
   onAppend: (chunk: string) => void
@@ -15,7 +19,9 @@ type Props = {
   label?: string
 }
 
-// Minimal shape for the Web Speech API (not in TS lib.dom by default).
+// ---------------------------------------------------------------------------
+// Web Speech API shape (not in lib.dom by default)
+// ---------------------------------------------------------------------------
 type SpeechRecognitionEventLike = {
   results: ArrayLike<{ 0: { transcript: string }; isFinal: boolean; length: number }> & { length: number }
   resultIndex: number
@@ -37,31 +43,50 @@ function getRecognitionCtor(): { new (): SpeechRecognitionLike } | null {
   return w.SpeechRecognition || w.webkitSpeechRecognition || null
 }
 
+function hasMediaRecorder(): boolean {
+  return typeof window !== 'undefined' &&
+         typeof (window as any).MediaRecorder !== 'undefined' &&
+         !!navigator.mediaDevices?.getUserMedia
+}
+
+type Mode = 'native' | 'whisper' | 'unsupported' | 'unknown'
+
 export function VoiceRecorder({ onAppend, disabled, label = 'Dictate' }: Props) {
-  const [supported, setSupported] = useState<boolean | null>(null)
+  const [mode, setMode] = useState<Mode>('unknown')
   const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Native path state
   const recRef = useRef<SpeechRecognitionLike | null>(null)
-  const lastResultIndexRef = useRef(0)
+
+  // Whisper path state
+  const mediaRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const streamRef = useRef<MediaStream | null>(null)
 
   useEffect(() => {
-    setSupported(getRecognitionCtor() !== null)
+    if (getRecognitionCtor()) setMode('native')
+    else if (hasMediaRecorder()) setMode('whisper')
+    else setMode('unsupported')
   }, [])
 
-  function start() {
-    if (disabled) return
+  // Cleanup on unmount
+  useEffect(() => () => {
+    try { recRef.current?.stop() } catch {}
+    try { mediaRef.current?.stop() } catch {}
+    streamRef.current?.getTracks().forEach((t) => t.stop())
+  }, [])
+
+  // --------- Native path: Web Speech API ----------
+  function startNative() {
     const Ctor = getRecognitionCtor()
-    if (!Ctor) {
-      setError('Voice dictation is not available in this browser. Try Chrome.')
-      return
-    }
+    if (!Ctor) return
     try {
       const rec = new Ctor()
       rec.continuous = true
       rec.interimResults = false
       rec.lang = 'en-US'
-      lastResultIndexRef.current = 0
-
       rec.onresult = (e) => {
         for (let i = e.resultIndex; i < e.results.length; i++) {
           const r = e.results[i]
@@ -73,15 +98,13 @@ export function VoiceRecorder({ onAppend, disabled, label = 'Dictate' }: Props) 
       }
       rec.onerror = (ev: any) => {
         const msg = ev?.error === 'not-allowed'
-          ? 'Microphone permission denied. Click the lock icon in the address bar to allow mic access.'
+          ? 'Microphone permission denied. Allow mic in the browser address bar.'
           : ev?.error === 'no-speech'
-          ? null // don't show scary errors for pause
+          ? null
           : `Voice error: ${ev?.error || 'unknown'}`
         if (msg) setError(msg)
       }
-      rec.onend = () => {
-        setRecording(false)
-      }
+      rec.onend = () => setRecording(false)
       rec.start()
       recRef.current = rec
       setRecording(true)
@@ -92,25 +115,112 @@ export function VoiceRecorder({ onAppend, disabled, label = 'Dictate' }: Props) 
     }
   }
 
-  function stop() {
+  function stopNative() {
     try { recRef.current?.stop() } catch {}
     recRef.current = null
     setRecording(false)
   }
 
-  // Tear down on unmount so a stray recognizer doesn't keep the mic open.
-  useEffect(() => () => { try { recRef.current?.stop() } catch {} }, [])
+  // --------- Whisper path: MediaRecorder -> /api/ehr/notes/transcribe ----------
+  async function startWhisper() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const mime = pickMime()
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined)
+      chunksRef.current = []
+      rec.ondataavailable = (e) => { if (e.data.size) chunksRef.current.push(e.data) }
+      rec.onstop = async () => {
+        // Release mic immediately
+        streamRef.current?.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+        await sendToWhisper(chunksRef.current, mime || 'audio/webm')
+      }
+      rec.start()
+      mediaRef.current = rec
+      setRecording(true)
+      setError(null)
+    } catch (err: any) {
+      const msg = err?.name === 'NotAllowedError'
+        ? 'Microphone permission denied. Allow mic access to dictate.'
+        : err?.name === 'NotFoundError'
+        ? 'No microphone found on this device.'
+        : `Failed to start: ${err?.message || err}`
+      setError(msg)
+      setRecording(false)
+    }
+  }
 
-  if (supported === false) return null // no-op in unsupported browsers
+  function stopWhisper() {
+    try { mediaRef.current?.stop() } catch {}
+    mediaRef.current = null
+    setRecording(false)
+  }
+
+  async function sendToWhisper(chunks: Blob[], mime: string) {
+    if (!chunks.length) return
+    setTranscribing(true)
+    try {
+      const blob = new Blob(chunks, { type: mime })
+      const ext = mime.includes('mp4') ? 'mp4' : mime.includes('ogg') ? 'ogg' : 'webm'
+      const form = new FormData()
+      form.append('audio', blob, `recording.${ext}`)
+      const res = await fetch('/api/ehr/notes/transcribe', { method: 'POST', body: form })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Transcription failed')
+      const text = (json.transcript || '').trim()
+      if (text) onAppend(text)
+      if (json.demo) setError(json.transcript)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Transcription failed')
+    } finally {
+      setTranscribing(false)
+    }
+  }
+
+  function pickMime(): string | null {
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/ogg;codecs=opus',
+      'audio/ogg',
+    ]
+    for (const m of candidates) {
+      if (typeof (window as any).MediaRecorder?.isTypeSupported === 'function' &&
+          (window as any).MediaRecorder.isTypeSupported(m)) return m
+    }
+    return null
+  }
+
+  function start() {
+    if (disabled) return
+    setError(null)
+    if (mode === 'native') return startNative()
+    if (mode === 'whisper') return startWhisper()
+  }
+
+  function stop() {
+    if (mode === 'native') return stopNative()
+    if (mode === 'whisper') return stopWhisper()
+  }
+
+  if (mode === 'unsupported' || mode === 'unknown') return null
 
   return (
     <div className="flex flex-col items-end gap-1">
-      {!recording ? (
+      {transcribing ? (
+        <div className="inline-flex items-center gap-1.5 text-xs bg-white border border-gray-300 text-gray-700 px-2.5 py-1.5 rounded-md">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+          Transcribing…
+        </div>
+      ) : !recording ? (
         <button
           type="button"
           onClick={start}
-          disabled={disabled || supported === null}
+          disabled={disabled}
           className="inline-flex items-center gap-1.5 text-xs bg-white border border-gray-300 text-gray-700 px-2.5 py-1.5 rounded-md hover:bg-gray-50 disabled:opacity-50"
+          title={mode === 'native' ? 'Browser speech recognition' : 'Whisper transcription (Safari/iPad)'}
         >
           <Mic className="w-3.5 h-3.5" />
           {label}
@@ -125,7 +235,7 @@ export function VoiceRecorder({ onAppend, disabled, label = 'Dictate' }: Props) 
           Stop
         </button>
       )}
-      {error && <div className="text-[10px] text-red-600 max-w-[220px] text-right">{error}</div>}
+      {error && <div className="text-[10px] text-red-600 max-w-[240px] text-right">{error}</div>}
     </div>
   )
 }
