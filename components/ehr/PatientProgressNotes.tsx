@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { FileText, Plus } from 'lucide-react'
+import { AIDraftButton } from './AIDraftButton'
 
 type Note = {
   id: string
@@ -54,13 +55,16 @@ export function PatientProgressNotes({ patientId }: { patientId: string }) {
           <FileText className="w-4 h-4 text-gray-500" />
           Progress Notes ({notes?.length ?? 0})
         </h2>
-        <Link
-          href={`/dashboard/ehr/notes/new?patient_id=${encodeURIComponent(patientId)}`}
-          className="inline-flex items-center gap-1.5 text-sm bg-teal-600 text-white px-3 py-1.5 rounded-md hover:bg-teal-700 transition"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          New note
-        </Link>
+        <div className="flex items-center gap-2">
+          <AIDraftButton patientId={patientId} />
+          <Link
+            href={`/dashboard/ehr/notes/new?patient_id=${encodeURIComponent(patientId)}`}
+            className="inline-flex items-center gap-1.5 text-sm bg-teal-600 text-white px-3 py-1.5 rounded-md hover:bg-teal-700 transition"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            New note
+          </Link>
+        </div>
       </div>
 
       {notes && notes.length > 0 ? (
