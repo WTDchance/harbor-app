@@ -21,6 +21,15 @@ type Report = {
   distribution: Array<{ label: string; count: number }>
 }
 
+// Published baseline means from validation literature (via lib/ehr/norms).
+// Used below for a "vs. population norm" comparison chip.
+const BASELINE_MEAN: Record<string, number> = {
+  'PHQ-9': 7.2,
+  'GAD-7': 4.9,
+  'PCL-5': 28.0,
+  'AUDIT-C': 2.2,
+}
+
 export default function OutcomesPage() {
   const [data, setData] = useState<Report[] | null>(null)
 
@@ -62,6 +71,19 @@ export default function OutcomesPage() {
               <div className="text-right">
                 <div className="text-2xl font-bold text-gray-900 font-mono">{r.mean ?? '—'}</div>
                 <div className="text-[11px] text-gray-500">mean (median {r.median ?? '—'})</div>
+                {r.mean != null && BASELINE_MEAN[r.instrument] != null && (() => {
+                  const delta = r.mean - BASELINE_MEAN[r.instrument]
+                  const better = delta < 0
+                  return (
+                    <div className={`text-[10px] mt-1 inline-block px-2 py-0.5 rounded-full border ${
+                      Math.abs(delta) < 1 ? 'bg-gray-50 text-gray-600 border-gray-200'
+                      : better ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                      : 'bg-amber-50 text-amber-800 border-amber-200'
+                    }`}>
+                      {better ? '↓' : '↑'} {Math.abs(delta).toFixed(1)} vs population norm ({BASELINE_MEAN[r.instrument]})
+                    </div>
+                  )
+                })()}
               </div>
             </div>
 
