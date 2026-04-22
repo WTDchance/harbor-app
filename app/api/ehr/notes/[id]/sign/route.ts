@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase'
 import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
 import { auditEhrAccess } from '@/lib/ehr/audit'
+import { createChargesForSignedNote } from '@/lib/ehr/billing'
+import { normalize as normalizePrefs } from '@/lib/ehr/preferences'
 
 function contentHash(note: Record<string, any>): string {
   // Hash the fields that make up the clinical content, in a stable order.
@@ -82,5 +84,22 @@ export async function POST(
     resourceId: id,
     details: { status: nextStatus, amendment_of: note.amendment_of ?? null, hash },
   })
+
+  // Auto-create charges when billing feature is enabled for the practice
+  try {
+    const { data: prefRow } = await supabaseAdmin
+      .from('practices').select('ui_preferences').eq('id', auth.practiceId).maybeSingle()
+    const prefs = normalizePrefs(prefRow?.ui_preferences)
+    if (prefs.features.billing) {
+      await createChargesForSignedNote({
+        practiceId: auth.practiceId,
+        note: data, // the just-signed row
+        billingFeatureEnabled: true,
+      })
+    }
+  } catch (err) {
+    console.error('[notes/sign] failed to auto-create charges', err)
+    // never block the sign response on billing failure
+  }
   return NextResponse.json({ note: data, success: true })
 }
