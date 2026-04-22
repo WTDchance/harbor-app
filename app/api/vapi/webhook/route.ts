@@ -2047,18 +2047,20 @@ function buildFallbackAssistant() {
       provider: '11labs',
       voiceId: 'EXAVITQu4vr4xnSDxMaL',
       model: 'eleven_turbo_v2_5',
-      stability: 0.5,
-      similarityBoost: 0.8,
-      speed: 0.85,
-      style: 0.2,
+      // Keep aligned with the main provisioning + repair defaults.
+      stability: 0.6,
+      similarityBoost: 0.75,
+      speed: 0.9,
+      style: 0.05,
       useSpeakerBoost: true,
     },
     transcriber: {
       provider: 'deepgram',
       model: 'nova-2',
     },
+    endCallFunctionEnabled: true,
     silenceTimeoutSeconds: 30,
-    maxDurationSeconds: 600,
+    maxDurationSeconds: 900,
   }
 }
 

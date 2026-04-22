@@ -284,16 +284,30 @@ export async function PATCH(req: NextRequest) {
       provider: '11labs',
       voiceId: 'EXAVITQu4vr4xnSDxMaL',
       model: 'eleven_turbo_v2_5',
-      stability: 0.5,
-      similarityBoost: 0.8,
-      speed: 0.85,
-      style: 0.2,
+      // Voice tuning notes (4/22/26): prior settings (stability 0.5 / style 0.2
+      // / similarityBoost 0.8) produced wide inflection swings that callers
+      // described as "sounds like it's switching between different people."
+      // Raising stability and dropping style flattens those swings without
+      // taking away warmth — Bella's warmth comes from the voice model itself,
+      // not the style slider.
+      stability: 0.6,
+      similarityBoost: 0.75,
+      speed: 0.9,
+      style: 0.05,
       useSpeakerBoost: true,
     },
     firstMessage: greeting,
     endCallMessage: `Thank you for calling ${p.name}. Have a wonderful day!`,
     backgroundSound: 'office',
     backchannelingEnabled: true,
+    // Give Ellie the ability to actually hang up. Without this, she can SAY
+    // goodbye but the call stays live until silenceTimeout or maxDuration —
+    // which is why callers experienced a "bye-bye-bye loop" where she kept
+    // re-engaging instead of ending cleanly. The system prompt now instructs
+    // her to invoke endCall at the natural wrap-up moment.
+    endCallFunctionEnabled: true,
+    silenceTimeoutSeconds: 30,
+    maxDurationSeconds: 900,
     server: { url: serverUrl },
     metadata: {
       practiceId: p.id,

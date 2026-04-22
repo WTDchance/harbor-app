@@ -78,13 +78,22 @@ export async function createVapiAssistant(p: PracticeContext): Promise<string> {
         provider: '11labs',
         voiceId: DEFAULT_VOICE_ID,
         model: 'eleven_turbo_v2_5',
-        stability: 0.5,
+        // Keep these aligned with the PATCH-time defaults in
+        // /api/admin/repair-practice so freshly provisioned practices behave
+        // identically to re-synced ones.
+        stability: 0.6,
         similarityBoost: 0.75,
+        speed: 0.9,
+        style: 0.05,
+        useSpeakerBoost: true,
       },
       firstMessage: p.greeting,
       endCallMessage: `Thank you for calling ${p.name}. Have a wonderful day!`,
+      // Ellie must be able to end the call herself. Without this she can only
+      // say goodbye verbally while the call continues until maxDuration.
+      endCallFunctionEnabled: true,
       silenceTimeoutSeconds: 30,
-      maxDurationSeconds: 600,
+      maxDurationSeconds: 900,
       backgroundSound: 'office',
       backchannelingEnabled: true,
       // hipaaEnabled requires Vapi's $1k/mo HIPAA plan + BAA.
