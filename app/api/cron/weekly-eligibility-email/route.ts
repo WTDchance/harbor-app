@@ -45,9 +45,16 @@ export async function POST(req: NextRequest) {
     const unauthorized = assertCronAuthorized(req)
     if (unauthorized) return unauthorized
 
+    const url = req.nextUrl
+    // ?force=1 bypasses the 20-hour dedup gate. Useful for ops / manual
+    // re-sends after a fix. Leave unset in the cron-job.org schedule.
+    const force = url.searchParams.get('force') === '1'
+
     const { data: practices, error: pErr } = await supabaseAdmin
       .from('practices')
-      .select('id, name, provider_name, notification_email, timezone, status')
+      .select(
+        'id, name, provider_name, notification_email, timezone, status, weekly_eligibility_sent_at'
+      )
       .eq('status', 'active')
       .not('notification_email', 'is', null)
 
@@ -56,11 +63,27 @@ export async function POST(req: NextRequest) {
     const nowIso = new Date().toISOString()
     const horizonIso = new Date(Date.now() + LOOKAHEAD_DAYS * 86_400_000).toISOString()
 
+    // Dedup threshold: skip a practice if we already sent an eligibility
+    // email within the last 20 hours. Tight enough to still fire weekly,
+    // wide enough to absorb duplicate cron-job.org triggers 15 minutes
+    // apart. Overrideable via ?force=1.
+    const DEDUP_WINDOW_MS = 20 * 60 * 60 * 1000
+    const dedupCutoff = new Date(Date.now() - DEDUP_WINDOW_MS)
+
     let emailsSent = 0
+    let skippedDedup = 0
     const errors: Array<{ practice_id: string; reason: string }> = []
 
     for (const practice of practices || []) {
       try {
+        const lastSent = (practice as any).weekly_eligibility_sent_at
+          ? new Date((practice as any).weekly_eligibility_sent_at)
+          : null
+        if (!force && lastSent && lastSent > dedupCutoff) {
+          skippedDedup++
+          continue
+        }
+
         const rows = await buildRowsForPractice(practice.id, nowIso, horizonIso)
         if (rows.length === 0) continue // no upcoming appointments — skip email
 
@@ -78,8 +101,18 @@ export async function POST(req: NextRequest) {
           html,
           from: EMAIL_SUPPORT,
         })
-        if (ok) emailsSent++
-        else errors.push({ practice_id: practice.id, reason: 'sendEmail returned false' })
+        if (ok) {
+          emailsSent++
+          // Mark sent_at so repeat triggers inside the dedup window become
+          // no-ops. Non-fatal on failure — worst case the next cron tick
+          // sends again, which is less bad than silently dropping emails.
+          await supabaseAdmin
+            .from('practices')
+            .update({ weekly_eligibility_sent_at: new Date().toISOString() })
+            .eq('id', practice.id)
+        } else {
+          errors.push({ practice_id: practice.id, reason: 'sendEmail returned false' })
+        }
       } catch (err) {
         const reason = err instanceof Error ? err.message : 'unknown'
         console.error(`[weekly-eligibility-email] practice ${practice.id}: ${reason}`)
@@ -91,6 +124,7 @@ export async function POST(req: NextRequest) {
       ok: true,
       practices_considered: practices?.length || 0,
       emails_sent: emailsSent,
+      skipped_dedup: skippedDedup,
       errors: errors.length,
       errorDetail: errors.slice(0, 10),
       durationMs: Date.now() - started,
