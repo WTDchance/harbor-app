@@ -38,6 +38,44 @@ const EHR_AUDIT_NAV = {
   ),
 }
 
+const EHR_MAND_REPORTS_NAV = {
+  href: "/dashboard/ehr/mandatory-reports",
+  label: "Mandatory Reports",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 1L1 16h16L9 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M9 7v4M9 13v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_REPORTS_NAV = {
+  href: "/dashboard/ehr/reports",
+  label: "Practice Reports",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="3" y="9" width="3" height="6" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="8" y="5" width="3" height="10" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="13" y="2" width="3" height="13" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  ),
+}
+
+const EHR_SUPERVISION_NAV = {
+  href: "/dashboard/ehr/supervision",
+  label: "Supervision",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M3 14c0-3 3-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M13 9l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
 // --- Nav items ----------------------------------------------------------------
 const NAV = [
   {
@@ -293,6 +331,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                 ...NAV.slice(0, 4), // Overview, Appointments, Patients, Intake
                 EHR_NOTES_NAV,
                 ...NAV.slice(4, -1), // Calls, Messages, Crisis Alerts, Support, Audit Log
+                EHR_REPORTS_NAV,
+                EHR_SUPERVISION_NAV,
+                EHR_MAND_REPORTS_NAV,
                 EHR_AUDIT_NAV,
                 ...NAV.slice(-1),    // Settings
               ]

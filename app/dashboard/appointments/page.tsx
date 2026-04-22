@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { CalendarDays, Plus, ChevronLeft, ChevronRight, Clock, Phone, User, CheckCircle, XCircle, AlertCircle, FileText } from 'lucide-react'
 import { TelehealthButton } from '@/components/ehr/TelehealthButton'
+import { SessionTimerButton } from '@/components/ehr/SessionTimerButton'
 
 interface Appointment {
   id: string
@@ -323,6 +324,7 @@ export default function AppointmentsPage() {
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-3">
+                          <SessionTimerButton appointmentId={appt.id} />
                           <TelehealthButton appointmentId={appt.id} compact />
                           <Link
                             href={`/dashboard/ehr/notes/new?appointment_id=${appt.id}`}

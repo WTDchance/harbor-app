@@ -229,20 +229,78 @@ No other therapy EHR on the market ships this stack out of the box.
 
 ---
 
-## What ships next (Week 4 preview)
+## Week 4 — Practice Operations (shipped)
 
-- Supervision / co-signing workflow (associates + supervisors)
-- Release of Information form (authorize sharing with PCP/psychiatrist)
-- Continuity-of-care summary (auto-generated export for referring
-  providers)
-- Mandatory reporting log (child/elder abuse, duty-to-warn templates
-  and audit trail)
-- Productivity reports (hours seen, notes outstanding, no-show rate,
-  goal-progress rollups)
-- Credentialing tracker (license expiry, CEUs, insurance panels)
-- Session timer (live clock during session, stamps appointment duration
-  automatically for billing)
-- Homework tracking (what was assigned, did patient complete)
+The boring-sounding essentials that turn this from "great tool" into
+"the tool a practice can actually run on."
+
+**Session timer on every appointment**
+- One-click Start on any appointment row → live elapsed clock →
+  one-click Stop stamps `actual_started_at` + `actual_ended_at`.
+- Feeds the hours-seen metric on the Reports page.
+- Reveals variance between scheduled 45 min and actual 52 min. No more
+  guessing for billing.
+
+**Homework tracking**
+- Therapist assigns between-session homework on the patient profile
+  (title + optional description + due date). Links to the note it was
+  assigned from when appropriate.
+- Patient sees open homework on their portal, can mark complete or
+  skip, leaves a short note for the therapist.
+- Therapist-side card shows open vs. completed, patient's completion
+  note, and due dates.
+
+**Continuity-of-care summary**
+- One-page referral PDF (printable HTML). Patient info, presenting
+  problem, active treatment plan, most recent assessment scores,
+  latest clinical impression, recent appointments.
+- In the patient-profile "Export record" dropdown alongside the full
+  JSON/HTML exports.
+- Designed to be what you'd fax to a PCP or psychiatrist.
+
+**Mandatory reporting log**
+- Dedicated page in the sidebar.
+- Report types: suspected child abuse / elder abuse / dependent-adult
+  abuse / duty-to-warn (Tarasoff) / duty-to-protect / other.
+- Starter template per type (reporter, concern, basis, safety,
+  contacted).
+- Reported-to, incident date, reference number, follow-up.
+- Audit severity=warn on creation. Every entry visible in one
+  searchable log.
+
+**Practice productivity reports**
+- /dashboard/ehr/reports — single glance at practice health:
+  hours seen (7d), sessions completed, drafts outstanding (with age of
+  oldest — red if > 3 days), signed 30d, new patients 30d, no-show
+  rate, cancellation rate, active treatment plans, total goals, plans
+  past review date, pending cosigns, pending patient-assessments.
+- Attention queue at the top surfaces anything that needs action today.
+
+**Supervision / co-signing**
+- Migration: `ehr_supervision` (supervisor / supervisee relationships
+  per practice) + cosign fields on progress notes.
+- Co-sign API validates authority against supervision rows; admin
+  override supported. SHA-256 hash of the note at co-sign time.
+- /dashboard/ehr/supervision — supervisor's queue of notes awaiting
+  co-sign.
+- Cosign button on the note detail page appears only when required and
+  not yet completed. Once signed, a purple "Co-signed [date]" badge
+  replaces the button.
+
+---
+
+## Week 5+ candidates
+
+- Release of Information workflow (standalone form + audited share
+  actions)
+- Credentialing tracker (license expiry alerts, CEU hours, insurance
+  panels)
+- Secure messaging (portal-based patient ↔ therapist thread)
+- Patient self-scheduling from the portal
+- Billing / claims via Stedi (superbills, 837 submission, 835 ERA
+  posting, reconciliation)
+- Group-therapy support (one session, multiple patients)
+- Outcome aggregates across the whole practice
 
 ---
 

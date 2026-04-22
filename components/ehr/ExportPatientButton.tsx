@@ -6,7 +6,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Download, FileJson, FileText } from 'lucide-react'
+import { Download, FileJson, FileText, Share2 } from 'lucide-react'
 
 export function ExportPatientButton({ patientId }: { patientId: string }) {
   const [open, setOpen] = useState(false)
@@ -36,6 +36,19 @@ export function ExportPatientButton({ patientId }: { patientId: string }) {
               <div>
                 <div className="font-medium">Printable record</div>
                 <div className="text-[10px] text-gray-500">HTML · print to save PDF</div>
+              </div>
+            </a>
+            <a
+              href={`/api/ehr/patients/${patientId}/continuity-summary`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 border-t border-gray-100"
+              onClick={() => setOpen(false)}
+            >
+              <Share2 className="w-4 h-4 text-gray-500" />
+              <div>
+                <div className="font-medium">Continuity of Care summary</div>
+                <div className="text-[10px] text-gray-500">one-page referral · send to PCP / psychiatrist</div>
               </div>
             </a>
             <a

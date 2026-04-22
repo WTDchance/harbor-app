@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { Calendar, FileText, Target, CheckCircle2, Clock, Video, Activity, ClipboardList } from 'lucide-react'
+import { Calendar, FileText, Target, CheckCircle2, Clock, Video, Activity, ClipboardList, ListTodo } from 'lucide-react'
 
 type Appt = {
   id: string
@@ -104,10 +104,40 @@ export default function PortalHome() {
         </p>
       </div>
 
-      {/* Daily check-in CTA */}
+      {/* Quick actions row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Link
+          href="/portal/homework"
+          className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:border-teal-500 transition flex items-center gap-3"
+        >
+          <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center shrink-0">
+            <ListTodo className="w-5 h-5 text-teal-700" />
+          </div>
+          <div className="flex-1">
+            <div className="font-semibold text-gray-900">Homework</div>
+            <div className="text-xs text-gray-500">Open assignments from your therapist.</div>
+          </div>
+          <span className="text-teal-700 text-sm font-medium">Open →</span>
+        </Link>
+        <Link
+          href="/portal/mood"
+          className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:border-teal-500 transition flex items-center gap-3"
+        >
+          <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center shrink-0">
+            <Activity className="w-5 h-5 text-teal-700" />
+          </div>
+          <div className="flex-1">
+            <div className="font-semibold text-gray-900">Daily check-in</div>
+            <div className="text-xs text-gray-500">30 seconds — mood + sleep + optional note.</div>
+          </div>
+          <span className="text-teal-700 text-sm font-medium">Start →</span>
+        </Link>
+      </div>
+
+      {/* Legacy single-CTA hidden via 2-up grid above — remove old block */}
       <Link
         href="/portal/mood"
-        className="block bg-white border border-gray-200 rounded-lg p-5 shadow-sm hover:border-teal-500 transition"
+        className="hidden bg-white border border-gray-200 rounded-lg p-5 shadow-sm hover:border-teal-500 transition"
       >
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">

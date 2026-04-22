@@ -13,6 +13,7 @@ import { getEffectivePracticeId } from '@/lib/active-practice'
 import { NoteEditor, type NoteFormValue } from '@/components/ehr/NoteEditor'
 import { SignButton } from './SignButton'
 import { AmendButton } from './AmendButton'
+import { CosignButton } from './CosignButton'
 
 export const dynamic = 'force-dynamic'
 
@@ -114,8 +115,18 @@ export default async function NoteDetailPage({
             )}
           </div>
         </div>
-        {isDraft && <SignButton noteId={note.id} />}
-        {isSigned && <AmendButton noteId={note.id} />}
+        <div className="flex flex-col items-end gap-2">
+          {isDraft && <SignButton noteId={note.id} />}
+          {isSigned && <AmendButton noteId={note.id} />}
+          {isSigned && note.requires_cosign && !note.cosigned_at && (
+            <CosignButton noteId={note.id} />
+          )}
+          {note.cosigned_at && (
+            <span className="inline-flex items-center gap-1 text-xs text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-full font-medium">
+              Co-signed {new Date(note.cosigned_at).toLocaleDateString()}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Lineage banner — shown above the editor when this note is part of a chain */}

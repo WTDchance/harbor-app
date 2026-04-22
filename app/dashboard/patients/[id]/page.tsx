@@ -18,6 +18,7 @@ import { ConsentsCard } from "@/components/ehr/ConsentsCard";
 import { ExportPatientButton } from "@/components/ehr/ExportPatientButton";
 import { PortalLinkCard } from "@/components/ehr/PortalLinkCard";
 import { MoodLogsCard } from "@/components/ehr/MoodLogsCard";
+import { HomeworkCard } from "@/components/ehr/HomeworkCard";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
@@ -1174,6 +1175,7 @@ export default function PatientDetailPage() {
       <PatientProgressNotes patientId={patient.id} />
       <AssessmentsCard patientId={patient.id} />
       <MoodLogsCard patientId={patient.id} />
+      <HomeworkCard patientId={patient.id} />
       <ConsentsCard patientId={patient.id} />
       <PortalLinkCard patientId={patient.id} />
 
