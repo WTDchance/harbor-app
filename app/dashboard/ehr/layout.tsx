@@ -10,6 +10,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { isEhrEnabled } from '@/lib/ehr/feature-flag'
 import { EhrComingSoon } from '@/components/ehr/ComingSoon'
+import { WelcomeTour } from '@/components/ehr/WelcomeTour'
 
 export default async function EhrLayout({ children }: { children: React.ReactNode }) {
   const cookieStore = await cookies()
@@ -38,5 +39,10 @@ export default async function EhrLayout({ children }: { children: React.ReactNod
 
   if (!enabled) return <EhrComingSoon feature="Harbor EHR" />
 
-  return <>{children}</>
+  return (
+    <>
+      <WelcomeTour />
+      {children}
+    </>
+  )
 }

@@ -127,6 +127,18 @@ const EHR_CASELOAD_NAV = {
   ),
 }
 
+const EHR_WAITLIST_NAV = {
+  href: "/dashboard/ehr/waitlist",
+  label: "EHR Waitlist",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9 5v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
 const EHR_GROUPS_NAV = {
   href: "/dashboard/ehr/group-sessions",
   label: "Group Sessions",
@@ -464,6 +476,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             // Clinical — EHR Notes + Caseload + Group Sessions
             items.push(EHR_NOTES_NAV)
             items.push(EHR_CASELOAD_NAV)
+            items.push(EHR_WAITLIST_NAV)
             items.push(EHR_GROUPS_NAV)
             // Patient-facing channels
             items.push(EHR_MESSAGES_NAV)

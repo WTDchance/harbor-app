@@ -95,6 +95,31 @@ export default function AppointmentsPage() {
     setSaving(true)
     setError('')
     try {
+      // Conflict pre-check — warn (don't block) if the proposed slot
+      // overlaps with another scheduled/confirmed appointment.
+      try {
+        const params = new URLSearchParams({
+          date: form.appointment_date,
+          time: form.appointment_time,
+          duration: String(form.duration_minutes || 45),
+        })
+        if (selectedAppt?.id) params.set('exclude_id', selectedAppt.id)
+        const cr = await fetch(`/api/ehr/appointments/conflicts?${params.toString()}`)
+        if (cr.ok) {
+          const j = await cr.json()
+          if (j.conflicts && j.conflicts.length > 0) {
+            const list = j.conflicts.map((c: any) =>
+              `${c.time} · ${c.patient_name} (${c.duration_minutes} min, ${c.status})`
+            ).join('\n')
+            if (!confirm(
+              `This overlaps with:\n\n${list}\n\nBook anyway?`
+            )) { setSaving(false); return }
+          }
+        }
+      } catch {
+        // Non-fatal — continue with save if the conflict check itself fails.
+      }
+
       const method = selectedAppt ? 'PATCH' : 'POST'
       const body = selectedAppt ? { id: selectedAppt.id, ...form } : form
       const r = await fetch('/api/appointments', {
