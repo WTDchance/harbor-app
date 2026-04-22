@@ -132,6 +132,23 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
           messages: [{ role: 'system', content: newSystemPrompt }],
           temperature: 0.7,
         },
+        // Pin voice + call-control config to Harbor defaults on every PATCH so
+        // existing assistants inherit voice-tune + endCall fixes without
+        // needing a full repair-practice sync. Aligned with lib/vapi-provision
+        // and /api/admin/repair-practice.
+        voice: {
+          provider: '11labs',
+          voiceId: 'EXAVITQu4vr4xnSDxMaL',
+          model: 'eleven_turbo_v2_5',
+          stability: 0.6,
+          similarityBoost: 0.75,
+          speed: 0.9,
+          style: 0.05,
+          useSpeakerBoost: true,
+        },
+        endCallFunctionEnabled: true,
+        silenceTimeoutSeconds: 30,
+        maxDurationSeconds: 900,
       }
 
       // Sync greeting as firstMessage if it was updated
