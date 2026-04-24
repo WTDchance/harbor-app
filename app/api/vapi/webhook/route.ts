@@ -228,7 +228,7 @@ async function handleAssistantRequest(message: any) {
     .select(
       `id, vapi_assistant_id, name, ai_name, timezone, greeting,
        provider_name, specialties, location, telehealth, insurance_accepted,
-       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number, is_crisis_capable, transfer_enabled, notification_email, notification_emails`
+       hours_json, self_pay_rate_cents, emotional_support_enabled, fax_number, is_crisis_capable, notification_email, notification_emails`
     )
     .eq('id', practiceId)
     .maybeSingle()
@@ -290,7 +290,6 @@ async function handleAssistantRequest(message: any) {
         bio: t.bio,
       })),
       is_crisis_capable: (practice as any).is_crisis_capable === true,
-      transfer_enabled: (practice as any).transfer_enabled === true,
       crisis_resources: (crisisResourceRows || []).map((r: any) => ({
         name: r.name,
         phone: r.phone,
@@ -2047,20 +2046,18 @@ function buildFallbackAssistant() {
       provider: '11labs',
       voiceId: 'EXAVITQu4vr4xnSDxMaL',
       model: 'eleven_turbo_v2_5',
-      // Keep aligned with the main provisioning + repair defaults.
-      stability: 0.6,
-      similarityBoost: 0.75,
-      speed: 0.9,
-      style: 0.05,
+      stability: 0.5,
+      similarityBoost: 0.8,
+      speed: 0.85,
+      style: 0.2,
       useSpeakerBoost: true,
     },
     transcriber: {
       provider: 'deepgram',
       model: 'nova-2',
     },
-    endCallFunctionEnabled: true,
     silenceTimeoutSeconds: 30,
-    maxDurationSeconds: 900,
+    maxDurationSeconds: 600,
   }
 }
 

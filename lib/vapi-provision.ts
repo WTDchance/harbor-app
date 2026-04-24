@@ -10,27 +10,6 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.c
 // 11labs "Bella" - warm female voice, Harbor default.h
 const DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL'
 
-// Post-call summary prompt. Produces structured, scannable summaries instead
-// of the default Vapi run-on paragraph. Kept in plain text (no markdown bold)
-// so it renders cleanly in the dashboard via `whitespace-pre-wrap`. Shared
-// across all sync paths — vapi-provision, repair-practice, practices/[id] —
-// so every assistant writes summaries in the same shape.
-export const HARBOR_SUMMARY_PROMPT = [
-  'Summarize the call in these five sections, each on its own line with a blank line between sections. Use these exact headers in ALL CAPS followed by a colon. Do NOT use markdown, bullets beyond a simple hyphen, or any other formatting.',
-  '',
-  'CALLER: Caller name, phone number if given, and whether they are a new or existing patient.',
-  '',
-  'REASON: One or two sentences on why they called.',
-  '',
-  'OUTCOME: What was accomplished on this call — appointment booked (with date/time), message taken, question answered, cancellation processed, transferred to therapist, etc.',
-  '',
-  'ACTION ITEMS: What the therapist needs to do next. One item per line prefixed with "- ". Write "None" if no follow-up is needed.',
-  '',
-  'NOTES: Anything else that matters — patient preferences, insurance details mentioned, emotional state, crisis indicators, or context the therapist should know. Keep it brief. Write "None" if nothing to add.',
-  '',
-  'Keep each section concise and operational. Do not include medical details beyond what is necessary for the therapist to follow up.',
-].join('\n')
-
 export interface PracticeContext {
   id: string
   name: string
@@ -99,33 +78,19 @@ export async function createVapiAssistant(p: PracticeContext): Promise<string> {
         provider: '11labs',
         voiceId: DEFAULT_VOICE_ID,
         model: 'eleven_turbo_v2_5',
-        // Keep these aligned with the PATCH-time defaults in
-        // /api/admin/repair-practice so freshly provisioned practices behave
-        // identically to re-synced ones.
-        stability: 0.6,
+        stability: 0.5,
         similarityBoost: 0.75,
-        speed: 0.9,
-        style: 0.05,
-        useSpeakerBoost: true,
       },
       firstMessage: p.greeting,
       endCallMessage: `Thank you for calling ${p.name}. Have a wonderful day!`,
-      // Ellie must be able to end the call herself. Without this she can only
-      // say goodbye verbally while the call continues until maxDuration.
-      endCallFunctionEnabled: true,
       silenceTimeoutSeconds: 30,
-      maxDurationSeconds: 900,
+      maxDurationSeconds: 600,
       backgroundSound: 'office',
       backchannelingEnabled: true,
       // hipaaEnabled requires Vapi's $1k/mo HIPAA plan + BAA.
       // Enable once the plan is active — do NOT set without it.
       // hipaaEnabled: true,
       transcriber: { provider: 'deepgram', model: 'nova-2', language: 'en-US' },
-      // Structured post-call summary so dashboard + email notifications
-      // show scannable sections instead of a run-on paragraph.
-      analysisPlan: {
-        summaryPrompt: HARBOR_SUMMARY_PROMPT,
-      },
       server: { url: serverUrl },
       metadata: {
         practiceId: p.id,

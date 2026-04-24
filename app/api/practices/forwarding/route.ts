@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
     // Get practice forwarding settings
     const { data: practice, error: practiceError } = await supabaseAdmin
       .from('practices')
-      .select('id, forwarding_enabled, call_forwarding_number, transfer_enabled')
+      .select('id, forwarding_enabled, call_forwarding_number')
       .eq('id', practiceId)
       .single()
 
@@ -39,14 +39,12 @@ export async function GET(req: NextRequest) {
     console.log(`[Forwarding GET] Retrieved forwarding state for practice ${practice.id}`, {
       forwarding_enabled: practice.forwarding_enabled,
       has_forwarding_number: !!practice.call_forwarding_number,
-      transfer_enabled: practice.transfer_enabled,
     })
 
     return NextResponse.json(
       {
         forwarding_enabled: practice.forwarding_enabled || false,
         call_forwarding_number: practice.call_forwarding_number || null,
-        transfer_enabled: practice.transfer_enabled || false,
       },
       { status: 200 }
     )
@@ -72,28 +70,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
-    // Parse request body. `enabled` is forwarding (Twilio-level bypass);
-    // `transfer_enabled` is mid-call warm transfer. They are independent
-    // toggles — either, both, or neither can be set in a single request.
-    const body = await req.json()
-    const enabled: boolean = typeof body.enabled === 'boolean' ? body.enabled : false
-    const forwarding_number: string | null = body.forwarding_number ?? null
-    const hasTransferField: boolean = Object.prototype.hasOwnProperty.call(body, 'transfer_enabled')
-    const transferEnabledInput: boolean | null = hasTransferField
-      ? body.transfer_enabled === true
-      : null
+    // Parse request body
+    const { enabled, forwarding_number } = await req.json()
 
-    if (typeof body.enabled !== 'boolean') {
+    if (typeof enabled !== 'boolean') {
       return NextResponse.json(
         { error: 'enabled must be a boolean' },
         { status: 400 }
       )
     }
 
-    // If enabling forwarding, a number is required. Transfer toggle alone
-    // doesn't require a number here because it can be set on top of an
-    // existing stored number, but the repair-practice sync will no-op the
-    // tool registration if no number is on file.
+    // If enabling, forwarding_number is required
     if (enabled && !forwarding_number) {
       return NextResponse.json(
         { error: 'forwarding_number is required when enabling forwarding' },
@@ -111,7 +98,7 @@ export async function POST(req: NextRequest) {
     // Get practice with Twilio details
     const { data: practice, error: practiceError } = await supabaseAdmin
       .from('practices')
-      .select('id, twilio_phone_sid, call_forwarding_number, transfer_enabled')
+      .select('id, twilio_phone_sid, call_forwarding_number')
       .eq('id', practiceId)
       .single()
 
@@ -161,12 +148,6 @@ export async function POST(req: NextRequest) {
       updateData.call_forwarding_number = forwarding_number
     }
 
-    // transfer_enabled is a separate opt-in. Only write it when the client
-    // explicitly sent the field — omitting it preserves the existing value.
-    if (transferEnabledInput !== null) {
-      updateData.transfer_enabled = transferEnabledInput
-    }
-
     const { error: updateError } = await supabaseAdmin
       .from('practices')
       .update(updateData)
@@ -183,7 +164,6 @@ export async function POST(req: NextRequest) {
     console.log(`[Forwarding POST] Updated forwarding for practice ${practice.id}`, {
       enabled,
       forwarding_number: enabled ? forwarding_number : null,
-      transfer_enabled: transferEnabledInput,
     })
 
     // Re-sync the Vapi assistant so the warm-transfer tool's destination
@@ -217,21 +197,11 @@ export async function POST(req: NextRequest) {
       console.warn('[Forwarding POST] Vapi resync threw (non-fatal):', syncErr)
     }
 
-    // Re-read so the response reflects the committed state (including any
-    // stored forwarding_number we kept around while forwarding is off, and
-    // the current transfer_enabled).
-    const { data: refreshed } = await supabaseAdmin
-      .from('practices')
-      .select('forwarding_enabled, call_forwarding_number, transfer_enabled')
-      .eq('id', practice.id)
-      .single()
-
     return NextResponse.json(
       {
         success: true,
-        forwarding_enabled: refreshed?.forwarding_enabled ?? enabled,
-        call_forwarding_number: refreshed?.call_forwarding_number ?? (enabled ? forwarding_number : null),
-        transfer_enabled: refreshed?.transfer_enabled ?? false,
+        forwarding_enabled: enabled,
+        call_forwarding_number: enabled ? forwarding_number : null,
       },
       { status: 200 }
     )

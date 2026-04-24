@@ -37,19 +37,20 @@ export const metadata: Metadata = {
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
     images: [
       {
-        url: '/og-image.svg',
-        width: 1200,
-        height: 630,
+        url: '/harbor-logo-120.png',
+        width: 120,
+        height: 120,
         alt: 'Harbor AI Receptionist — Never miss a patient call again',
+        type: 'image/png',
       },
     ],
   },
   twitter: {
-    card: 'summary_large_image',
+    card: 'summary',
     title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
-    images: ['/og-image.svg'],
+    images: ['/harbor-logo-120.png'],
   },
   alternates: {
     canonical: siteUrl,
@@ -187,7 +188,4 @@ y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
         `,
           }}
         />
-      </body>
-    </html>
-  )
-}
+      </

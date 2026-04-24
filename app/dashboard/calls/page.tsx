@@ -315,7 +315,7 @@ function CallCard({ call }: { call: CallLog }) {
           {call.summary && (
             <div>
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">AI Summary</p>
-              <p className="text-sm text-gray-700 bg-teal-50 rounded-lg p-3 whitespace-pre-wrap leading-relaxed">{call.summary}</p>
+              <p className="text-sm text-gray-700 bg-teal-50 rounded-lg p-3">{call.summary}</p>
             </div>
           )}
 
