@@ -46,9 +46,9 @@ resource "aws_cognito_user_pool" "this" {
   }
 
   schema {
-    name                = "practice_id"
-    attribute_data_type = "String"
-    mutable             = true
+    name                     = "practice_id"
+    attribute_data_type      = "String"
+    mutable                  = true
     developer_only_attribute = false
 
     string_attribute_constraints {
@@ -58,9 +58,9 @@ resource "aws_cognito_user_pool" "this" {
   }
 
   schema {
-    name                = "role"
-    attribute_data_type = "String"
-    mutable             = true
+    name                     = "role"
+    attribute_data_type      = "String"
+    mutable                  = true
     developer_only_attribute = false
 
     string_attribute_constraints {
@@ -96,9 +96,9 @@ resource "aws_cognito_user_pool_client" "app" {
 
   prevent_user_existence_errors = "ENABLED"
 
-  access_token_validity  = 60   # minutes
-  id_token_validity      = 60   # minutes
-  refresh_token_validity = 30   # days
+  access_token_validity  = 60 # minutes
+  id_token_validity      = 60 # minutes
+  refresh_token_validity = 30 # days
 
   token_validity_units {
     access_token  = "minutes"

@@ -1,4 +1,4 @@
-# RDS Postgres for Harbor. Replaces Supabase — only the database, not auth.
+# RDS Postgres for Harbor. Replaces Supabase - only the database, not auth.
 # Cognito takes over auth (see cognito.tf).
 
 resource "random_password" "rds_master" {
@@ -32,7 +32,7 @@ resource "aws_db_subnet_group" "this" {
 resource "aws_db_parameter_group" "this" {
   name        = "${local.name_prefix}-pg16"
   family      = "postgres16"
-  description = "Harbor RDS parameter group — force SSL, log slow queries."
+  description = "Harbor RDS parameter group - force SSL, log slow queries."
 
   parameter {
     name  = "rds.force_ssl"
@@ -81,7 +81,7 @@ resource "aws_db_instance" "primary" {
   parameter_group_name   = aws_db_parameter_group.this.name
 
   backup_retention_period = var.rds_backup_retention_days
-  backup_window           = "07:00-08:00" # UTC — 11pm-midnight Pacific
+  backup_window           = "07:00-08:00" # UTC - 11pm-midnight Pacific
   maintenance_window      = "Sun:08:00-Sun:09:00"
   copy_tags_to_snapshot   = true
 
@@ -89,9 +89,9 @@ resource "aws_db_instance" "primary" {
   skip_final_snapshot       = var.environment != "production"
   final_snapshot_identifier = var.environment == "production" ? "${local.name_prefix}-final-${formatdate("YYYYMMDD-hhmmss", timestamp())}" : null
 
-  enabled_cloudwatch_logs_exports = ["postgresql"]
-  performance_insights_enabled    = true
-  performance_insights_kms_key_id = aws_kms_key.rds.arn
+  enabled_cloudwatch_logs_exports       = ["postgresql"]
+  performance_insights_enabled          = true
+  performance_insights_kms_key_id       = aws_kms_key.rds.arn
   performance_insights_retention_period = 7
 
   auto_minor_version_upgrade = true

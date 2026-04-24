@@ -83,12 +83,13 @@ resource "aws_route_table_association" "public" {
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.this.id
 
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.this.id
-  }
-
   tags = merge(local.common_tags, { Name = "${local.name_prefix}-private-rt" })
+}
+
+resource "aws_route" "private_nat" {
+  route_table_id         = aws_route_table.private.id
+  destination_cidr_block = "0.0.0.0/0"
+  nat_gateway_id         = aws_nat_gateway.this.id
 }
 
 resource "aws_route_table_association" "private_app" {
@@ -207,7 +208,7 @@ resource "aws_security_group" "app" {
 
 resource "aws_security_group" "rds" {
   name        = "${local.name_prefix}-rds"
-  description = "Postgres — app subnet only"
+  description = "Postgres - app subnet only"
   vpc_id      = aws_vpc.this.id
 
   ingress {
