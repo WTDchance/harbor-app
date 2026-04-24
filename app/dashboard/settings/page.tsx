@@ -1436,9 +1436,6 @@ export default function SettingsPage() {
           </button>
         </div>
       </div>
-        </>
-      )}
-
       {/* Crisis Resources — per-practice referral list Ellie reads to callers
           in crisis, and toggle for whether this practice provides clinical
           crisis intervention. Critical for non-crisis-capable providers:
