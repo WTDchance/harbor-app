@@ -1,0 +1,20 @@
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/.terraform.lock.hcl
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/*.tfvars
+!infra/terraform/*.tfvars.example
+infra/terraform/backend.hcl
+infra/terraform/tfplan
+infra/terraform/tfplan.*
+
+# Env
+.env
+.env.*
+!.env.aws.example
+
+# AWS credentials — NEVER commit
+*.csv
+aws-credentials*
+**/harbor-terraform*

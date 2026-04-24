@@ -1,0 +1,8 @@
+# Copy to backend.hcl and fill in. backend.hcl is gitignored.
+# Run: terraform init -backend-config=backend.hcl
+
+bucket         = "harbor-terraform-state-417242953135"
+key            = "staging/terraform.tfstate"
+region         = "us-east-1"
+dynamodb_table = "harbor-terraform-lock"
+encrypt        = true

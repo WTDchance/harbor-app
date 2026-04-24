@@ -1,0 +1,24 @@
+aws_region         = "us-east-1"
+environment        = "staging"
+project            = "harbor"
+hosted_zone_domain = "lab.harboroffice.ai"
+app_fqdn_override  = ""
+
+vpc_cidr                = "10.40.0.0/16"
+availability_zone_count = 2
+
+rds_engine_version        = "16.3"
+rds_instance_class        = "db.t4g.medium"
+rds_allocated_storage_gb  = 50
+rds_backup_retention_days = 14
+rds_multi_az              = false
+rds_database_name         = "harbor"
+rds_master_username       = "harbor_admin"
+
+app_image_tag     = "latest"
+app_cpu           = 1024
+app_memory        = 2048
+app_desired_count = 2
+
+log_retention_days = 90
+ses_from_address   = "ellie@harboroffice.ai"
