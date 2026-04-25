@@ -1,6 +1,14 @@
-// MIGRATION REQUIRED: ALTER TABLE practices ADD COLUMN IF NOT EXISTS calendar_token TEXT UNIQUE;
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+// Public ICS calendar feed authed by ?token= (a calendar_token on practices).
+//
+// Used to subscribe Apple Calendar / Google Calendar / etc. to a practice's
+// appointment list. No Cognito session — token-only auth, like an API key,
+// so the practice can hand the URL to a calendar app.
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 function formatDate(date: Date): string {
   return date.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z'
@@ -27,32 +35,29 @@ function foldLine(line: string): string {
 
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get('token')
-  if (!token) {
-    return new NextResponse('Missing token', { status: 400 })
-  }
+  if (!token) return new NextResponse('Missing token', { status: 400 })
 
-  // Look up practice by calendar token
-  const { data: practice, error } = await supabaseAdmin
-    .from('practices')
-    .select('id, name')
-    .eq('calendar_token', token)
-    .single()
+  const practiceResult = await pool.query(
+    `SELECT id, name FROM practices WHERE calendar_token = $1 LIMIT 1`,
+    [token],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = practiceResult.rows[0]
+  if (!practice) return new NextResponse('Invalid token', { status: 401 })
 
-  if (error || !practice) {
-    return new NextResponse('Invalid token', { status: 401 })
-  }
-
-  // Get appointments from last 30 days onwards
+  // Last 30 days onwards, joined with patient name/phone for display.
   const since = new Date()
   since.setDate(since.getDate() - 30)
-
-  const { data: appointments } = await supabaseAdmin
-    .from('appointments')
-    .select('id, scheduled_at, duration_minutes, status, notes, patient_name, patient_phone')
-    .eq('practice_id', practice.id)
-    .neq('status', 'cancelled')
-    .gte('scheduled_at', since.toISOString())
-    .order('scheduled_at', { ascending: true })
+  const apptsResult = await pool.query(
+    `SELECT a.id, a.scheduled_for, a.duration_minutes, a.status, a.notes,
+            p.first_name, p.last_name, p.preferred_name, p.phone
+       FROM appointments a
+       LEFT JOIN patients p ON p.id = a.patient_id
+      WHERE a.practice_id = $1
+        AND a.status <> 'cancelled'
+        AND a.scheduled_for >= $2
+      ORDER BY a.scheduled_for ASC`,
+    [practice.id, since.toISOString()],
+  )
 
   const now = formatDate(new Date())
   const calName = escapeIcal(`Harbor - ${practice.name}`)
@@ -69,13 +74,16 @@ export async function GET(req: NextRequest) {
     'X-PUBLISHED-TTL:PT15M',
   ]
 
-  for (const appt of appointments || []) {
-    const patientName = appt.patient_name || 'Patient'
-    const start = new Date(appt.scheduled_at)
-    const end = new Date(start.getTime() + (appt.duration_minutes || 60) * 60000)
+  for (const appt of apptsResult.rows) {
+    const patientName =
+      appt.preferred_name ||
+      [appt.first_name, appt.last_name].filter(Boolean).join(' ') ||
+      'Patient'
+    const start = new Date(appt.scheduled_for)
+    const end = new Date(start.getTime() + (appt.duration_minutes || 60) * 60_000)
 
     const descParts = [`Patient: ${patientName}`]
-    if (appt.patient_phone) descParts.push(`Phone: ${appt.patient_phone}`)
+    if (appt.phone) descParts.push(`Phone: ${appt.phone}`)
     if (appt.notes) descParts.push(`Notes: ${appt.notes}`)
 
     lines.push('BEGIN:VEVENT')
@@ -89,7 +97,6 @@ export async function GET(req: NextRequest) {
   }
 
   lines.push('END:VCALENDAR')
-
   const body = lines.map(foldLine).join('\r\n') + '\r\n'
 
   return new NextResponse(body, {

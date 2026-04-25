@@ -1,156 +1,106 @@
-// HIPAA Audit Log API — §164.312(b)
-// Accepts audit events from authenticated users and server-side callers.
-// All writes go through supabaseAdmin (service role) so authenticated
-// users cannot tamper with the audit trail.
+// HIPAA Audit Log API — §164.312(b).
+//
+// POST: any caller can append an audit event (login_failed events come in
+//       pre-auth, so we use the permissive getApiSession() and let the body
+//       override practice_id for service-side logging).
+// GET:  practice-scoped read, requires authenticated user.
 
-import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
-import { supabaseAdmin } from "@/lib/supabase";
-import { checkBruteForce } from "@/lib/breach-detection";
-import { resolvePracticeIdForApi } from "@/lib/active-practice";
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireApiSession, getApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { checkBruteForce } from '@/lib/breach-detection'
 
-// ---- helpers ----------------------------------------------------------------
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 function getClientIp(req: NextRequest): string | null {
   return (
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
+    req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+    req.headers.get('x-real-ip') ||
     null
-  );
+  )
 }
-
-// ---- POST /api/audit-log ----------------------------------------------------
 
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { action, resource_type, resource_id, details, severity } = body;
-
-    if (!action) {
-      return NextResponse.json({ error: "action is required" }, { status: 400 });
-    }
-
-    // Resolve the calling user (if authenticated)
-    let userId: string | null = null;
-    let userEmail: string | null = null;
-    let practiceId: string | null = null;
-
-    // Try to extract user from Supabase session cookies
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return req.cookies.getAll();
-          },
-          setAll() {}, // read-only — we don't set cookies here
-        },
-      }
-    );
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (user) {
-      userId = user.id;
-      userEmail = user.email ?? null;
-
-      // Look up practice_id (respects admin act-as cookie)
-      practiceId = await resolvePracticeIdForApi(supabaseAdmin, user);
-    }
-
-    // Allow callers to override practice_id (admin endpoints acting on behalf)
-    if (body.practice_id) {
-      practiceId = body.practice_id;
-    }
-
-    const { error } = await supabaseAdmin.from("audit_logs").insert({
-      user_id: userId,
-      user_email: userEmail,
-      practice_id: practiceId,
-      action,
-      resource_type: resource_type || null,
-      resource_id: resource_id || null,
-      details: details || {},
-      ip_address: getClientIp(req),
-      user_agent: req.headers.get("user-agent") || null,
-      severity: severity || "info",
-    });
-
-    if (error) {
-      console.error("[audit-log] insert error:", error);
-      // Never block the caller — audit failures are logged but non-fatal
-      return NextResponse.json({ ok: false, error: error.message }, { status: 500 });
-    }
-
-    // Breach detection: check for brute-force on failed logins
-    if (action === "login_failed") {
-      const clientIp = getClientIp(req);
-      if (clientIp) {
-        checkBruteForce(clientIp, req.headers.get("user-agent")).catch(() => {});
-      }
-    }
-
-    return NextResponse.json({ ok: true });
-  } catch (err: any) {
-    console.error("[audit-log] unexpected error:", err);
-    return NextResponse.json({ ok: false, error: err.message }, { status: 500 });
+  const body = await req.json().catch(() => null) as any
+  if (!body?.action) {
+    return NextResponse.json({ error: 'action is required' }, { status: 400 })
   }
+
+  const { action, resource_type, resource_id, details, severity } = body
+
+  // Resolve the calling user (if authenticated). Anonymous events are fine.
+  const ctx = await getApiSession()
+  let userId: string | null = ctx?.user.id ?? null
+  let userEmail: string | null = ctx?.session.email ?? null
+  let practiceId: string | null = ctx?.practiceId ?? null
+
+  // Service-side callers can override practice_id (e.g. webhooks logging on
+  // behalf of a known practice without an authenticated session).
+  if (body.practice_id) practiceId = body.practice_id
+
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (
+         user_id, user_email, practice_id, action, resource_type, resource_id,
+         details, ip_address, user_agent, severity
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7::jsonb, $8::inet, $9, $10
+       )`,
+      [
+        userId, userEmail, practiceId, action,
+        resource_type ?? null, resource_id ?? null,
+        JSON.stringify(details ?? {}),
+        getClientIp(req), req.headers.get('user-agent') || null,
+        severity || 'info',
+      ],
+    )
+  } catch (err) {
+    console.error('[audit-log] insert error:', (err as Error).message)
+    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 500 })
+  }
+
+  // Brute-force detection on failed logins. Fire-and-forget.
+  if (action === 'login_failed') {
+    const clientIp = getClientIp(req)
+    if (clientIp) {
+      checkBruteForce(clientIp, req.headers.get('user-agent')).catch(() => {})
+    }
+  }
+
+  return NextResponse.json({ ok: true })
 }
 
-// ---- GET /api/audit-log (practice-scoped read) ------------------------------
-
 export async function GET(req: NextRequest) {
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return req.cookies.getAll();
-        },
-        setAll() {},
-      },
-    }
-  );
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ logs: [], total: 0 })
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const sp = req.nextUrl.searchParams
+  const limit = Math.min(Number(sp.get('limit') ?? 100), 500)
+  const offset = Math.max(Number(sp.get('offset') ?? 0), 0)
+  const actionFilter = sp.get('action')
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const conds: string[] = ['practice_id = $1']
+  const args: unknown[] = [ctx.practiceId]
+  if (actionFilter) { args.push(actionFilter); conds.push(`action = $${args.length}`) }
 
-  // Find practice (respects admin act-as cookie)
-  const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user);
-  if (!practiceId) {
-    return NextResponse.json({ error: "No practice found" }, { status: 404 });
-  }
+  const where = conds.join(' AND ')
+  const countResult = await pool.query(
+    `SELECT COUNT(*)::int AS total FROM audit_logs WHERE ${where}`,
+    args,
+  )
+  args.push(limit, offset)
+  const logsResult = await pool.query(
+    `SELECT * FROM audit_logs
+      WHERE ${where}
+      ORDER BY timestamp DESC
+      LIMIT $${args.length - 1} OFFSET $${args.length}`,
+    args,
+  )
 
-  const url = new URL(req.url);
-  const limit = Math.min(parseInt(url.searchParams.get("limit") || "100"), 500);
-  const offset = parseInt(url.searchParams.get("offset") || "0");
-  const actionFilter = url.searchParams.get("action");
-
-  let query = supabaseAdmin
-    .from("audit_logs")
-    .select("*", { count: "exact" })
-    .eq("practice_id", practiceId)
-    .order("timestamp", { ascending: false })
-    .range(offset, offset + limit - 1);
-
-  if (actionFilter) {
-    query = query.eq("action", actionFilter);
-  }
-
-  const { data, count, error } = await query;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
-
-  return NextResponse.json({ logs: data, total: count });
+  return NextResponse.json({
+    logs: logsResult.rows,
+    total: countResult.rows[0]?.total ?? 0,
+  })
 }

@@ -1,63 +1,81 @@
-// app/api/admin/roi-leads/route.ts
-// Admin-only: list ROI calculator submissions as leads, with the summary stats
-// the admin dashboard shows across the top.
-// GET /api/admin/roi-leads?stage=new&source=instantly&days=30
+// Admin — ROI calculator submissions as leads, plus pipeline summary stats.
+// Filters: ?stage=<one-of>, ?source=<utm_source>, ?days=<lookback window>.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireAdminSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
 
-const STAGES = ['new', 'contacted', 'demo_booked', 'proposal_sent', 'won', 'lost', 'unresponsive'] as const
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-async function requireAdmin() {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { user: null, error: 'Unauthorized' as const, status: 401 }
-  const adminEmail = process.env.ADMIN_EMAIL
-  if (!adminEmail || user.email !== adminEmail) {
-    return { user: null, error: 'Forbidden — admin only' as const, status: 403 }
-  }
-  return { user, error: null, status: 200 }
-}
+const STAGES = [
+  'new', 'contacted', 'demo_booked', 'proposal_sent', 'won', 'lost', 'unresponsive',
+] as const
+type Stage = typeof STAGES[number]
 
 export async function GET(req: NextRequest) {
-  const auth = await requireAdmin()
-  if (auth.error) return NextResponse.json({ error: auth.error }, { status: auth.status })
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
 
-  const { searchParams } = new URL(req.url)
-  const stage = searchParams.get('stage') || 'all'
-  const source = searchParams.get('source')
-  const days = parseInt(searchParams.get('days') || '90', 10)
+  const sp = req.nextUrl.searchParams
+  const stage = sp.get('stage') || 'all'
+  const source = sp.get('source')
+  const days = Math.max(Number(sp.get('days') ?? 90), 0)
 
-  let query = supabaseAdmin
-    .from('roi_calculator_submissions')
-    .select('*')
-    .order('stage', { ascending: true })
-    .order('next_action_at', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .limit(500)
-
-  if (STAGES.includes(stage as any)) {
-    query = query.eq('stage', stage)
+  // Filtered list with the same ordering as the legacy route.
+  const conds: string[] = []
+  const args: unknown[] = []
+  if ((STAGES as readonly string[]).includes(stage)) {
+    args.push(stage)
+    conds.push(`stage = $${args.length}`)
   }
   if (source) {
-    query = query.eq('utm_source', source)
+    args.push(source)
+    conds.push(`utm_source = $${args.length}`)
   }
   if (days > 0) {
     const since = new Date(Date.now() - days * 86_400_000).toISOString()
-    query = query.gte('created_at', since)
+    args.push(since)
+    conds.push(`created_at >= $${args.length}`)
   }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : ''
 
-  const { data: leads, error } = await query
-  if (error) {
-    console.error('[admin/roi-leads]', error)
-    return NextResponse.json({ error: 'Failed to load leads' }, { status: 500 })
+  let leads: any[] = []
+  let allLeads: any[] = []
+  try {
+    const leadsResult = await pool.query(
+      `SELECT *
+         FROM roi_calculator_submissions
+         ${where}
+        ORDER BY stage ASC,
+                 next_action_at ASC NULLS LAST,
+                 created_at DESC
+        LIMIT 500`,
+      args,
+    )
+    leads = leadsResult.rows
+
+    // Summary stats run across the full (non-filtered) pipeline.
+    const allResult = await pool.query(
+      `SELECT stage, annual_total_loss_cents, created_at, contacted_at
+         FROM roi_calculator_submissions`,
+    )
+    allLeads = allResult.rows
+  } catch {
+    // Table may not exist on this RDS — return empty rather than 500.
+    return NextResponse.json({
+      leads: [],
+      summary: {
+        stage_counts: {},
+        pipeline_annual_loss_cents: 0,
+        demos_this_week: 0,
+        won_this_week: 0,
+        win_rate_pct: null,
+        total_leads: 0,
+      },
+      sources: [],
+    })
   }
-
-  // Summary stats across the full (non-filtered) pipeline
-  const { data: allLeads } = await supabaseAdmin
-    .from('roi_calculator_submissions')
-    .select('stage, annual_total_loss_cents, created_at, contacted_at')
 
   const now = Date.now()
   const weekAgo = now - 7 * 86_400_000
@@ -67,9 +85,12 @@ export async function GET(req: NextRequest) {
   let wonThisWeek = 0
   let totalClosed = 0
   let totalWon = 0
-  for (const l of allLeads || []) {
+  for (const l of allLeads) {
     stageCounts[l.stage] = (stageCounts[l.stage] || 0) + 1
-    if (l.stage === 'demo_booked' || l.stage === 'proposal_sent' || l.stage === 'contacted' || l.stage === 'new') {
+    if (
+      l.stage === 'demo_booked' || l.stage === 'proposal_sent' ||
+      l.stage === 'contacted'   || l.stage === 'new'
+    ) {
       pipelineCents += Number(l.annual_total_loss_cents || 0)
     }
     const created = new Date(l.created_at).getTime()
@@ -78,22 +99,22 @@ export async function GET(req: NextRequest) {
     if (l.stage === 'won' || l.stage === 'lost') totalClosed++
     if (l.stage === 'won') totalWon++
   }
-  const winRatePct = totalClosed > 0 ? Math.round((totalWon / totalClosed) * 100) : null
+  const winRatePct =
+    totalClosed > 0 ? Math.round((totalWon / totalClosed) * 100) : null
 
-  // Sources breakdown for the filter dropdown
   const sources = Array.from(
-    new Set((allLeads || []).map((l: any) => l.utm_source).filter(Boolean))
+    new Set(allLeads.map(l => l.utm_source).filter(Boolean)),
   )
 
   return NextResponse.json({
-    leads: leads || [],
+    leads,
     summary: {
       stage_counts: stageCounts,
       pipeline_annual_loss_cents: pipelineCents,
       demos_this_week: demosThisWeek,
       won_this_week: wonThisWeek,
       win_rate_pct: winRatePct,
-      total_leads: (allLeads || []).length,
+      total_leads: allLeads.length,
     },
     sources,
   })
