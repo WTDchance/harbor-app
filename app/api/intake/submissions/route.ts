@@ -1,103 +1,33 @@
-// app/api/intake/submissions/route.ts
-// Harbor — Intake Submissions API (practice-scoped list)
-// GET /api/intake/submissions
-// Query params: page, limit, status (completed|pending|all), from, to, search
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { db, schema } from '@/lib/aws/db'
+import { eq, desc, and } from 'drizzle-orm'
 
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin as supabase } from "@/lib/supabase";
-import { getEffectivePracticeId } from "@/lib/active-practice";
-
-async function getAuthenticatedUser(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return { user: null, error: "Missing or invalid authorization header" };
-  }
-  const token = authHeader.slice(7);
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token);
-  if (error || !user) {
-    return { user: null, error: "Unauthorized" };
-  }
-  return { user, error: null };
-}
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const { user, error } = await getAuthenticatedUser(req);
-  if (!user) {
-    return NextResponse.json({ error }, { status: 401 });
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) {
+    return NextResponse.json({ submissions: [], pagination: { total: 0, limit: 0, offset: 0 } })
   }
 
-  // Resolve practice for this user (try multiple methods)
-  // Admin may override via act-as cookie
-  let practiceId: string | null = await getEffectivePracticeId(supabase, user);
+  const limit = Math.min(Number(req.nextUrl.searchParams.get('limit') ?? 50), 200)
+  const status = req.nextUrl.searchParams.get('status')
 
-  if (!practiceId) {
-    const { data: memberRecord } = await supabase
-      .from("practice_members")
-      .select("practice_id")
-      .eq("user_id", user.id)
-      .single();
-    if (memberRecord?.practice_id) practiceId = memberRecord.practice_id;
-  }
+  const conds = [eq(schema.intakeForms.practiceId, ctx.practiceId)]
+  if (status) conds.push(eq(schema.intakeForms.status, status))
 
-  if (!practiceId && user.email) {
-    const { data: practiceRecord } = await supabase
-      .from("practices")
-      .select("id")
-      .eq("notification_email", user.email)
-      .single();
-    if (practiceRecord?.id) practiceId = practiceRecord.id;
-  }
-
-  if (!practiceId) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
-
-  const { searchParams } = new URL(req.url);
-  const page = Math.max(1, parseInt(searchParams.get("page") ?? "1"));
-  const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") ?? "25")));
-  const status = searchParams.get("status") ?? "completed";
-  const from = searchParams.get("from");
-  const to = searchParams.get("to");
-  const search = searchParams.get("search")?.trim() ?? "";
-  const offset = (page - 1) * limit;
-
-  let query = supabase
-    .from("intake_forms")
-    .select(
-      `id, status,
-       patient_name, patient_phone, patient_email, patient_dob,
-       phq9_score, phq9_severity,
-       gad7_score, gad7_severity,
-       completed_at, created_at`,
-      { count: "exact" }
-    )
-    .eq("practice_id", practiceId)
-    .order("completed_at", { ascending: false, nullsFirst: false })
-    .order("created_at", { ascending: false });
-
-  if (status !== "all") {
-    query = query.eq("status", status);
-  }
-  if (from) query = query.gte("completed_at", from);
-  if (to) query = query.lte("completed_at", to + "T23:59:59Z");
-  if (search) query = query.ilike("patient_name", `%${search}%`);
-
-  query = query.range(offset, offset + limit - 1);
-
-  const { data: submissions, error: queryError, count } = await query;
-
-  if (queryError) {
-    return NextResponse.json({ error: queryError.message }, { status: 500 });
-  }
+  const rows = await db
+    .select()
+    .from(schema.intakeForms)
+    .where(and(...conds))
+    .orderBy(desc(schema.intakeForms.sentAt))
+    .limit(limit)
 
   return NextResponse.json({
-    submissions: submissions ?? [],
-    pagination: {
-      page,
-      limit,
-      total: count ?? 0,
-      total_pages: Math.ceil((count ?? 0) / limit),
-    },
-  });
+    submissions: rows,
+    pagination: { total: rows.length, limit, offset: 0 },
+  })
 }
