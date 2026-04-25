@@ -1,15 +1,17 @@
-// Sentry proxy API — fetches error + uptime data from Sentry for admin dashboard
-// GET /api/admin/sentry
-// Requires admin role via Supabase auth
+// Sentry proxy — pulls error + uptime data for the admin dashboard.
+// Auth: requireAdminSession (Cognito).
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { NextResponse } from 'next/server'
+import { requireAdminSession } from '@/lib/aws/api-auth'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const SENTRY_ORG = process.env.SENTRY_ORG || 'harbor-receptionist'
 const SENTRY_PROJECT = process.env.SENTRY_PROJECT || 'harbor-app'
 const SENTRY_AUTH_TOKEN = process.env.SENTRY_AUTH_TOKEN
 
-async function sentryFetch(path: string) {
+async function sentryFetch(path: string): Promise<any> {
   if (!SENTRY_AUTH_TOKEN) return null
   try {
     const res = await fetch(`https://sentry.io/api/0/${path}`, {
@@ -17,7 +19,7 @@ async function sentryFetch(path: string) {
         Authorization: `Bearer ${SENTRY_AUTH_TOKEN}`,
         'Content-Type': 'application/json',
       },
-      next: { revalidate: 60 }, // cache 1 min
+      next: { revalidate: 60 }, // 1 min CDN cache
     })
     if (!res.ok) return null
     return res.json()
@@ -26,39 +28,15 @@ async function sentryFetch(path: string) {
   }
 }
 
-export async function GET(req: NextRequest) {
-  // Auth check — admin only
-  const authHeader = req.headers.get('authorization')
-  if (!authHeader) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  const token = authHeader.replace('Bearer ', '')
-  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token)
-  if (error || !user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-  const { data: userRecord } = await supabaseAdmin
-    .from('users')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-  if (!userRecord || userRecord.role !== 'admin') {
-    return NextResponse.json({ error: 'Admin access required' }, { status: 403 })
-  }
+export async function GET() {
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
 
-  // Fetch Sentry data in parallel
   const [issues, uptimeAlerts] = await Promise.all([
-    // Recent unresolved issues (top 10)
-    sentryFetch(
-      `projects/${SENTRY_ORG}/${SENTRY_PROJECT}/issues/?query=is:unresolved&sort=date&limit=10`
-    ),
-    // Uptime alerts
-    sentryFetch(
-      `organizations/${SENTRY_ORG}/alert-rules/?project=${SENTRY_PROJECT}`
-    ),
+    sentryFetch(`projects/${SENTRY_ORG}/${SENTRY_PROJECT}/issues/?query=is:unresolved&sort=date&limit=10`),
+    sentryFetch(`organizations/${SENTRY_ORG}/alert-rules/?project=${SENTRY_PROJECT}`),
   ])
 
-  // Parse uptime monitor data from alert rules
   const uptimeMonitors = (uptimeAlerts || [])
     .filter((a: any) => a.monitorType === 'uptime' || a.type === 'uptime')
     .map((a: any) => ({
@@ -68,7 +46,6 @@ export async function GET(req: NextRequest) {
       status: a.status,
     }))
 
-  // Summarize issues by level
   const errorSummary = {
     total: issues?.length || 0,
     byLevel: {
