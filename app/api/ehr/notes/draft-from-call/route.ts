@@ -1,23 +1,56 @@
-// app/api/ehr/notes/draft-from-call/route.ts
-// Harbor EHR — draft a progress note from a call transcript via Claude Sonnet.
+// Harbor EHR — draft a SOAP progress note from a call_logs transcript via
+// Claude Sonnet. The therapist always reviews + signs manually — drafts
+// are inserted with status='draft' and a drafted_from_call_id pointer
+// back to the source call.
 //
 // POST body: { call_log_id: string }
-// Response:  { note: <newly-created draft row> }
+// Response (201):
+//   { note: <draft row>, summary, flagged_concerns }
+// 429:
+//   { error: 'rate_limit_exceeded', used, cap }
+//
+// Rate limit: 100 AI drafts per practice per UTC day (audit_logs-backed).
+// Crisis detection in the system prompt is preserved verbatim — the
+// drafter surfaces suicidality / abuse / substance-emergency content into
+// flagged_concerns and the Assessment.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { checkDraftRateLimit } from '@/lib/aws/ehr/draft-rate-limit'
 import { draftNoteFromTranscript } from '@/lib/ehr/draft-note'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+// On AWS canonical schema, call_logs.transcript is JSONB (array of turns or
+// an object). On older Supabase clusters it was TEXT. Normalise both into
+// a single string the LLM can read.
+function flattenTranscript(raw: unknown): string {
+  if (!raw) return ''
+  if (typeof raw === 'string') return raw
+  if (Array.isArray(raw)) {
+    return raw
+      .map((turn: any) => {
+        if (typeof turn === 'string') return turn
+        const role = turn.role || turn.speaker || turn.sender || ''
+        const text = turn.text || turn.message || turn.content || ''
+        return role ? `${role}: ${text}` : text
+      })
+      .filter(Boolean)
+      .join('\n')
+  }
+  // Object — best-effort stringify so the model still has something to read.
+  try { return JSON.stringify(raw) } catch { return '' }
+}
+
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
 
   let body: any
-  try {
-    body = await req.json()
-  } catch {
+  try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
@@ -26,17 +59,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'call_log_id is required' }, { status: 400 })
   }
 
-  // Load the call, confirm it belongs to the caller's practice, and has a
-  // transcript + a linked patient.
-  const { data: call } = await supabaseAdmin
-    .from('call_logs')
-    .select(
-      'id, practice_id, patient_id, patient_phone, transcript, summary, call_type, session_type, duration_seconds, created_at, caller_name, reason_for_calling, crisis_detected',
+  // Per-practice daily cap before we burn an LLM call.
+  const limit = await checkDraftRateLimit(ctx.practiceId!)
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: 'rate_limit_exceeded', used: limit.used, cap: limit.cap },
+      { status: 429 },
     )
-    .eq('id', callLogId)
-    .maybeSingle()
+  }
 
-  if (!call || call.practice_id !== auth.practiceId) {
+  // Load the call. Practice scope enforced in the WHERE clause.
+  const callResult = await pool.query(
+    `SELECT id, practice_id, patient_id, transcript, summary,
+            call_type, duration_seconds, started_at, crisis_detected
+       FROM call_logs
+      WHERE id = $1 AND practice_id = $2
+      LIMIT 1`,
+    [callLogId, ctx.practiceId],
+  )
+  const call = callResult.rows[0]
+  if (!call) {
     return NextResponse.json({ error: 'Call not found for this practice' }, { status: 404 })
   }
   if (!call.patient_id) {
@@ -45,32 +87,31 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     )
   }
-  if (!call.transcript || call.transcript.trim().length < 50) {
+
+  const transcriptText = flattenTranscript(call.transcript)
+  if (!transcriptText || transcriptText.trim().length < 50) {
     return NextResponse.json(
       { error: 'Call has no transcript or the transcript is too short to draft from.' },
       { status: 400 },
     )
   }
 
-  // Fetch patient context for the prompt.
-  const { data: patient } = await supabaseAdmin
-    .from('patients')
-    .select('id, first_name, last_name')
-    .eq('id', call.patient_id)
-    .maybeSingle()
+  // Patient context for the prompt (defensive — patient may have been deleted).
+  const patientResult = await pool.query(
+    `SELECT id, first_name, last_name FROM patients
+      WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [call.patient_id, ctx.practiceId],
+  )
+  const patient = patientResult.rows[0] ?? null
 
-  // Draft via Sonnet.
   let draft
   try {
     draft = await draftNoteFromTranscript({
-      transcript: call.transcript,
+      transcript: transcriptText,
       callMetadata: {
         call_type: call.call_type,
-        session_type: call.session_type,
         duration_seconds: call.duration_seconds,
-        created_at: call.created_at,
-        caller_name: call.caller_name,
-        reason_for_calling: call.reason_for_calling,
+        created_at: call.started_at, // AWS schema column rename
         crisis_detected: call.crisis_detected,
       },
       patientContext: patient
@@ -82,44 +123,43 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 502 })
   }
 
-  // Insert the draft note. Always status='draft' — therapist signs manually.
-  const insertRow = {
-    practice_id: auth.practiceId,
-    patient_id: call.patient_id,
-    title: draft.title,
-    note_format: 'soap',
-    subjective: draft.subjective,
-    objective: draft.objective,
-    assessment: draft.assessment,
-    plan: draft.plan,
-    cpt_codes: draft.suggested_cpt_codes,
-    icd10_codes: draft.suggested_icd10_codes,
-    status: 'draft',
-    created_by: auth.user.id,
-    drafted_from_call_id: call.id,
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .insert(insertRow)
-    .select()
-    .single()
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
+  // Always status='draft' — therapist reviews + signs manually.
+  const insert = await pool.query(
+    `INSERT INTO ehr_progress_notes (
+       practice_id, patient_id, title, note_format,
+       subjective, objective, assessment, plan,
+       cpt_codes, icd10_codes, status, drafted_from_call_id
+     ) VALUES (
+       $1, $2, $3, 'soap',
+       $4, $5, $6, $7,
+       $8::text[], $9::text[], 'draft', $10
+     ) RETURNING *`,
+    [
+      ctx.practiceId, call.patient_id, draft.title,
+      draft.subjective, draft.objective, draft.assessment, draft.plan,
+      draft.suggested_cpt_codes, draft.suggested_icd10_codes,
+      call.id,
+    ],
+  )
+  const note = insert.rows[0]
 
   await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
-    action: 'note.draft_from_call',
-    resourceId: data.id,
-    details: { call_log_id: call.id, flagged_concerns: draft.flagged_concerns },
+    ctx,
+    action: 'note.draft.create.from_call',
+    resourceId: note.id,
+    details: {
+      call_log_id: call.id,
+      patient_id: call.patient_id,
+      flagged_concerns: draft.flagged_concerns,
+      crisis_detected: !!call.crisis_detected,
+      drafts_used_today: limit.used + 1,
+      drafts_cap: limit.cap,
+    },
   })
 
   return NextResponse.json(
     {
-      note: data,
+      note,
       summary: draft.summary_for_review,
       flagged_concerns: draft.flagged_concerns,
     },

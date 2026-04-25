@@ -46,6 +46,9 @@ export type EhrAuditAction =
   | 'portal.message.list'
   | 'portal.scheduling.list'
   | 'portal.mood.list'
+  | 'note.draft.create.from_call'
+  | 'note.draft.create.from_brief'
+  | 'note.draft.transcribe'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
@@ -89,6 +92,9 @@ export type PortalAuditAction =
   | 'portal.message.list'
   | 'portal.scheduling.list'
   | 'portal.mood.list'
+  | 'note.draft.create.from_call'
+  | 'note.draft.create.from_brief'
+  | 'note.draft.transcribe'
 
 /**
  * Audit a portal patient action. Mirrors auditEhrAccess() but takes a

@@ -1,33 +1,36 @@
-// app/api/ehr/notes/transcribe/route.ts
-// Harbor EHR — audio-to-text for voice dictation on browsers that don't
-// support the Web Speech API (Safari, iPad, Firefox). Uses OpenAI Whisper.
+// Harbor EHR — audio-to-text for voice dictation. Uses OpenAI Whisper as a
+// fallback for browsers without the Web Speech API (Safari, iPad, Firefox).
 //
-// Gated behind requireEhrAuth so only therapists with EHR enabled can hit it,
-// and audited so we have a record that voice dictation was used.
+// Gated behind requireEhrApiSession so only therapists with EHR enabled can
+// hit it, and audited so we have a record that voice dictation was used.
 //
 // Body: multipart/form-data with 'audio' blob
-// Response: { transcript: string }
+// Response: { transcript: string, demo?: true }
 
-import { NextRequest, NextResponse } from 'next/server'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const MAX_BYTES = 25 * 1024 * 1024 // Whisper API limit
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
 
   let formData: FormData
-  try {
-    formData = await req.formData()
-  } catch {
+  try { formData = await req.formData() } catch {
     return NextResponse.json({ error: 'Expected multipart/form-data' }, { status: 400 })
   }
 
   const audio = formData.get('audio') as File | null
   if (!audio) {
-    return NextResponse.json({ error: 'No audio file provided under "audio" field' }, { status: 400 })
+    return NextResponse.json(
+      { error: 'No audio file provided under "audio" field' },
+      { status: 400 },
+    )
   }
   if (audio.size > MAX_BYTES) {
     return NextResponse.json(
@@ -38,10 +41,9 @@ export async function POST(req: NextRequest) {
 
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) {
-    // Dev mode: return a clear message so the UI shows something useful.
     return NextResponse.json({
       transcript:
-        '[Demo mode — OPENAI_API_KEY is not set in this environment. Add it to .env.ehr to enable Whisper fallback dictation.]',
+        '[Demo mode — OPENAI_API_KEY is not set in this environment. Add it to enable Whisper fallback dictation.]',
       demo: true,
     })
   }
@@ -71,9 +73,8 @@ export async function POST(req: NextRequest) {
   const transcript = (result.text || '').trim()
 
   await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
-    action: 'note.draft_from_brief', // closest existing action; transcription is dictation for a brief
+    ctx,
+    action: 'note.draft.transcribe',
     details: {
       via: 'whisper',
       audio_bytes: audio.size,
