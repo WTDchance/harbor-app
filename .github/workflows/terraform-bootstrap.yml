@@ -1,0 +1,131 @@
+name: Terraform Bootstrap (initial apply)
+
+# One-time/occasional apply path that uses static AWS access keys from
+# repo secrets. Needed because the OIDC roles we rely on for plan/deploy
+# (harbor-github-plan, harbor-github-deploy) are themselves created by
+# this terraform, so the first apply can't use OIDC.
+#
+# After the first successful apply, prefer terraform-plan.yml and
+# aws-deploy.yml which both use OIDC and don't need the keys.
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Terraform action"
+        required: true
+        default: "plan"
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+
+concurrency:
+  group: tf-bootstrap-${{ github.event.inputs.environment }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  TF_VERSION: 1.8.5
+
+jobs:
+  bootstrap:
+    name: terraform ${{ github.event.inputs.action }}
+    runs-on: ubuntu-latest
+    # Longest single step is RDS create (~8 min) + ECS service stabilize
+    # (~3 min). Give the whole job a 45 min ceiling with headroom.
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: infra/terraform
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials (static keys)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Write backend.hcl
+        run: |
+          cat > backend.hcl <<EOF
+          bucket         = "harbor-terraform-state-417242953135"
+          key            = "${{ github.event.inputs.environment }}/terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "harbor-terraform-lock"
+          encrypt        = true
+          EOF
+
+      - name: Write terraform.tfvars
+        run: |
+          cat > terraform.tfvars <<'EOF'
+          aws_region         = "us-east-1"
+          environment        = "staging"
+          project            = "harbor"
+          hosted_zone_domain = "lab.harboroffice.ai"
+          app_fqdn_override  = ""
+
+          vpc_cidr                = "10.40.0.0/16"
+          availability_zone_count = 2
+
+          rds_engine_version        = "16.3"
+          rds_instance_class        = "db.t4g.medium"
+          rds_allocated_storage_gb  = 50
+          rds_backup_retention_days = 14
+          rds_multi_az              = false
+          rds_database_name         = "harbor"
+          rds_master_username       = "harbor_admin"
+
+          app_image_tag     = "latest"
+          app_cpu           = 1024
+          app_memory        = 2048
+          EOF
+
+      - name: terraform init
+        run: terraform init -backend-config=backend.hcl
+
+      - name: terraform validate
+        run: terraform validate
+
+      - name: terraform plan
+        if: github.event.inputs.action == 'plan'
+        run: terraform plan -no-color
+
+      - name: terraform apply
+        if: github.event.inputs.action == 'apply'
+        run: terraform apply -auto-approve -no-color
+
+      - name: terraform destroy
+        if: github.event.inputs.action == 'destroy'
+        run: terraform destroy -auto-approve -no-color
+
+      - name: Capture outputs
+        if: github.event.inputs.action == 'apply'
+        run: terraform output -json > tf-outputs.json
+
+      - name: Upload outputs artifact
+        if: github.event.inputs.action == 'apply'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tf-outputs
+          path: infra/terraform/tf-outputs.json
+          retention-days: 30

@@ -1,0 +1,174 @@
+name: AWS Deploy (parallel/aws-v1)
+
+on:
+  push:
+    branches:
+      - parallel/aws-v1
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target environment"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: aws-deploy-${{ github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  ENVIRONMENT: ${{ github.event.inputs.environment || 'staging' }}
+  ECR_REPO: harbor-${{ github.event.inputs.environment || 'staging' }}-app
+  ECS_CLUSTER: harbor-${{ github.event.inputs.environment || 'staging' }}
+  ECS_SERVICE: harbor-${{ github.event.inputs.environment || 'staging' }}-app
+  CONTAINER_NAME: app
+
+permissions:
+  id-token: write   # OIDC → AWS
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build + Push to ECR
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_uri: ${{ steps.build.outputs.image_uri }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: meta
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          echo "image_tag=${{ env.ENVIRONMENT }}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::417242953135:role/harbor-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build + push image
+        id: build
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ steps.meta.outputs.image_tag }}
+        run: |
+          IMAGE_URI=$REGISTRY/$ECR_REPO:$TAG
+          docker build \
+            --build-arg NODE_ENV=${{ env.ENVIRONMENT }} \
+            -t $IMAGE_URI \
+            -t $REGISTRY/$ECR_REPO:latest \
+            .
+          docker push $IMAGE_URI
+          docker push $REGISTRY/$ECR_REPO:latest
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+  migrate:
+    name: DB migrations
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::417242953135:role/harbor-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Pull DB credentials from SSM
+        id: db
+        run: |
+          PREFIX=/harbor-${{ env.ENVIRONMENT }}
+          PGPASSWORD=$(aws ssm get-parameter --name $PREFIX/rds/master_password --with-decryption --query 'Parameter.Value' --output text)
+          PGUSER=$(aws ssm get-parameter --name $PREFIX/rds/master_username --query 'Parameter.Value' --output text)
+          echo "::add-mask::$PGPASSWORD"
+          echo "PGPASSWORD=$PGPASSWORD" >> $GITHUB_ENV
+          echo "PGUSER=$PGUSER" >> $GITHUB_ENV
+
+      - name: Apply schema.sql (idempotent)
+        env:
+          PGHOST: ${{ vars.RDS_ENDPOINT }}
+          PGDATABASE: harbor
+          PGSSLMODE: require
+        run: |
+          sudo apt-get install -y postgresql-client
+          psql -f infra/sql/schema.sql
+
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: [build-and-push, migrate]
+    environment:
+      name: ${{ github.event.inputs.environment || 'staging' }}
+      url: https://lab.harboroffice.ai
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::417242953135:role/harbor-github-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Fetch current task definition
+        id: taskdef
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition ${{ env.ECS_SERVICE }} \
+            --query 'taskDefinition' > taskdef.json
+
+      - name: Render new task definition
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: taskdef.json
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ needs.build-and-push.outputs.image_uri }}
+
+      - name: Deploy updated task def to ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+          wait-for-minutes: 10
+
+  smoke-test:
+    name: Smoke test
+    runs-on: ubuntu-latest
+    needs: deploy
+
+    steps:
+      - name: Curl /api/health
+        run: |
+          URL=https://lab.harboroffice.ai/api/health
+          for i in {1..10}; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" $URL || true)
+            if [ "$CODE" = "200" ]; then
+              echo "Health OK"
+              exit 0
+            fi
+            echo "Attempt $i: $CODE — retrying..."
+            sleep 10
+          done
+          echo "Health check failed"
+          exit 1
