@@ -1,0 +1,146 @@
+// app/dashboard/ehr/notes/page.tsx
+// List view for progress notes. Server component — fetches via supabaseAdmin
+// with a practice_id filter resolved from the current user.
+
+import Link from 'next/link'
+import { cookies } from 'next/headers'
+import { createServerClient } from '@supabase/ssr'
+import { FileText, Plus } from 'lucide-react'
+import { supabaseAdmin } from '@/lib/supabase'
+import { getEffectivePracticeId } from '@/lib/active-practice'
+
+export const dynamic = 'force-dynamic'
+
+type NoteRow = {
+  id: string
+  title: string
+  note_format: string
+  status: string
+  created_at: string
+  updated_at: string
+  patient_id: string
+}
+
+export default async function EhrNotesListPage() {
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() { return cookieStore.getAll() },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }: any) => {
+              cookieStore.set(name, value, options)
+            })
+          } catch {}
+        },
+      },
+    },
+  )
+  const { data: { user } } = await supabase.auth.getUser()
+  const practiceId = await getEffectivePracticeId(supabaseAdmin, user)
+
+  const { data: notes = [] } = await supabaseAdmin
+    .from('ehr_progress_notes')
+    .select('id, title, note_format, status, created_at, updated_at, patient_id')
+    .eq('practice_id', practiceId!)
+    .order('created_at', { ascending: false })
+    .limit(200)
+
+  const patientIds = Array.from(new Set((notes ?? []).map((n: NoteRow) => n.patient_id)))
+  const { data: patients = [] } = patientIds.length
+    ? await supabaseAdmin
+        .from('patients')
+        .select('id, first_name, last_name')
+        .in('id', patientIds)
+    : { data: [] as { id: string; first_name: string; last_name: string }[] }
+  const patientMap = new Map((patients ?? []).map((p: any) => [p.id, p]))
+
+  return (
+    <div className="max-w-5xl mx-auto py-8 px-4">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Progress notes</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Clinical documentation for your patients. Draft, edit, sign — all tied to the patient record.
+          </p>
+        </div>
+        <Link
+          href="/dashboard/ehr/notes/new"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg"
+        >
+          <Plus className="w-4 h-4" />
+          New note
+        </Link>
+      </div>
+
+      <div className="bg-white rounded-xl border border-gray-200">
+        {!notes || notes.length === 0 ? (
+          <div className="p-12 text-center">
+            <FileText className="w-10 h-10 mx-auto text-gray-300 mb-3" />
+            <p className="text-sm text-gray-500">No progress notes yet.</p>
+            <Link
+              href="/dashboard/ehr/notes/new"
+              className="mt-4 inline-block text-sm text-teal-700 hover:text-teal-900 font-medium"
+            >
+              Create the first one
+            </Link>
+          </div>
+        ) : (
+          <ul className="divide-y divide-gray-100">
+            {notes.map((n: NoteRow) => {
+              const patient = patientMap.get(n.patient_id) as any
+              return (
+                <li key={n.id}>
+                  <Link
+                    href={`/dashboard/ehr/notes/${n.id}`}
+                    className="block px-5 py-4 hover:bg-gray-50 transition-colors"
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-gray-900 truncate">{n.title}</span>
+                          <StatusBadge status={n.status} />
+                        </div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {patient ? `${patient.first_name} ${patient.last_name}` : 'Unknown patient'}
+                          {' · '}
+                          {n.note_format.toUpperCase()}
+                          {' · '}
+                          Last updated {formatDate(n.updated_at)}
+                        </div>
+                      </div>
+                    </div>
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
+    draft:    'bg-amber-50 text-amber-800 border-amber-200',
+    signed:   'bg-emerald-50 text-emerald-700 border-emerald-200',
+    amended:  'bg-blue-50 text-blue-700 border-blue-200',
+    deleted:  'bg-gray-50 text-gray-500 border-gray-200',
+  }
+  const cls = styles[status] ?? styles.draft
+  return (
+    <span className={`px-2 py-0.5 rounded-full text-xs font-medium border ${cls}`}>
+      {status}
+    </span>
+  )
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}

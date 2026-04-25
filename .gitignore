@@ -28,6 +28,14 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+.env.ehr
+.env.*.ehr
+.env.prod-dump
+
+# Local-only prod schema snapshot - contains full DDL including RLS policies.
+# Never commit: the repo is public on GitHub.
+supabase/prod-schema.sql
+supabase/.temp/
 
 # vercel
 .vercel

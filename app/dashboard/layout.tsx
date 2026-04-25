@@ -9,6 +9,197 @@ import Link from "next/link";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
 import SessionTimeout from "@/components/SessionTimeout";
 
+// EHR nav items — only shown when practice.ehr_enabled is true.
+const EHR_NOTES_NAV = {
+  href: "/dashboard/ehr/notes",
+  label: "Progress Notes",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="3" y="2" width="12" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 6h6M6 9h6M6 12h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M7 2v1M11 2v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_AUDIT_NAV = {
+  href: "/dashboard/ehr/audit",
+  label: "EHR Audit Log",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 1l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V4l7-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M6 9l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
+const EHR_MAND_REPORTS_NAV = {
+  href: "/dashboard/ehr/mandatory-reports",
+  label: "Mandatory Reports",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 1L1 16h16L9 1z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M9 7v4M9 13v1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_REPORTS_NAV = {
+  href: "/dashboard/ehr/reports",
+  label: "Practice Reports",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="3" y="9" width="3" height="6" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="8" y="5" width="3" height="10" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="13" y="2" width="3" height="13" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  ),
+}
+
+const EHR_SUPERVISION_NAV = {
+  href: "/dashboard/ehr/supervision",
+  label: "Supervision",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M3 14c0-3 3-5 6-5s6 2 6 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M13 9l2 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_BILLING_NAV = {
+  href: "/dashboard/ehr/billing",
+  label: "Billing",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="1" y="4" width="16" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M1 7h16" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="3" y="10" width="4" height="2" fill="currentColor" />
+    </svg>
+  ),
+}
+
+const EHR_MESSAGES_NAV = {
+  href: "/dashboard/ehr/messages",
+  label: "Patient Messages",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M16 12a2 2 0 01-2 2H6l-4 4V4a2 2 0 012-2h10a2 2 0 012 2v8z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
+const EHR_SCHED_REQ_NAV = {
+  href: "/dashboard/ehr/scheduling-requests",
+  label: "Scheduling Requests",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <rect x="2" y="3" width="14" height="13" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 1v4M12 1v4M2 7h14M8 11h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M6 11l1 1 2-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
+const EHR_CASELOAD_NAV = {
+  href: "/dashboard/ehr/caseload",
+  label: "Caseload",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="13" cy="6" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M1 15c0-2.5 2-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M11 13c0-1.5 1.5-2.5 3-2.5s3 1 3 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_WAITLIST_NAV = {
+  href: "/dashboard/ehr/waitlist",
+  label: "EHR Waitlist",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="9" cy="9" r="7" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9 5v4l3 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_GROUPS_NAV = {
+  href: "/dashboard/ehr/group-sessions",
+  label: "Group Sessions",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="9" cy="5" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="4" cy="11" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="14" cy="11" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9 7.5c-1.5 2-3 3-5 3.5M9 7.5c1.5 2 3 3 5 3.5M4 13c0 1.5 2 2 5 2s5-.5 5-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_REFERRALS_NAV = {
+  href: "/dashboard/ehr/referrals",
+  label: "Referrals",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="4" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="14" cy="4" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="14" cy="14" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M6 8l6-3M6 10l6 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_OUTCOMES_NAV = {
+  href: "/dashboard/ehr/outcomes",
+  label: "Practice Outcomes",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M2 14L6 9L10 12L16 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M12 4h4v4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
+const EHR_CREDENTIALING_NAV = {
+  href: "/dashboard/ehr/credentialing",
+  label: "Credentialing",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M9 1l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V4l7-3z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
+const EHR_PREFERENCES_NAV = {
+  href: "/dashboard/ehr/preferences",
+  label: "EHR Preferences",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M3 9h4M11 9h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <circle cx="9" cy="9" r="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 4h12M3 14h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  ),
+}
+
 // --- Nav items ----------------------------------------------------------------
 const NAV = [
   {
@@ -140,6 +331,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [practiceName, setPracticeName] = useState<string | null>(null);
+  const [ehrEnabled, setEhrEnabled] = useState(false);
+  const [prefs, setPrefs] = useState<{
+    features: Record<string, boolean>
+    sidebar: { compact: boolean; show_analytics: boolean; show_billing: boolean }
+  } | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -168,7 +364,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     let cancelled = false;
     (async () => {
       try {
-        // Cognito session check via server-side endpoint. Returns 401 if not signed in.
         const res = await fetch("/api/aws/whoami", { credentials: "include" });
         if (!res.ok) {
           router.replace("/login/aws");
@@ -178,6 +373,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         if (cancelled) return;
         setUserEmail(data.email ?? null);
         setPracticeName(data.practice?.name ?? null);
+        if (data.practice?.ehrEnabled === true) setEhrEnabled(true);
+        // Preferences (gracefully no-op if endpoint not yet ported)
+        try {
+          const pres = await fetch("/api/ehr/preferences");
+          if (pres.ok) {
+            const p = await pres.json();
+            if (p.preferences) setPrefs({
+              features: p.preferences.features,
+              sidebar: p.preferences.sidebar,
+            });
+          }
+        } catch {}
         setCheckingAuth(false);
       } catch {
         if (!cancelled) router.replace("/login/aws");
@@ -187,7 +394,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [router]);
 
   async function handleLogout() {
-    // Cognito logout — clears HttpOnly cookies via /api/auth/logout, then bounces to Cognito's /logout
     window.location.href = "/api/auth/logout";
     return;
     router.replace("/login/aws");
@@ -253,7 +459,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
-          {NAV.map((item) => {
+          {(() => {
+            if (!ehrEnabled) return NAV
+            const f = prefs?.features ?? {}
+            const s = prefs?.sidebar ?? { compact: false, show_analytics: true, show_billing: true }
+            const items: any[] = []
+            // Top section — Overview, Appointments, Patients, Intake
+            items.push(...NAV.slice(0, 4))
+            // Clinical — EHR Notes + Caseload + Group Sessions
+            items.push(EHR_NOTES_NAV)
+            items.push(EHR_CASELOAD_NAV)
+            items.push(EHR_WAITLIST_NAV)
+            items.push(EHR_GROUPS_NAV)
+            // Patient-facing channels
+            items.push(EHR_MESSAGES_NAV)
+            items.push(EHR_SCHED_REQ_NAV)
+            // Middle — Calls, Messages, Crisis Alerts, Support, Audit Log (Harbor's)
+            items.push(...NAV.slice(4, -1))
+            // Analytics group (if show_analytics + feature enabled)
+            if (s.show_analytics !== false && f.reports !== false) items.push(EHR_REPORTS_NAV)
+            if (s.show_analytics !== false) items.push(EHR_REFERRALS_NAV)
+            if (s.show_analytics !== false && f.assessments !== false) items.push(EHR_OUTCOMES_NAV)
+            if (f.supervision !== false) items.push(EHR_SUPERVISION_NAV)
+            items.push(EHR_CREDENTIALING_NAV)
+            if (f.mandatory_reports !== false) items.push(EHR_MAND_REPORTS_NAV)
+            if (s.show_billing !== false && f.billing !== false) items.push(EHR_BILLING_NAV)
+            if (s.show_analytics !== false && f.audit_log !== false) items.push(EHR_AUDIT_NAV)
+            items.push(EHR_PREFERENCES_NAV)
+            // Bottom — Settings
+            items.push(...NAV.slice(-1))
+            return items
+          })().map((item: typeof NAV[number]) => {
             const active = isActive(item);
             return (
               <Link

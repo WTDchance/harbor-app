@@ -10,6 +10,17 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase-browser";
 import IntakeProgress from "@/components/IntakeProgress";
+import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes";
+import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard";
+import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard";
+import { AssessmentsCard } from "@/components/ehr/AssessmentsCard";
+import { ConsentsCard } from "@/components/ehr/ConsentsCard";
+import { ExportPatientButton } from "@/components/ehr/ExportPatientButton";
+import { PortalLinkCard } from "@/components/ehr/PortalLinkCard";
+import { MoodLogsCard } from "@/components/ehr/MoodLogsCard";
+import { HomeworkCard } from "@/components/ehr/HomeworkCard";
+import { BillingCard } from "@/components/ehr/BillingCard";
+import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
@@ -936,6 +947,7 @@ export default function PatientDetailPage() {
             </svg>
             Edit Patient
           </button>
+          <ExportPatientButton patientId={patient.id} />
           <IntakeStatusBadge status={intake_status} />
         </div>
       </div>
@@ -1158,6 +1170,18 @@ export default function PatientDetailPage() {
           <p className="text-sm text-gray-500">No appointments scheduled.</p>
         )}
       </div>
+
+      {/* EHR cards — each renders nothing if ehr_enabled is false */}
+      <PatientAISummaryCard patientId={patient.id} />
+      <SafetyPlanCard patientId={patient.id} />
+      <TreatmentPlanCard patientId={patient.id} />
+      <PatientProgressNotes patientId={patient.id} />
+      <AssessmentsCard patientId={patient.id} />
+      <MoodLogsCard patientId={patient.id} />
+      <HomeworkCard patientId={patient.id} />
+      <BillingCard patientId={patient.id} />
+      <ConsentsCard patientId={patient.id} />
+      <PortalLinkCard patientId={patient.id} />
 
       {/* Intake Packet Progress (new) */}
       <IntakeProgress patientId={patient.id} />

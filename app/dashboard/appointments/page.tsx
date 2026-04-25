@@ -1,7 +1,10 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { CalendarDays, Plus, ChevronLeft, ChevronRight, Clock, Phone, User, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
+import Link from 'next/link'
+import { CalendarDays, Plus, ChevronLeft, ChevronRight, Clock, Phone, User, CheckCircle, XCircle, AlertCircle, FileText } from 'lucide-react'
+import { TelehealthButton } from '@/components/ehr/TelehealthButton'
+import { SessionTimerButton } from '@/components/ehr/SessionTimerButton'
 
 interface Appointment {
   id: string
@@ -92,6 +95,31 @@ export default function AppointmentsPage() {
     setSaving(true)
     setError('')
     try {
+      // Conflict pre-check — warn (don't block) if the proposed slot
+      // overlaps with another scheduled/confirmed appointment.
+      try {
+        const params = new URLSearchParams({
+          date: form.appointment_date,
+          time: form.appointment_time,
+          duration: String(form.duration_minutes || 45),
+        })
+        if (selectedAppt?.id) params.set('exclude_id', selectedAppt.id)
+        const cr = await fetch(`/api/ehr/appointments/conflicts?${params.toString()}`)
+        if (cr.ok) {
+          const j = await cr.json()
+          if (j.conflicts && j.conflicts.length > 0) {
+            const list = j.conflicts.map((c: any) =>
+              `${c.time} · ${c.patient_name} (${c.duration_minutes} min, ${c.status})`
+            ).join('\n')
+            if (!confirm(
+              `This overlaps with:\n\n${list}\n\nBook anyway?`
+            )) { setSaving(false); return }
+          }
+        }
+      } catch {
+        // Non-fatal — continue with save if the conflict check itself fails.
+      }
+
       const method = selectedAppt ? 'PATCH' : 'POST'
       const body = selectedAppt ? { id: selectedAppt.id, ...form } : form
       const r = await fetch('/api/appointments', {
@@ -320,7 +348,17 @@ export default function AppointmentsPage() {
                         )}
                       </td>
                       <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-2">
+                        <div className="flex items-center justify-end gap-3">
+                          <SessionTimerButton appointmentId={appt.id} />
+                          <TelehealthButton appointmentId={appt.id} compact />
+                          <Link
+                            href={`/dashboard/ehr/notes/new?appointment_id=${appt.id}`}
+                            className="inline-flex items-center gap-1 text-xs text-teal-700 hover:text-teal-900 font-medium"
+                            title="Document this session — AI-draftable"
+                          >
+                            <FileText className="w-3 h-3" />
+                            Document
+                          </Link>
                           <button onClick={() => openEdit(appt)} className="text-xs text-teal-600 hover:text-teal-800">Edit</button>
                           <button onClick={() => handleCancel(appt.id)} className="text-xs text-red-500 hover:text-red-700">Cancel</button>
                         </div>
