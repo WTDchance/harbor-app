@@ -6,7 +6,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase-browser";
 import OnboardingChecklist from "@/components/OnboardingChecklist";
 function stripMd(s: string): string {
   if (!s) return s;
@@ -14,19 +13,14 @@ function stripMd(s: string): string {
 }
 
 
-const supabase = createClient();
 
-async function getAuthToken(): Promise<string | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
-}
-
-async function apiFetch(url: string) {
-  const token = await getAuthToken();
+async function apiFetch(url: string, init?: RequestInit) {
   return fetch(url, {
+    ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      ...(init?.headers || {}),
     },
   });
 }

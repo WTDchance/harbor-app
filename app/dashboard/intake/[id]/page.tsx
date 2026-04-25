@@ -4,9 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
 
-const supabase = createClient();
 
 type Demographics = {
   first_name?: string;
@@ -110,19 +108,13 @@ const REFERRAL_LABELS: Record<string, string> = {
   other: "Other",
 };
 
-async function getAuthToken(): Promise<string | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
-}
-
-async function apiFetch(url: string, options?: RequestInit) {
-  const token = await getAuthToken();
+async function apiFetch(url: string, init?: RequestInit) {
   return fetch(url, {
-    ...options,
+    ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-      ...(options?.headers ?? {}),
+      ...(init?.headers || {}),
     },
   });
 }

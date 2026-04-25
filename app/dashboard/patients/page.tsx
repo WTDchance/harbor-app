@@ -6,9 +6,7 @@
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
 
-const supabase = createClient();
 
 type Patient = {
   key: string; // patient UUID

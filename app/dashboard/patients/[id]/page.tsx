@@ -8,7 +8,6 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
 import IntakeProgress from "@/components/IntakeProgress";
 import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes";
 import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard";
@@ -24,7 +23,6 @@ import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard";
 import EligibilityPanel, { type EligibilityData } from "@/components/EligibilityPanel";
 import CommunicationPrefsCard, { type CommunicationPrefs } from "@/components/CommunicationPrefsCard";
 
-const supabase = createClient();
 
 type PatientData = {
   patient: {

@@ -6,10 +6,8 @@
 // search/filter, auto-refresh, mobile responsive
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { createClient } from "@/lib/supabase-browser";
 import Link from "next/link";
 
-const supabase = createClient();
 
 type Message = {
   direction: "inbound" | "outbound";

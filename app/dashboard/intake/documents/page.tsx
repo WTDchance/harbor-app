@@ -5,9 +5,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
 
-const supabase = createClient();
 
 type IntakeDocument = {
   id: string;
@@ -21,18 +19,13 @@ type IntakeDocument = {
   updated_at: string;
 };
 
-async function getAuthToken(): Promise<string | null> {
-  const { data: { session } } = await supabase.auth.getSession();
-  return session?.access_token ?? null;
-}
-
-async function apiFetch(url: string, options?: RequestInit) {
-  const token = await getAuthToken();
+async function apiFetch(url: string, init?: RequestInit) {
   return fetch(url, {
-    ...options,
+    ...init,
+    credentials: "include",
     headers: {
-      ...(options?.headers ?? {}),
-      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      ...(init?.headers || {}),
     },
   });
 }
