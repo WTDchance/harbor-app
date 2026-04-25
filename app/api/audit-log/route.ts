@@ -4,10 +4,11 @@
 // users cannot tamper with the audit trail.
 
 import { NextRequest, NextResponse } from "next/server";
-import { createServerClient } from "@supabase/ssr";
+;
 import { supabaseAdmin } from "@/lib/supabase";
 import { checkBruteForce } from "@/lib/breach-detection";
 import { resolvePracticeIdForApi } from "@/lib/active-practice";
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -36,24 +37,11 @@ export async function POST(req: NextRequest) {
     let practiceId: string | null = null;
 
     // Try to extract user from Supabase session cookies
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return req.cookies.getAll();
-          },
-          setAll() {}, // read-only — we don't set cookies here
-        },
-      }
-    );
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-
-    if (user) {
+    // supabase client removed (Cognito auth)
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (user) {
       userId = user.id;
       userEmail = user.email ?? null;
 
@@ -103,23 +91,10 @@ export async function POST(req: NextRequest) {
 // ---- GET /api/audit-log (practice-scoped read) ------------------------------
 
 export async function GET(req: NextRequest) {
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return req.cookies.getAll();
-        },
-        setAll() {},
-      },
-    }
-  );
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  // supabase client removed (Cognito auth)
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

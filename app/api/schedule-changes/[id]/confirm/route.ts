@@ -6,12 +6,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { resolvePracticeIdForApi } from '@/lib/active-practice'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const supabase = await createServerSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

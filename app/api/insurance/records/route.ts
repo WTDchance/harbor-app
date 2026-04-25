@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 // GET /api/insurance/records â list all insurance records for the practice
 export async function GET(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { data: practice } = await supabase
       .from('practices')
@@ -63,8 +66,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { data: practice } = await supabase
       .from('practices')
@@ -110,8 +115,10 @@ export async function POST(req: NextRequest) {
 export async function PATCH(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
     const { id, ...updates } = body
@@ -136,8 +143,10 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { searchParams } = new URL(req.url)
     const id = searchParams.get('id')

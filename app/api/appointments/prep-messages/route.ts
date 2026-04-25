@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 const DEFAULT_PREP_TEMPLATE = "Hi {patient_name}, this is a reminder that you have an appointment with {provider_name} tomorrow at {time}. Is there anything specific you'd like to focus on in your session? (You don't need to reply — just wanted you to feel prepared.)"
 
@@ -31,8 +32,10 @@ function getTomorrowWindow(): { start: string; end: string } {
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { data: practice } = await supabase
       .from('practices')
@@ -114,8 +117,10 @@ export async function POST(req: NextRequest) {
 export async function GET(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { data: practice } = await supabase
       .from('practices')

@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { buildSystemPrompt } from '@/lib/systemPrompt'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 const VAPI_API_KEY = process.env.VAPI_API_KEY
 const VAPI_BASE_URL = 'https://api.vapi.ai'
@@ -56,8 +57,10 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
 
     // Auth check: require a valid session
     const supabase = await createServerSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

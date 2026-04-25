@@ -3,17 +3,16 @@ import twilio from 'twilio'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { resolvePracticeIdForApi } from '@/lib/active-practice'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 export async function GET(req: NextRequest) {
   try {
     // Auth check
     const supabase = await createClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (!user || authError) {
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user || authError) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 
@@ -61,12 +60,10 @@ export async function POST(req: NextRequest) {
   try {
     // Auth check
     const supabase = await createClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (!user || authError) {
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user || authError) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

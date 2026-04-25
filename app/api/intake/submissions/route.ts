@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 import { getEffectivePracticeId } from "@/lib/active-practice";
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getAuthenticatedUser(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
@@ -13,10 +14,9 @@ async function getAuthenticatedUser(req: NextRequest) {
     return { user: null, error: "Missing or invalid authorization header" };
   }
   const token = authHeader.slice(7);
-  const {
-    data: { user },
-    error,
-  } = await supabase.auth.getUser(token);
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (error || !user) {
     return { user: null, error: "Unauthorized" };
   }

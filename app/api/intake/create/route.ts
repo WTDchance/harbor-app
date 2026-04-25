@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
 import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
 import { randomBytes } from 'crypto'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 function generateToken(): string {
   return randomBytes(20).toString('hex')
@@ -11,8 +12,10 @@ function generateToken(): string {
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
     const {

@@ -6,10 +6,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { createServerSupabase } from '@/lib/supabase-server'
 import { resolvePracticeIdForApi } from '@/lib/active-practice'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getPracticeId(): Promise<string | null> {
   const supabase = await createServerSupabase()
-  const { data: { user } } = await supabase.auth.getUser()
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (!user) return null
   return resolvePracticeIdForApi(supabaseAdmin, user)
 }

@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 import { resolvePracticeIdForApi } from "@/lib/active-practice";
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getPracticeId(req: NextRequest): Promise<{ practiceId: string | null; error: string | null }> {
   const authHeader = req.headers.get("authorization");
@@ -12,7 +13,9 @@ async function getPracticeId(req: NextRequest): Promise<{ practiceId: string | n
     return { practiceId: null, error: "Missing authorization" };
   }
   const token = authHeader.slice(7);
-  const { data: { user }, error } = await supabase.auth.getUser(token);
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (error || !user) return { practiceId: null, error: "Unauthorized" };
 
   const resolved = await resolvePracticeIdForApi(supabase, user);

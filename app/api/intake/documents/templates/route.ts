@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
 import { resolvePracticeIdForApi } from '@/lib/active-practice';
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 type Template = {
   slug: string;
@@ -53,7 +54,10 @@ async function getPracticeId(req: NextRequest): Promise<string | null> {
   const authHeader = req.headers.get('authorization');
   if (!authHeader?.startsWith('Bearer ')) return null;
 
-  const { data: { user }, error } = await supabase.auth.getUser(authHeader.slice(7));
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  );
   if (error || !user) return null;
 
   // Try act-as cookie (admin) then users.practice_id

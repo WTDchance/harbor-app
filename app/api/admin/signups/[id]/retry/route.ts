@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { purchaseTwilioNumber, releaseTwilioNumber } from '@/lib/twilio-provision'
 import { createVapiAssistant, linkVapiPhoneNumber, deleteVapiAssistant } from '@/lib/vapi-provision'
 import { sendWelcomeEmail } from '@/lib/email-welcome'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 // POST /api/admin/signups/[id]/retry
 // Re-runs the Twilio + Vapi provisioning for a practice that failed the first time.
@@ -14,12 +15,10 @@ export async function POST(
 ) {
   try {
     const supabase = await createClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (authError || !user) {
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

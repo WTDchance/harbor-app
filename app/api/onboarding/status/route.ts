@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin as supabase } from '@/lib/supabase';
 import { getEffectivePracticeId } from '@/lib/active-practice';
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get('authorization');
@@ -12,7 +13,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const { data: { user }, error } = await supabase.auth.getUser(authHeader.slice(7));
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  );
   if (error || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }

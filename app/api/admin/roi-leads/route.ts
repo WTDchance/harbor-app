@@ -6,12 +6,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 const STAGES = ['new', 'contacted', 'demo_booked', 'proposal_sent', 'won', 'lost', 'unresponsive'] as const
 
 async function requireAdmin() {
   const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (!user) return { user: null, error: 'Unauthorized' as const, status: 401 }
   const adminEmail = process.env.ADMIN_EMAIL
   if (!adminEmail || user.email !== adminEmail) {

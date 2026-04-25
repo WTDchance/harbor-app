@@ -11,31 +11,16 @@
 // tokens were stored. This route now reads and writes the new table, and also
 // nulls the legacy columns on disconnect so nothing can re-surface stale values.
 
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getUserAndPractice() {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => cookieStore.getAll(),
-        setAll: (s) => {
-          try {
-            s.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {}
-        },
-      },
-    }
-  )
-  const { data: { user } } = await supabase.auth.getUser()
+  // supabase client removed (Cognito auth)
+  const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (!user) return { user: null, practiceId: null }
   const practiceId = await getEffectivePracticeId(supabase, user)
   return { user, practiceId }

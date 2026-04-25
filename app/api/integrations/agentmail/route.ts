@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
 import { listInboxes, createInbox, deleteInbox } from '@/lib/agentmail'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getSupabase() {
-  const cookieStore = await cookies()
   return createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -20,8 +18,10 @@ async function getSupabase() {
 export async function GET(req: NextRequest) {
   try {
     const supabase = await getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const inboxes = await listInboxes()
     return NextResponse.json(inboxes)
@@ -33,8 +33,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     const supabase = await getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { username, displayName } = await req.json()
     if (!username) return NextResponse.json({ error: 'username required' }, { status: 400 })
@@ -49,8 +51,10 @@ export async function POST(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const supabase = await getSupabase()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const __ctx = await requireApiSession();
+  if (__ctx instanceof NextResponse) return __ctx;
+  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const { inboxId } = await req.json()
     if (!inboxId) return NextResponse.json({ error: 'inboxId required' }, { status: 400 })
