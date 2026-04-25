@@ -1,15 +1,32 @@
-// app/api/portal/invoices/route.ts — patient sees their invoices.
+// Patient portal — invoices for the signed-in patient.
+
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getPortalSession } from '@/lib/ehr/portal'
+import { requirePortalSession } from '@/lib/aws/portal-auth'
+import { pool } from '@/lib/aws/db'
+import { auditPortalAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const s = await getPortalSession(); if (!s) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
-  const { data, error } = await supabaseAdmin
-    .from('ehr_invoices')
-    .select('id, total_cents, paid_cents, status, stripe_payment_url, sent_at, paid_at, due_date, created_at')
-    .eq('practice_id', s.practice_id).eq('patient_id', s.patient_id)
-    .order('created_at', { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ invoices: data ?? [] })
+  const sess = await requirePortalSession()
+  if (sess instanceof NextResponse) return sess
+
+  const { rows } = await pool.query(
+    `SELECT id, total_cents, paid_cents, status, stripe_payment_url,
+            sent_at, paid_at, due_date, created_at
+       FROM ehr_invoices
+      WHERE practice_id = $1 AND patient_id = $2
+      ORDER BY created_at DESC`,
+    [sess.practiceId, sess.patientId],
+  )
+
+  auditPortalAccess({
+    session: sess,
+    action: 'portal.invoice.list',
+    resourceType: 'ehr_invoice',
+    details: { count: rows.length },
+  }).catch(() => {})
+
+  return NextResponse.json({ invoices: rows })
 }

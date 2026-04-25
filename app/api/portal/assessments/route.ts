@@ -1,20 +1,37 @@
-// app/api/portal/assessments/route.ts — patient sees their pending + recent assessments.
+// Patient portal — list assigned + completed assessments for the
+// signed-in patient. The /api/portal/assessments/[id] route (which scores
+// submissions) stays Supabase pending phase-4b.
+
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getPortalSession } from '@/lib/ehr/portal'
+import { requirePortalSession } from '@/lib/aws/portal-auth'
+import { pool } from '@/lib/aws/db'
+import { auditPortalAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const session = await getPortalSession()
-  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+  const sess = await requirePortalSession()
+  if (sess instanceof NextResponse) return sess
 
-  const { data, error } = await supabaseAdmin
-    .from('patient_assessments')
-    .select('id, assessment_type, status, score, severity, assigned_at, expires_at, completed_at, created_at')
-    .eq('practice_id', session.practice_id)
-    .eq('patient_id', session.patient_id)
-    .order('created_at', { ascending: false })
-    .limit(20)
+  const { rows } = await pool
+    .query(
+      `SELECT id, assessment_type, status, score, severity,
+              assigned_at, expires_at, completed_at, created_at
+         FROM patient_assessments
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC
+        LIMIT 20`,
+      [sess.practiceId, sess.patientId],
+    )
+    .catch(() => ({ rows: [] as any[] }))
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ assessments: data })
+  auditPortalAccess({
+    session: sess,
+    action: 'portal.assessment.list',
+    resourceType: 'patient_assessment',
+    details: { count: rows.length },
+  }).catch(() => {})
+
+  return NextResponse.json({ assessments: rows })
 }

@@ -1,38 +1,51 @@
-// app/api/portal/scheduling/route.ts — patient creates a scheduling request.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getPortalSession } from '@/lib/ehr/portal'
+// Patient portal — scheduling requests submitted by the signed-in patient.
+//
+// GET → list (read path, in this batch).
+// POST (submit a new request) is a write path — stays Supabase pending
+// phase-4b. Single insert, but it triggers therapist-side notifications,
+// so keep its rollout deliberate.
+
+import { NextResponse } from 'next/server'
+import { requirePortalSession } from '@/lib/aws/portal-auth'
+import { pool } from '@/lib/aws/db'
+import { auditPortalAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const s = await getPortalSession(); if (!s) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
-  const { data, error } = await supabaseAdmin
-    .from('ehr_scheduling_requests')
-    .select('id, preferred_windows, patient_note, therapist_note, duration_minutes, appointment_type, status, appointment_id, created_at, responded_at')
-    .eq('practice_id', s.practice_id).eq('patient_id', s.patient_id)
-    .order('created_at', { ascending: false })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ requests: data ?? [] })
+  const sess = await requirePortalSession()
+  if (sess instanceof NextResponse) return sess
+
+  const { rows } = await pool
+    .query(
+      `SELECT id, preferred_windows, patient_note, therapist_note,
+              duration_minutes, appointment_type, status, appointment_id,
+              created_at, responded_at
+         FROM ehr_scheduling_requests
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC`,
+      [sess.practiceId, sess.patientId],
+    )
+    .catch(() => ({ rows: [] as any[] }))
+
+  auditPortalAccess({
+    session: sess,
+    action: 'portal.scheduling.list',
+    resourceType: 'ehr_scheduling_request',
+    details: { count: rows.length },
+  }).catch(() => {})
+
+  return NextResponse.json({ requests: rows })
 }
 
-export async function POST(req: NextRequest) {
-  const s = await getPortalSession(); if (!s) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
-  const body = await req.json().catch(() => null)
-  const windows = Array.isArray(body?.preferred_windows) ? body.preferred_windows : []
-  if (windows.length === 0) {
-    return NextResponse.json({ error: 'At least one preferred window required' }, { status: 400 })
-  }
-
-  const { data, error } = await supabaseAdmin
-    .from('ehr_scheduling_requests')
-    .insert({
-      practice_id: s.practice_id,
-      patient_id: s.patient_id,
-      preferred_windows: windows,
-      patient_note: body?.note || null,
-      duration_minutes: body?.duration_minutes || 45,
-      appointment_type: body?.appointment_type || 'follow-up',
-      status: 'pending',
-    }).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ request: data }, { status: 201 })
+// TODO(phase-4b): port POST. Validates preferred_windows array, inserts
+// row with status='pending'. Triggers therapist-side notification — port
+// alongside the notification fan-out so we don't double-deliver during
+// the cutover.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'scheduling_request_create_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }

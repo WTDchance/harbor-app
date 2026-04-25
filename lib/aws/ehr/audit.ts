@@ -36,6 +36,16 @@ export type EhrAuditAction =
   | 'group_session.list'
   | 'group_session.create'
   | 'message.list'
+  | 'portal.login'
+  | 'portal.logout'
+  | 'portal.me.view'
+  | 'portal.invoice.list'
+  | 'portal.superbill.list'
+  | 'portal.homework.list'
+  | 'portal.assessment.list'
+  | 'portal.message.list'
+  | 'portal.scheduling.list'
+  | 'portal.mood.list'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
@@ -62,5 +72,57 @@ export async function auditEhrAccess(params: {
     // Swallow — audit must never block the primary op. Log so a broken
     // audit table is visible in CloudWatch.
     console.error('[audit] insert failed:', (err as Error).message)
+  }
+}
+
+
+import type { PortalSession } from '@/lib/aws/portal-auth'
+
+export type PortalAuditAction =
+  | 'portal.login'
+  | 'portal.logout'
+  | 'portal.me.view'
+  | 'portal.invoice.list'
+  | 'portal.superbill.list'
+  | 'portal.homework.list'
+  | 'portal.assessment.list'
+  | 'portal.message.list'
+  | 'portal.scheduling.list'
+  | 'portal.mood.list'
+
+/**
+ * Audit a portal patient action. Mirrors auditEhrAccess() but takes a
+ * PortalSession instead of an ApiAuthContext — there is no Cognito user
+ * for portal sessions. The session token hash (not the raw token) is
+ * recorded in details so a leaked audit log can't be replayed.
+ */
+export async function auditPortalAccess(params: {
+  session: PortalSession
+  action: PortalAuditAction
+  resourceType?: string
+  resourceId?: string | null
+  details?: Record<string, unknown>
+}): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (
+         user_id, user_email, practice_id, action, resource_type, resource_id, details
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [
+        null, // patient is not a Cognito user
+        null,
+        params.session.practiceId,
+        params.action,
+        params.resourceType ?? 'portal',
+        params.resourceId ?? null,
+        JSON.stringify({
+          ...(params.details ?? {}),
+          patient_id: params.session.patientId,
+          session_token_hash: params.session.sessionTokenHash,
+        }),
+      ],
+    )
+  } catch (err) {
+    console.error('[audit] portal insert failed:', (err as Error).message)
   }
 }

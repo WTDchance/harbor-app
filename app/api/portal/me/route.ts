@@ -1,38 +1,92 @@
-// app/api/portal/me/route.ts — returns the patient's portal dashboard data.
+// Patient portal home — bundle the data the dashboard landing page needs in
+// one round-trip: patient profile, practice, upcoming appointments, signed
+// consents, active treatment plan.
+//
+// Aligned to the AWS canonical patients/appointments schema (insurance is
+// columnar, scheduled_for is a single TIMESTAMPTZ).
+
 import { NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getPortalSession } from '@/lib/ehr/portal'
+import { requirePortalSession } from '@/lib/aws/portal-auth'
+import { pool } from '@/lib/aws/db'
+import { auditPortalAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const session = await getPortalSession()
-  if (!session) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
+  const sess = await requirePortalSession()
+  if (sess instanceof NextResponse) return sess
 
-  const { patient_id, practice_id } = session
+  const yesterdayIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
 
   const [patient, practice, appts, consents, plan] = await Promise.all([
-    supabaseAdmin.from('patients').select('id, first_name, last_name, email, phone, insurance').eq('id', patient_id).maybeSingle(),
-    supabaseAdmin.from('practices').select('id, name, phone_number').eq('id', practice_id).maybeSingle(),
-    supabaseAdmin
-      .from('appointments')
-      .select('id, appointment_date, appointment_time, duration_minutes, appointment_type, status, telehealth_room_slug')
-      .eq('practice_id', practice_id).eq('patient_id', patient_id)
-      .gte('appointment_date', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10))
-      .order('appointment_date', { ascending: true }).order('appointment_time', { ascending: true })
-      .limit(10),
-    supabaseAdmin
-      .from('ehr_consents').select('id, consent_type, version, status, document_name, signed_at')
-      .eq('practice_id', practice_id).eq('patient_id', patient_id)
-      .order('created_at', { ascending: false }),
-    supabaseAdmin
-      .from('ehr_treatment_plans').select('id, title, presenting_problem, goals, frequency, start_date, review_date, status')
-      .eq('practice_id', practice_id).eq('patient_id', patient_id).eq('status', 'active').maybeSingle(),
+    pool.query(
+      `SELECT id, first_name, last_name, preferred_name, email, phone,
+              insurance_provider, insurance_member_id, insurance_group_id,
+              insurance_verified_at
+         FROM patients WHERE id = $1 LIMIT 1`,
+      [sess.patientId],
+    ),
+    pool.query(
+      `SELECT id, name, phone FROM practices WHERE id = $1 LIMIT 1`,
+      [sess.practiceId],
+    ),
+    pool.query(
+      `SELECT id, scheduled_for, duration_minutes, appointment_type, status
+         FROM appointments
+        WHERE practice_id = $1 AND patient_id = $2 AND scheduled_for >= $3
+        ORDER BY scheduled_for ASC
+        LIMIT 10`,
+      [sess.practiceId, sess.patientId, yesterdayIso],
+    ),
+    pool
+      .query(
+        `SELECT id, consent_type, version, status, document_name, signed_at
+           FROM ehr_consents
+          WHERE practice_id = $1 AND patient_id = $2
+          ORDER BY created_at DESC`,
+        [sess.practiceId, sess.patientId],
+      )
+      .catch(() => ({ rows: [] as any[] })),
+    pool
+      .query(
+        `SELECT id, title, presenting_problem, goals, frequency,
+                start_date, review_date, status
+           FROM ehr_treatment_plans
+          WHERE practice_id = $1 AND patient_id = $2 AND status = 'active'
+          LIMIT 1`,
+        [sess.practiceId, sess.patientId],
+      )
+      .catch(() => ({ rows: [] as any[] })),
   ])
 
+  const patientRow = patient.rows[0] ?? null
+  const insurance = patientRow
+    ? {
+        provider: patientRow.insurance_provider ?? null,
+        member_id: patientRow.insurance_member_id ?? null,
+        group_id: patientRow.insurance_group_id ?? null,
+        verified_at: patientRow.insurance_verified_at ?? null,
+      }
+    : null
+
+  auditPortalAccess({ session: sess, action: 'portal.me.view' }).catch(() => {})
+
   return NextResponse.json({
-    patient: patient.data,
-    practice: practice.data,
-    appointments: appts.data ?? [],
-    consents: consents.data ?? [],
-    active_treatment_plan: plan.data ?? null,
+    patient: patientRow
+      ? {
+          id: patientRow.id,
+          first_name: patientRow.first_name,
+          last_name: patientRow.last_name,
+          preferred_name: patientRow.preferred_name,
+          email: patientRow.email,
+          phone: patientRow.phone,
+          insurance,
+        }
+      : null,
+    practice: practice.rows[0] ?? null,
+    appointments: appts.rows,
+    consents: consents.rows,
+    active_treatment_plan: plan.rows[0] ?? null,
   })
 }

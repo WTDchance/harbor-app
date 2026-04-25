@@ -1,41 +1,47 @@
-// app/api/portal/mood/route.ts — patient logs a mood check-in.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getPortalSession } from '@/lib/ehr/portal'
+// Patient portal — mood check-ins.
+//
+// GET → list the patient's recent mood logs (read path, in this batch).
+// POST (log a new mood) is a write path — stays Supabase pending phase-4b.
+
+import { NextResponse } from 'next/server'
+import { requirePortalSession } from '@/lib/aws/portal-auth'
+import { pool } from '@/lib/aws/db'
+import { auditPortalAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const s = await getPortalSession(); if (!s) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
-  const { data } = await supabaseAdmin
-    .from('ehr_mood_logs')
-    .select('id, mood, anxiety, sleep_hours, note, logged_at')
-    .eq('practice_id', s.practice_id).eq('patient_id', s.patient_id)
-    .order('logged_at', { ascending: false })
-    .limit(30)
-  return NextResponse.json({ logs: data ?? [] })
+  const sess = await requirePortalSession()
+  if (sess instanceof NextResponse) return sess
+
+  const { rows } = await pool
+    .query(
+      `SELECT id, mood, anxiety, sleep_hours, note, logged_at
+         FROM ehr_mood_logs
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY logged_at DESC
+        LIMIT 30`,
+      [sess.practiceId, sess.patientId],
+    )
+    .catch(() => ({ rows: [] as any[] }))
+
+  auditPortalAccess({
+    session: sess,
+    action: 'portal.mood.list',
+    resourceType: 'ehr_mood_log',
+    details: { count: rows.length },
+  }).catch(() => {})
+
+  return NextResponse.json({ logs: rows })
 }
 
-export async function POST(req: NextRequest) {
-  const s = await getPortalSession(); if (!s) return NextResponse.json({ error: 'Not signed in' }, { status: 401 })
-  const body = await req.json().catch(() => null)
-  const mood = Number(body?.mood)
-  if (!Number.isInteger(mood) || mood < 1 || mood > 10) {
-    return NextResponse.json({ error: 'mood must be 1-10' }, { status: 400 })
-  }
-  const anxiety = body?.anxiety != null ? Number(body.anxiety) : null
-  if (anxiety != null && (!Number.isInteger(anxiety) || anxiety < 1 || anxiety > 10)) {
-    return NextResponse.json({ error: 'anxiety must be 1-10' }, { status: 400 })
-  }
-  const sleep = body?.sleep_hours != null ? Number(body.sleep_hours) : null
-  const note = typeof body?.note === 'string' ? body.note.slice(0, 500) : null
-
-  const { data, error } = await supabaseAdmin
-    .from('ehr_mood_logs')
-    .insert({
-      practice_id: s.practice_id,
-      patient_id: s.patient_id,
-      mood, anxiety, sleep_hours: sleep, note,
-    })
-    .select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ log: data }, { status: 201 })
+// TODO(phase-4b): port POST. Single insert with 1-10 validation on mood/
+// anxiety, optional sleep_hours, 500-char note. Trivial; held back to
+// keep this batch read-only foundation-grade for the native clients.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'mood_log_create_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }
