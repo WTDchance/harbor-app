@@ -1,77 +1,72 @@
-import { createServerClient } from '@supabase/ssr'
+// Harbor — Cognito-only auth middleware.
+//
+// Public allowlist (no auth required): / , /login, /login/aws, /signup, /onboard,
+//   /intake, /privacy*, /terms, /sms, /reset-password, /appointments/*,
+//   plus Next internals and most /api/* (each route enforces its own auth).
+//
+// Everything else requires a valid Cognito ID token cookie (presence checked at
+// the edge; full JWKS verification happens in route handlers via getServerSession()).
+
 import { NextResponse, type NextRequest } from 'next/server'
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL
 const HARBOR_ID_COOKIE = 'harbor_id'
 
-function isAwsPath(pathname: string): boolean {
-  return (
-    pathname.startsWith('/dashboard/aws') ||
-    pathname.startsWith('/admin/aws') ||
-    pathname.startsWith('/api/aws')
-  )
+const PUBLIC_PREFIXES = [
+  '/login',           // /login + /login/aws
+  '/signup',
+  '/onboard',
+  '/intake',
+  '/privacy',
+  '/privacy-policy',
+  '/terms',
+  '/sms',
+  '/reset-password',
+  '/appointments/',   // public confirm/cancel pages keyed by appointment UUID
+  '/_next',
+  '/favicon',
+]
+
+const PUBLIC_EXACT = new Set(['/'])
+
+// API routes that must remain public (or auth themselves internally).
+// Everything else under /api requires a Cognito session.
+const PUBLIC_API_PREFIXES = [
+  '/api/health',
+  '/api/auth/',           // /api/auth/callback, /api/auth/logout
+  '/api/cron/',           // gated by Bearer CRON_SECRET in route handler
+  '/api/admin/',          // gated by Bearer CRON_SECRET in route handler
+  '/api/stripe/webhook',  // Stripe signature
+  '/api/vapi/webhook',    // Vapi shared secret
+  '/api/sms/',            // Twilio webhooks
+  '/api/signup',          // self-service signup
+  '/api/audit-log',       // gated internally
+]
+
+function isPublic(pathname: string): boolean {
+  if (PUBLIC_EXACT.has(pathname)) return true
+  if (PUBLIC_PREFIXES.some(p => pathname.startsWith(p))) return true
+  if (pathname.startsWith('/api/')) {
+    return PUBLIC_API_PREFIXES.some(p => pathname.startsWith(p))
+  }
+  return false
 }
 
-export async function middleware(request: NextRequest) {
+export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  if (isAwsPath(pathname)) {
-    const idToken = request.cookies.get(HARBOR_ID_COOKIE)?.value
-    console.log('[mw] aws path', JSON.stringify({
-      pathname,
-      has_id_cookie: !!idToken,
-      id_len: idToken?.length || 0,
-      cookie_names: request.cookies.getAll().map(c => c.name),
-    }))
-    if (!idToken) {
-      const loginUrl = request.nextUrl.clone()
-      loginUrl.pathname = '/login/aws'
-      loginUrl.searchParams.set('next', pathname)
-      return NextResponse.redirect(loginUrl)
-    }
+  if (isPublic(pathname)) {
     return NextResponse.next({ request })
   }
 
-  let supabaseResponse = NextResponse.next({ request })
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return request.cookies.getAll() },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({ request })
-          cookiesToSet.forEach(({ name, value, options }) => supabaseResponse.cookies.set(name, value, options))
-        },
-      },
-    }
-  )
-
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const publicPaths = [
-    '/login', '/signup', '/api/', '/onboard', '/intake', '/_next', '/favicon',
-    '/privacy', '/privacy-policy', '/terms', '/sms', '/reset-password',
-    '/appointments/',
-  ]
-  const exactPublicPaths = ['/']
-  if (exactPublicPaths.includes(pathname) || publicPaths.some(p => pathname.startsWith(p))) {
-    return supabaseResponse
-  }
-
-  if (!user) {
+  const idToken = request.cookies.get(HARBOR_ID_COOKIE)?.value
+  if (!idToken) {
+    // Not signed in. Send through /login/aws which redirects to Cognito Hosted UI.
     const loginUrl = request.nextUrl.clone()
     loginUrl.pathname = '/login/aws'
     loginUrl.searchParams.set('next', pathname)
     return NextResponse.redirect(loginUrl)
   }
-
-  if (pathname.startsWith('/admin') && user.email !== ADMIN_EMAIL) {
-    return NextResponse.redirect(new URL('/dashboard', request.url))
-  }
-
-  return supabaseResponse
+  return NextResponse.next({ request })
 }
 
 export const config = {

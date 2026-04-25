@@ -1,9 +1,7 @@
 import { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Log In — Harbor Dashboard',
-  description:
-    'Log in to your Harbor dashboard to manage calls, patients, intake forms, and practice settings.',
+  title: 'Sign in — Harbor',
   robots: { index: false, follow: false },
 }
 

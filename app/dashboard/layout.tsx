@@ -6,11 +6,8 @@
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase-browser";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
 import SessionTimeout from "@/components/SessionTimeout";
-
-const supabase = createClient();
 
 // --- Nav items ----------------------------------------------------------------
 const NAV = [
@@ -168,36 +165,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
 
   useEffect(() => {
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (!session) {
-        router.replace("/login");
-      } else {
-        setUserEmail(session.user.email ?? null);
+    let cancelled = false;
+    (async () => {
+      try {
+        // Cognito session check via server-side endpoint. Returns 401 if not signed in.
+        const res = await fetch("/api/aws/whoami", { credentials: "include" });
+        if (!res.ok) {
+          router.replace("/login/aws");
+          return;
+        }
+        const data = await res.json();
+        if (cancelled) return;
+        setUserEmail(data.email ?? null);
+        setPracticeName(data.practice?.name ?? null);
         setCheckingAuth(false);
-
-        // Fetch practice name via server-side resolver (respects act-as cookie)
-        try {
-          const res = await fetch("/api/practice/me");
-          if (res.ok) {
-            const data = await res.json();
-            if (data.practice?.name) setPracticeName(data.practice.name);
-          }
-        } catch {}
+      } catch {
+        if (!cancelled) router.replace("/login/aws");
       }
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (event === "SIGNED_OUT" || !session) {
-        router.replace("/login");
-      }
-    });
-
-    return () => subscription.unsubscribe();
+    })();
+    return () => { cancelled = true; };
   }, [router]);
 
   async function handleLogout() {
-    await supabase.auth.signOut();
-    router.replace("/login");
+    // Cognito logout — clears HttpOnly cookies via /api/auth/logout, then bounces to Cognito's /logout
+    window.location.href = "/api/auth/logout";
+    return;
+    router.replace("/login/aws");
   }
 
   if (checkingAuth) {
