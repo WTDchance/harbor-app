@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const code = url.searchParams.get('code')
   const error = url.searchParams.get('error')
-  const state = url.searchParams.get('state') || '/dashboard/aws'
+  const state = url.searchParams.get('state') || '/dashboard'
   console.log('[auth/callback] enter', JSON.stringify({
     has_code: !!code,
     error,
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     await verifyIdToken(tokens.id_token)
     console.log('[auth/callback] id token verified')
 
-    const target = state.startsWith('/') ? state : '/dashboard/aws'
+    const target = state.startsWith('/') ? state : '/dashboard'
     const redirectTo = absoluteUrl(req, target)
     console.log('[auth/callback] redirecting to', redirectTo)
     const res = NextResponse.redirect(redirectTo)

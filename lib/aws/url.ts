@@ -40,7 +40,7 @@ export function publicOrigin(req: NextRequest | Request): string {
 
 /**
  * Build an absolute URL for a path on the public origin.
- *   absoluteUrl(req, '/dashboard/aws') → https://lab.harboroffice.ai/dashboard/aws
+ *   absoluteUrl(req, '/dashboard') → https://lab.harboroffice.ai/dashboard
  */
 export function absoluteUrl(req: NextRequest | Request, path: string): string {
   const origin = publicOrigin(req)

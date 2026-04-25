@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   const next = req.nextUrl.searchParams.get('next')
-  const target = next && next.startsWith('/') ? next : '/dashboard/aws'
+  const target = next && next.startsWith('/') ? next : '/dashboard'
   // loginUrl() builds a full https://harbor-staging-auth.auth... URL — this
   // doesn't depend on req.url and isn't affected by the localhost issue.
   return NextResponse.redirect(loginUrl(target))
