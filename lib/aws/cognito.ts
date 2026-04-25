@@ -1,26 +1,19 @@
 // Harbor — Cognito session verification + OAuth token exchange.
-//
-// The path-B replacement for @supabase/ssr. Validates ID + access tokens against
-// Cognito's JWKS, exchanges authorization codes for tokens at /oauth2/token,
-// and exposes a typed session object for server components and API routes.
 
 import { CognitoJwtVerifier } from 'aws-jwt-verify'
 
 const COGNITO_REGION = process.env.COGNITO_REGION || 'us-east-1'
 const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID!
 const COGNITO_APP_CLIENT_ID = process.env.COGNITO_APP_CLIENT_ID!
-const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN! // e.g. harbor-staging-auth
-const COGNITO_REDIRECT_URI = process.env.COGNITO_REDIRECT_URI! // https://lab.harboroffice.ai/api/auth/callback
+const COGNITO_DOMAIN = process.env.COGNITO_DOMAIN!
+const COGNITO_REDIRECT_URI = process.env.COGNITO_REDIRECT_URI!
 
 if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
   if (!COGNITO_USER_POOL_ID || !COGNITO_APP_CLIENT_ID) {
-    // Don't throw here — the build runs with these missing. Validate at request time.
     console.warn('[cognito] COGNITO_USER_POOL_ID / COGNITO_APP_CLIENT_ID not set')
   }
 }
 
-// Verifier instances are reusable + cache JWKS. Allocated lazily so missing-env
-// at build time doesn't crash the bundle.
 let _idVerifier: ReturnType<typeof CognitoJwtVerifier.create> | null = null
 let _accessVerifier: ReturnType<typeof CognitoJwtVerifier.create> | null = null
 
@@ -50,32 +43,19 @@ export type CognitoSession = {
   sub: string
   email: string
   emailVerified: boolean
-  // Raw tokens — kept for downstream API calls. NEVER expose these to the client
-  // beyond their HttpOnly cookies.
   idToken: string
   accessToken: string
-  // ISO timestamp of token expiry — caller can decide to refresh.
   expiresAt: string
 }
 
-/**
- * Verify an ID token. Throws if invalid. Returns the validated payload.
- */
 export async function verifyIdToken(token: string) {
   return idVerifier().verify(token)
 }
 
-/**
- * Verify an access token. Throws if invalid.
- */
 export async function verifyAccessToken(token: string) {
   return accessVerifier().verify(token)
 }
 
-/**
- * Exchange a Cognito authorization code for tokens.
- * Called by /api/auth/callback after the Hosted UI redirects back.
- */
 export async function exchangeCodeForTokens(code: string): Promise<{
   id_token: string
   access_token: string
@@ -90,6 +70,13 @@ export async function exchangeCodeForTokens(code: string): Promise<{
     code,
     redirect_uri: COGNITO_REDIRECT_URI,
   })
+  // Verbose trace — diagnoses invalid_grant. Logs do NOT include the code itself.
+  console.log('[cognito] token exchange', JSON.stringify({
+    tokenUrl,
+    client_id: COGNITO_APP_CLIENT_ID,
+    redirect_uri: COGNITO_REDIRECT_URI,
+    code_len: code.length,
+  }))
   const res = await fetch(tokenUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -97,14 +84,18 @@ export async function exchangeCodeForTokens(code: string): Promise<{
   })
   if (!res.ok) {
     const txt = await res.text()
+    // Surface error_description so the chat caller knows what to fix.
+    console.error('[cognito] token exchange failed', JSON.stringify({
+      status: res.status,
+      body: txt,
+      sent_redirect_uri: COGNITO_REDIRECT_URI,
+      sent_client_id: COGNITO_APP_CLIENT_ID,
+    }))
     throw new Error(`Cognito token exchange failed: ${res.status} ${txt}`)
   }
   return res.json()
 }
 
-/**
- * Refresh an access + ID token using a refresh token.
- */
 export async function refreshTokens(refreshToken: string): Promise<{
   id_token: string
   access_token: string
@@ -129,9 +120,6 @@ export async function refreshTokens(refreshToken: string): Promise<{
   return res.json()
 }
 
-/**
- * Build the Cognito Hosted UI login URL.
- */
 export function loginUrl(state?: string): string {
   const u = new URL(`https://${COGNITO_DOMAIN}.auth.${COGNITO_REGION}.amazoncognito.com/login`)
   u.searchParams.set('client_id', COGNITO_APP_CLIENT_ID)
@@ -142,9 +130,6 @@ export function loginUrl(state?: string): string {
   return u.toString()
 }
 
-/**
- * Build the Cognito Hosted UI logout URL. Sends user back to /login after.
- */
 export function logoutUrl(): string {
   const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://lab.harboroffice.ai'
   const u = new URL(`https://${COGNITO_DOMAIN}.auth.${COGNITO_REGION}.amazoncognito.com/logout`)
