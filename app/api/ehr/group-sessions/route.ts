@@ -1,42 +1,66 @@
-// app/api/ehr/group-sessions/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+// Harbor EHR — list + create group therapy sessions.
+// Participants and per-patient notes live on a separate table (group
+// session participants); this route is just the parent session row.
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { data, error } = await supabaseAdmin
-    .from('ehr_group_sessions')
-    .select('id, title, group_type, scheduled_at, appointment_id, facilitator_id, created_at')
-    .eq('practice_id', auth.practiceId)
-    .order('scheduled_at', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .limit(100)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ sessions: data ?? [] })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const { rows } = await pool.query(
+    `SELECT id, title, group_type, scheduled_at, appointment_id, facilitator_id, created_at
+       FROM ehr_group_sessions
+      WHERE practice_id = $1
+      ORDER BY scheduled_at DESC NULLS LAST, created_at DESC
+      LIMIT 100`,
+    [ctx.practiceId],
+  )
+
+  await auditEhrAccess({
+    ctx,
+    action: 'group_session.list',
+    resourceType: 'ehr_group_session',
+    details: { count: rows.length },
+  })
+  return NextResponse.json({ sessions: rows })
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
   const body = await req.json().catch(() => null)
   if (!body?.title) return NextResponse.json({ error: 'title required' }, { status: 400 })
 
-  const { data, error } = await supabaseAdmin
-    .from('ehr_group_sessions')
-    .insert({
-      practice_id: auth.practiceId,
-      title: body.title,
-      group_type: body.group_type ?? null,
-      facilitator_id: body.facilitator_id ?? null,
-      scheduled_at: body.scheduled_at ?? null,
-      appointment_id: body.appointment_id ?? null,
-    })
-    .select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const { rows } = await pool.query(
+    `INSERT INTO ehr_group_sessions (
+       practice_id, title, group_type, facilitator_id, scheduled_at, appointment_id
+     ) VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [
+      ctx.practiceId,
+      body.title,
+      body.group_type ?? null,
+      body.facilitator_id ?? null,
+      body.scheduled_at ?? null,
+      body.appointment_id ?? null,
+    ],
+  )
+  const session = rows[0]
+
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.create',
-    resourceId: data.id, details: { kind: 'group_session', title: data.title },
+    ctx,
+    action: 'group_session.create',
+    resourceType: 'ehr_group_session',
+    resourceId: session.id,
+    details: { title: session.title, group_type: session.group_type },
   })
-  return NextResponse.json({ session: data }, { status: 201 })
+  return NextResponse.json({ session }, { status: 201 })
 }

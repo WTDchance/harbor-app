@@ -1,55 +1,82 @@
-// app/api/ehr/consents/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+// Harbor EHR — list + create patient consent records (HIPAA NPP, ROI, etc.).
+// Drop sign_now=true into POST to atomically capture an in-person signature.
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const patientId = searchParams.get('patient_id')
-  let q = supabaseAdmin
-    .from('ehr_consents').select('*')
-    .eq('practice_id', auth.practiceId)
-    .order('created_at', { ascending: false })
-  if (patientId) q = q.eq('patient_id', patientId)
-  const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ consents: data })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const patientId = req.nextUrl.searchParams.get('patient_id')
+  const conds: string[] = ['practice_id = $1']
+  const args: unknown[] = [ctx.practiceId]
+  if (patientId) { args.push(patientId); conds.push(`patient_id = $${args.length}`) }
+
+  const { rows } = await pool.query(
+    `SELECT * FROM ehr_consents
+      WHERE ${conds.join(' AND ')}
+      ORDER BY created_at DESC
+      LIMIT 200`,
+    args,
+  )
+
+  await auditEhrAccess({
+    ctx,
+    action: 'consent.list',
+    resourceType: 'ehr_consent',
+    details: { count: rows.length, patient_id: patientId },
+  })
+  return NextResponse.json({ consents: rows })
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
   const body = await req.json().catch(() => null)
   if (!body?.patient_id || !body?.consent_type) {
     return NextResponse.json({ error: 'patient_id and consent_type required' }, { status: 400 })
   }
-  const nowIso = new Date().toISOString()
-  const row: any = {
-    practice_id: auth.practiceId,
-    patient_id: body.patient_id,
-    consent_type: body.consent_type,
-    version: body.version || 'v1',
-    document_name: body.document_name ?? null,
-    document_url: body.document_url ?? null,
-    roi_party_name: body.roi_party_name ?? null,
-    roi_party_role: body.roi_party_role ?? null,
-    roi_expires_at: body.roi_expires_at ?? null,
-    roi_scope: body.roi_scope ?? null,
-    status: body.status || 'pending',
-    created_by: auth.user.id,
-  }
-  if (body.sign_now) {
-    row.status = 'signed'
-    row.signed_at = nowIso
-    row.signed_by_name = body.signed_by_name || 'Patient'
-    row.signed_method = body.signed_method || 'in_person'
-  }
-  const { data, error } = await supabaseAdmin.from('ehr_consents').insert(row).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const signNow = !!body.sign_now
+  const { rows } = await pool.query(
+    `INSERT INTO ehr_consents (
+       practice_id, patient_id, consent_type, version,
+       document_name, document_url,
+       roi_party_name, roi_party_role, roi_expires_at, roi_scope,
+       status, signed_at, signed_by_name, signed_method, created_by
+     ) VALUES (
+       $1, $2, $3, $4,
+       $5, $6,
+       $7, $8, $9, $10,
+       $11, $12, $13, $14, $15
+     ) RETURNING *`,
+    [
+      ctx.practiceId, body.patient_id, body.consent_type, body.version || 'v1',
+      body.document_name ?? null, body.document_url ?? null,
+      body.roi_party_name ?? null, body.roi_party_role ?? null,
+      body.roi_expires_at ?? null, body.roi_scope ?? null,
+      signNow ? 'signed' : (body.status || 'pending'),
+      signNow ? new Date().toISOString() : null,
+      signNow ? (body.signed_by_name || 'Patient') : null,
+      signNow ? (body.signed_method || 'in_person') : null,
+      ctx.user.id,
+    ],
+  )
+  const consent = rows[0]
+
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.create',
-    resourceId: data.id, details: { kind: 'consent', consent_type: row.consent_type, signed: !!body.sign_now },
+    ctx,
+    action: 'consent.create',
+    resourceType: 'ehr_consent',
+    resourceId: consent.id,
+    details: { consent_type: consent.consent_type, signed: signNow },
   })
-  return NextResponse.json({ consent: data }, { status: 201 })
+  return NextResponse.json({ consent }, { status: 201 })
 }

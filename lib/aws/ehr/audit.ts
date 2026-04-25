@@ -31,6 +31,11 @@ export type EhrAuditAction =
   | 'billing.charge.create'
   | 'billing.invoice.list'
   | 'billing.invoice.create'
+  | 'consent.list'
+  | 'consent.create'
+  | 'group_session.list'
+  | 'group_session.create'
+  | 'message.list'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
