@@ -10,6 +10,7 @@ import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
 } from '@/lib/aws/cognito'
+import { absoluteUrl } from '@/lib/aws/url'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -21,10 +22,10 @@ export async function GET(req: NextRequest) {
   const state = url.searchParams.get('state') || '/dashboard/aws'
 
   if (error) {
-    return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error)}`, req.url))
+    return NextResponse.redirect(absoluteUrl(req, `/login?error=${encodeURIComponent(error)}`))
   }
   if (!code) {
-    return NextResponse.redirect(new URL('/login?error=missing_code', req.url))
+    return NextResponse.redirect(absoluteUrl(req, '/login?error=missing_code'))
   }
 
   try {
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
     await verifyIdToken(tokens.id_token)
 
     const target = state.startsWith('/') ? state : '/dashboard/aws'
-    const res = NextResponse.redirect(new URL(target, req.url))
+    const res = NextResponse.redirect(absoluteUrl(req, target))
 
     const cookieOpts = {
       httpOnly: true,
@@ -55,6 +56,6 @@ export async function GET(req: NextRequest) {
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'unknown'
     console.error('[auth/callback] failed:', msg)
-    return NextResponse.redirect(new URL(`/login?error=callback_failed`, req.url))
+    return NextResponse.redirect(absoluteUrl(req, '/login?error=callback_failed'))
   }
 }
