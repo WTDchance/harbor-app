@@ -2,7 +2,7 @@
 //
 // Public allowlist (no auth required): / , /login, /login/aws, /signup, /onboard,
 //   /intake, /privacy*, /terms, /sms, /reset-password, /appointments/*,
-//   plus Next internals and most /api/* (each route enforces its own auth).
+//   plus Next internals and select /api/* (each route enforces its own auth).
 //
 // Everything else requires a valid Cognito ID token cookie (presence checked at
 // the edge; full JWKS verification happens in route handlers via getServerSession()).
@@ -12,7 +12,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 const HARBOR_ID_COOKIE = 'harbor_id'
 
 const PUBLIC_PREFIXES = [
-  '/login',           // /login + /login/aws
+  '/login',
   '/signup',
   '/onboard',
   '/intake',
@@ -21,25 +21,23 @@ const PUBLIC_PREFIXES = [
   '/terms',
   '/sms',
   '/reset-password',
-  '/appointments/',   // public confirm/cancel pages keyed by appointment UUID
+  '/appointments/',
   '/_next',
   '/favicon',
 ]
 
 const PUBLIC_EXACT = new Set(['/'])
 
-// API routes that must remain public (or auth themselves internally).
-// Everything else under /api requires a Cognito session.
 const PUBLIC_API_PREFIXES = [
   '/api/health',
-  '/api/auth/',           // /api/auth/callback, /api/auth/logout
-  '/api/cron/',           // gated by Bearer CRON_SECRET in route handler
-  '/api/admin/',          // gated by Bearer CRON_SECRET in route handler
-  '/api/stripe/webhook',  // Stripe signature
-  '/api/vapi/webhook',    // Vapi shared secret
-  '/api/sms/',            // Twilio webhooks
-  '/api/signup',          // self-service signup
-  '/api/audit-log',       // gated internally
+  '/api/auth/',
+  '/api/cron/',
+  '/api/admin/',
+  '/api/stripe/webhook',
+  '/api/vapi/webhook',
+  '/api/sms/',
+  '/api/signup',
+  '/api/audit-log',
 ]
 
 function isPublic(pathname: string): boolean {
@@ -51,6 +49,22 @@ function isPublic(pathname: string): boolean {
   return false
 }
 
+// Resolve the request's PUBLIC origin (host + scheme), preferring forwarded
+// headers over request.nextUrl. Behind the ALB, nextUrl reports the container
+// bind address (localhost:3000) which would produce broken redirects.
+function publicOriginFromRequest(req: NextRequest): string {
+  const headers = req.headers
+  const fwdHost = headers.get('x-forwarded-host')
+  const fwdProto = headers.get('x-forwarded-proto')
+  const host = headers.get('host')
+  const internal = (h: string | null) =>
+    !h || h.startsWith('localhost') || h.startsWith('127.') || h.startsWith('0.0.0.0')
+  if (!internal(fwdHost)) return `${fwdProto || 'https'}://${fwdHost}`
+  if (!internal(host)) return `${fwdProto || 'https'}://${host}`
+  // last-resort fallback so we never emit localhost in prod redirects
+  return 'https://lab.harboroffice.ai'
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
@@ -60,11 +74,10 @@ export function middleware(request: NextRequest) {
 
   const idToken = request.cookies.get(HARBOR_ID_COOKIE)?.value
   if (!idToken) {
-    // Not signed in. Send through /login/aws which redirects to Cognito Hosted UI.
-    const loginUrl = request.nextUrl.clone()
-    loginUrl.pathname = '/login/aws'
-    loginUrl.searchParams.set('next', pathname)
-    return NextResponse.redirect(loginUrl)
+    const origin = publicOriginFromRequest(request)
+    const target = new URL(`${origin}/login/aws`)
+    target.searchParams.set('next', pathname)
+    return NextResponse.redirect(target)
   }
   return NextResponse.next({ request })
 }
