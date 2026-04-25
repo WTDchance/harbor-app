@@ -49,12 +49,12 @@ export default async function PatientDetailPage({ params }: Props) {
       .limit(10),
     db.select({
       id: schema.appointments.id,
-      startsAt: schema.appointments.startsAt,
+      scheduledFor: schema.appointments.scheduledFor,
       status: schema.appointments.status,
-      visitType: schema.appointments.visitType,
+      appointmentType: schema.appointments.appointmentType,
     }).from(schema.appointments)
       .where(eq(schema.appointments.patientId, id))
-      .orderBy(desc(schema.appointments.startsAt))
+      .orderBy(desc(schema.appointments.scheduledFor))
       .limit(10),
     db.select({
       id: schema.ehrProgressNotes.id,
@@ -68,7 +68,7 @@ export default async function PatientDetailPage({ params }: Props) {
       .limit(10),
   ])
 
-  const name = patient.fullName || [patient.firstName, patient.lastName].filter(Boolean).join(' ') || 'Unknown'
+  const name = [patient.firstName, patient.lastName].filter(Boolean).join(' ') || patient.preferredName || 'Unknown'
 
   return (
     <main className="max-w-5xl mx-auto p-8">
@@ -76,8 +76,8 @@ export default async function PatientDetailPage({ params }: Props) {
         <div>
           <h1 className="text-2xl font-semibold">{name}</h1>
           <p className="text-sm text-gray-500 mt-1">
-            {patient.status} · {patient.acquisitionSource || 'manual'}
-            {patient.insuranceCarrier ? ` · ${patient.insuranceCarrier}` : ''}
+            {patient.patientStatus} · {'manual'}
+            {patient.insuranceProvider ? ` · ${patient.insuranceProvider}` : ''}
           </p>
         </div>
         <Link href="/dashboard/aws/patients" className="text-sm text-teal-700 hover:text-teal-900">
@@ -89,7 +89,7 @@ export default async function PatientDetailPage({ params }: Props) {
         <h2 className="text-sm font-medium text-gray-700 mb-2">Contact</h2>
         <dl className="text-sm grid grid-cols-3 gap-y-1">
           <dt className="text-gray-500">Phone</dt>
-          <dd className="col-span-2 font-mono text-xs">{patient.phoneNumber || '—'}</dd>
+          <dd className="col-span-2 font-mono text-xs">{patient.phone || '—'}</dd>
           <dt className="text-gray-500">Email</dt>
           <dd className="col-span-2">{patient.email || '—'}</dd>
           <dt className="text-gray-500">DOB</dt>
@@ -124,8 +124,8 @@ export default async function PatientDetailPage({ params }: Props) {
           <ul className="text-sm divide-y">
             {appts.map(a => (
               <li key={a.id} className="py-2 flex justify-between">
-                <span>{fmtDateTime(a.startsAt)}</span>
-                <span className="text-xs text-gray-500">{a.visitType || 'session'} · {a.status}</span>
+                <span>{fmtDateTime(a.scheduledFor)}</span>
+                <span className="text-xs text-gray-500">{a.appointmentType || 'session'} · {a.status}</span>
               </li>
             ))}
           </ul>

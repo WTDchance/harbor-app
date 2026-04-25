@@ -30,14 +30,13 @@ export default async function PatientsPage() {
   const rows = await db
     .select({
       id: schema.patients.id,
-      fullName: schema.patients.fullName,
       firstName: schema.patients.firstName,
       lastName: schema.patients.lastName,
+      preferredName: schema.patients.preferredName,
       email: schema.patients.email,
-      phoneNumber: schema.patients.phoneNumber,
-      status: schema.patients.status,
-      acquisitionSource: schema.patients.acquisitionSource,
-      insuranceCarrier: schema.patients.insuranceCarrier,
+      phone: schema.patients.phone,
+      patientStatus: schema.patients.patientStatus,
+      insuranceProvider: schema.patients.insuranceProvider,
       createdAt: schema.patients.createdAt,
     })
     .from(schema.patients)
@@ -74,13 +73,12 @@ export default async function PatientsPage() {
                 <th className="text-left px-4 py-2 font-medium">Phone</th>
                 <th className="text-left px-4 py-2 font-medium">Email</th>
                 <th className="text-left px-4 py-2 font-medium">Insurance</th>
-                <th className="text-left px-4 py-2 font-medium">Source</th>
                 <th className="text-left px-4 py-2 font-medium">Added</th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {rows.map(p => {
-                const name = p.fullName || [p.firstName, p.lastName].filter(Boolean).join(' ') || '—'
+                const name = [p.firstName, p.lastName].filter(Boolean).join(' ') || p.preferredName || '—'
                 return (
                   <tr key={p.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2 font-medium">
@@ -90,13 +88,12 @@ export default async function PatientsPage() {
                     </td>
                     <td className="px-4 py-2">
                       <span className="inline-block px-2 py-0.5 text-xs rounded bg-gray-100 text-gray-700">
-                        {p.status || 'new'}
+                        {p.patientStatus}
                       </span>
                     </td>
-                    <td className="px-4 py-2 font-mono text-xs">{p.phoneNumber || '—'}</td>
+                    <td className="px-4 py-2 font-mono text-xs">{p.phone || '—'}</td>
                     <td className="px-4 py-2 text-gray-600 truncate max-w-xs">{p.email || '—'}</td>
-                    <td className="px-4 py-2 text-gray-600">{p.insuranceCarrier || '—'}</td>
-                    <td className="px-4 py-2 text-gray-500 text-xs">{p.acquisitionSource || '—'}</td>
+                    <td className="px-4 py-2 text-gray-600">{p.insuranceProvider || '—'}</td>
                     <td className="px-4 py-2 text-gray-500 whitespace-nowrap">{fmtDate(p.createdAt)}</td>
                   </tr>
                 )

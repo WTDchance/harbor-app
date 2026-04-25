@@ -33,7 +33,7 @@ export default async function AwsDashboardPage() {
     db.select({ total: count() }).from(schema.patients).where(eq(schema.patients.practiceId, practiceId)),
     db.select({ total: count() }).from(schema.appointments).where(and(
       eq(schema.appointments.practiceId, practiceId),
-      gte(schema.appointments.startsAt, new Date()),
+      gte(schema.appointments.scheduledFor, new Date()),
     )),
   ])
 

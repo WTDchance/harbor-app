@@ -32,39 +32,39 @@ export default async function AppointmentsPage() {
   const upcoming = await db
     .select({
       id: schema.appointments.id,
-      startsAt: schema.appointments.startsAt,
-      endsAt: schema.appointments.endsAt,
+      scheduledFor: schema.appointments.scheduledFor,
+      durationMinutes: schema.appointments.durationMinutes,
       status: schema.appointments.status,
-      visitType: schema.appointments.visitType,
+      appointmentType: schema.appointments.appointmentType,
       notes: schema.appointments.notes,
       patientId: schema.appointments.patientId,
-      patientFullName: schema.patients.fullName,
       patientFirst: schema.patients.firstName,
       patientLast: schema.patients.lastName,
+      patientPreferred: schema.patients.preferredName,
     })
     .from(schema.appointments)
     .leftJoin(schema.patients, eq(schema.appointments.patientId, schema.patients.id))
     .where(and(
       eq(schema.appointments.practiceId, row.practice.id),
-      gte(schema.appointments.startsAt, new Date()),
+      gte(schema.appointments.scheduledFor, new Date()),
     ))
-    .orderBy(schema.appointments.startsAt)
+    .orderBy(schema.appointments.scheduledFor)
     .limit(30)
 
   const recent = await db
     .select({
       id: schema.appointments.id,
-      startsAt: schema.appointments.startsAt,
+      scheduledFor: schema.appointments.scheduledFor,
       status: schema.appointments.status,
-      visitType: schema.appointments.visitType,
-      patientFullName: schema.patients.fullName,
+      appointmentType: schema.appointments.appointmentType,
       patientFirst: schema.patients.firstName,
       patientLast: schema.patients.lastName,
+      patientPreferred: schema.patients.preferredName,
     })
     .from(schema.appointments)
     .leftJoin(schema.patients, eq(schema.appointments.patientId, schema.patients.id))
     .where(eq(schema.appointments.practiceId, row.practice.id))
-    .orderBy(desc(schema.appointments.startsAt))
+    .orderBy(desc(schema.appointments.scheduledFor))
     .limit(10)
 
   return (
@@ -88,15 +88,15 @@ export default async function AppointmentsPage() {
         ) : (
           <div className="bg-white border rounded-lg divide-y">
             {upcoming.map(a => {
-              const name = a.patientFullName || [a.patientFirst, a.patientLast].filter(Boolean).join(' ') || 'Unknown'
+              const name = [a.patientFirst, a.patientLast].filter(Boolean).join(' ') || a.patientPreferred || 'Unknown'
               return (
                 <div key={a.id} className="px-4 py-3 flex items-center justify-between">
                   <div>
                     <p className="font-medium">{name}</p>
-                    <p className="text-xs text-gray-500">{a.visitType || 'Session'}</p>
+                    <p className="text-xs text-gray-500">{a.appointmentType || 'Session'}</p>
                   </div>
                   <div className="text-right">
-                    <p className="text-sm">{fmtDateTime(a.startsAt)}</p>
+                    <p className="text-sm">{fmtDateTime(a.scheduledFor)}</p>
                     <p className="text-xs text-gray-500">{a.status}</p>
                   </div>
                 </div>
@@ -115,11 +115,11 @@ export default async function AppointmentsPage() {
         ) : (
           <div className="bg-white border rounded-lg divide-y">
             {recent.map(a => {
-              const name = a.patientFullName || [a.patientFirst, a.patientLast].filter(Boolean).join(' ') || 'Unknown'
+              const name = [a.patientFirst, a.patientLast].filter(Boolean).join(' ') || a.patientPreferred || 'Unknown'
               return (
                 <div key={a.id} className="px-4 py-2 flex items-center justify-between text-sm">
                   <span>{name}</span>
-                  <span className="text-gray-500">{fmtDateTime(a.startsAt)} · {a.status}</span>
+                  <span className="text-gray-500">{fmtDateTime(a.scheduledFor)} · {a.status}</span>
                 </div>
               )
             })}

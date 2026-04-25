@@ -41,14 +41,14 @@ export default async function CallsPage() {
   const calls = await db
     .select({
       id: schema.callLogs.id,
-      callerPhone: schema.callLogs.callerPhone,
+      fromNumber: schema.callLogs.fromNumber,
       startedAt: schema.callLogs.startedAt,
       durationSeconds: schema.callLogs.durationSeconds,
       summary: schema.callLogs.summary,
       sentiment: schema.callLogs.sentiment,
       callType: schema.callLogs.callType,
-      bookedAppointment: schema.callLogs.bookedAppointment,
-      crisisFlagged: schema.callLogs.crisisFlagged,
+      bookingOutcome: schema.callLogs.bookingOutcome,
+      crisisDetected: schema.callLogs.crisisDetected,
       patientId: schema.callLogs.patientId,
     })
     .from(schema.callLogs)
@@ -94,13 +94,13 @@ export default async function CallsPage() {
               {calls.map(c => (
                 <tr key={c.id} className="hover:bg-gray-50">
                   <td className="px-4 py-2 whitespace-nowrap text-gray-700">{fmtDate(c.startedAt)}</td>
-                  <td className="px-4 py-2 whitespace-nowrap font-mono text-xs">{c.callerPhone || '—'}</td>
+                  <td className="px-4 py-2 whitespace-nowrap font-mono text-xs">{c.fromNumber || '—'}</td>
                   <td className="px-4 py-2 whitespace-nowrap text-gray-600">{c.callType || '—'}</td>
                   <td className="px-4 py-2 whitespace-nowrap text-gray-600">{fmtDuration(c.durationSeconds)}</td>
                   <td className="px-4 py-2 whitespace-nowrap">
-                    {c.crisisFlagged && <span className="inline-block px-2 py-0.5 text-xs rounded bg-red-50 text-red-700 mr-1">crisis</span>}
-                    {c.bookedAppointment && <span className="inline-block px-2 py-0.5 text-xs rounded bg-teal-50 text-teal-700">booked</span>}
-                    {!c.crisisFlagged && !c.bookedAppointment && <span className="text-gray-400">—</span>}
+                    {c.crisisDetected && <span className="inline-block px-2 py-0.5 text-xs rounded bg-red-50 text-red-700 mr-1">crisis</span>}
+                    {c.bookingOutcome === "booked" && <span className="inline-block px-2 py-0.5 text-xs rounded bg-teal-50 text-teal-700">booked</span>}
+                    {!c.crisisDetected && !c.bookingOutcome === "booked" && <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-4 py-2 text-gray-600 max-w-md truncate">{c.summary || '—'}</td>
                 </tr>
