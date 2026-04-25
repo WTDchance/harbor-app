@@ -1,7 +1,3 @@
-// Cognito OAuth callback. The Hosted UI redirects here with ?code=... after
-// the user signs in. We exchange the code for tokens, validate them, set
-// HttpOnly cookies, and bounce to /dashboard/aws (the path-B test surface).
-
 import { NextResponse, type NextRequest } from 'next/server'
 import {
   exchangeCodeForTokens,
@@ -10,7 +6,7 @@ import {
   ACCESS_COOKIE,
   REFRESH_COOKIE,
 } from '@/lib/aws/cognito'
-import { absoluteUrl } from '@/lib/aws/url'
+import { absoluteUrl, publicOrigin } from '@/lib/aws/url'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -20,6 +16,15 @@ export async function GET(req: NextRequest) {
   const code = url.searchParams.get('code')
   const error = url.searchParams.get('error')
   const state = url.searchParams.get('state') || '/dashboard/aws'
+  console.log('[auth/callback] enter', JSON.stringify({
+    has_code: !!code,
+    error,
+    state,
+    origin: publicOrigin(req),
+    host: req.headers.get('host'),
+    xfHost: req.headers.get('x-forwarded-host'),
+    xfProto: req.headers.get('x-forwarded-proto'),
+  }))
 
   if (error) {
     return NextResponse.redirect(absoluteUrl(req, `/login?error=${encodeURIComponent(error)}`))
@@ -30,28 +35,33 @@ export async function GET(req: NextRequest) {
 
   try {
     const tokens = await exchangeCodeForTokens(code)
-    // Sanity-check: verify the ID token before trusting the cookies we're about to set.
+    console.log('[auth/callback] tokens received', JSON.stringify({
+      id_len: tokens.id_token?.length, access_len: tokens.access_token?.length,
+      refresh_len: tokens.refresh_token?.length, expires_in: tokens.expires_in,
+    }))
     await verifyIdToken(tokens.id_token)
+    console.log('[auth/callback] id token verified')
 
     const target = state.startsWith('/') ? state : '/dashboard/aws'
-    const res = NextResponse.redirect(absoluteUrl(req, target))
+    const redirectTo = absoluteUrl(req, target)
+    console.log('[auth/callback] redirecting to', redirectTo)
+    const res = NextResponse.redirect(redirectTo)
 
     const cookieOpts = {
       httpOnly: true,
       secure: true,
       sameSite: 'lax' as const,
       path: '/',
-      // Cognito access/id tokens default to 1h. Match the cookie lifetime.
       maxAge: tokens.expires_in,
     }
     res.cookies.set(SESSION_COOKIE, tokens.id_token, cookieOpts)
     res.cookies.set(ACCESS_COOKIE, tokens.access_token, cookieOpts)
-    // Refresh token: only the auth refresh route needs it. Scope its path tightly.
     res.cookies.set(REFRESH_COOKIE, tokens.refresh_token, {
       ...cookieOpts,
       path: '/api/auth',
-      maxAge: 60 * 60 * 24 * 30, // 30 days; Cognito default refresh validity
+      maxAge: 60 * 60 * 24 * 30,
     })
+    console.log('[auth/callback] cookies set, returning 307')
     return res
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : 'unknown'
