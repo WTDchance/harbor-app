@@ -132,3 +132,37 @@ export async function auditPortalAccess(params: {
     console.error('[audit] portal insert failed:', (err as Error).message)
   }
 }
+
+
+/**
+ * Cron + system-level audit events. No Cognito user, no practice scope —
+ * just a row in audit_logs so the tick is visible in CloudWatch + the
+ * audit-export endpoint.
+ */
+export async function auditSystemEvent(params: {
+  action: string
+  details?: Record<string, unknown>
+  resourceType?: string
+  resourceId?: string | null
+  practiceId?: string | null
+  severity?: 'info' | 'warn' | 'error'
+}): Promise<void> {
+  try {
+    await pool.query(
+      `INSERT INTO audit_logs (
+         user_id, user_email, practice_id, action,
+         resource_type, resource_id, details, severity
+       ) VALUES (NULL, NULL, $1, $2, $3, $4, $5::jsonb, $6)`,
+      [
+        params.practiceId ?? null,
+        params.action,
+        params.resourceType ?? 'cron',
+        params.resourceId ?? null,
+        JSON.stringify(params.details ?? {}),
+        params.severity ?? 'info',
+      ],
+    )
+  } catch (err) {
+    console.error('[audit] system insert failed:', (err as Error).message)
+  }
+}

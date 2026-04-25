@@ -1,34 +1,38 @@
-// app/api/cron/ehr-era-poll/route.ts
-// Poll Stedi for 835 ERA files and reconcile against our submitted claims.
-// Called by cron-job.org every ~15 minutes with Bearer CRON_SECRET.
+// Cron — Stedi ERA polling + claim reconciliation.
+// Runs every ~15 min via cron-job.org. Bearer ${CRON_SECRET} auth.
 //
-// Strategy:
-//   1. List recent ERA documents from Stedi
-//   2. For each ERA, parse claim payment details
-//   3. Match by control_number to ehr_claims rows
-//   4. Insert ehr_payments, update ehr_claims.status + ehr_charges.status
-//
-// Stedi's ERA fetch endpoint returns normalized JSON (we don't parse
-// raw X12). When we don't have real ERA data (sandbox mode, or Stedi
-// returns nothing), this route just returns {checked:0}.
+// Flow:
+//   1. List recent 835 ERA documents from Stedi.
+//   2. For each ERA → for each claim row inside, match by control_number
+//      to ehr_claims.
+//   3. Insert ehr_payments, update ehr_claims + ehr_charges status.
+//   4. Audit-log the tick so it shows up in audit-export / CloudWatch.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
-// Stedi returns ERA files at this endpoint once available.
-// Reference: https://www.stedi.com/docs/healthcare/era
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 const STEDI_ERA_URL =
   'https://healthcare.us.stedi.com/2024-04-01/change/medicalnetwork/era'
+
+function unauthorized() {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+}
 
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''
   const expected = `Bearer ${process.env.CRON_SECRET || ''}`
-  if (!process.env.CRON_SECRET || auth !== expected) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  if (!process.env.CRON_SECRET || auth !== expected) return unauthorized()
 
   const apiKey = process.env.STEDI_API_KEY
   if (!apiKey) {
+    auditSystemEvent({
+      action: 'cron.ehr-era-poll.skipped',
+      details: { reason: 'STEDI_API_KEY not configured' },
+    }).catch(() => {})
     return NextResponse.json({ checked: 0, reason: 'STEDI_API_KEY not configured' })
   }
 
@@ -39,7 +43,7 @@ export async function GET(req: NextRequest) {
       headers: { Authorization: `Key ${apiKey}` },
     })
     if (resp.ok) {
-      const j = await resp.json()
+      const j = await resp.json() as { eras?: any[]; items?: any[] }
       eras = Array.isArray(j?.eras) ? j.eras : Array.isArray(j?.items) ? j.items : []
     }
   } catch (err) {
@@ -52,42 +56,61 @@ export async function GET(req: NextRequest) {
   for (const era of eras) {
     const claimInfos: any[] = era.claimInformations || era.claims || []
     for (const ci of claimInfos) {
-      const controlNumber = ci.patientControlNumber || ci.claimControlNumber || ci.controlNumber
+      const controlNumber =
+        ci.patientControlNumber || ci.claimControlNumber || ci.controlNumber
       if (!controlNumber) { unmatched++; continue }
 
-      const { data: claim } = await supabaseAdmin
-        .from('ehr_claims').select('id, practice_id, charge_id').eq('control_number', controlNumber).maybeSingle()
+      const claimResult = await pool.query(
+        `SELECT id, practice_id, charge_id FROM ehr_claims
+          WHERE control_number = $1 LIMIT 1`,
+        [controlNumber],
+      ).catch(() => ({ rows: [] as any[] }))
+      const claim = claimResult.rows[0]
       if (!claim) { unmatched++; continue }
 
       const paidCents = Math.round(Number(ci.totalPaidAmount || ci.paidAmount || 0) * 100)
-      const status = paidCents > 0 ? 'paid' : (ci.claimStatusCode === '4' ? 'denied' : 'paid')
+      const status = paidCents > 0
+        ? 'paid'
+        : (ci.claimStatusCode === '4' ? 'denied' : 'paid')
 
-      // Write a payment row linked to the charge
-      await supabaseAdmin.from('ehr_payments').insert({
-        practice_id: claim.practice_id,
-        charge_id: claim.charge_id,
-        source: 'insurance_era',
-        amount_cents: paidCents,
-        era_json: ci,
-        note: `ERA payment · control #${controlNumber}`,
-      })
+      // Insert payment row.
+      await pool.query(
+        `INSERT INTO ehr_payments (
+           practice_id, charge_id, source, amount_cents, era_json, note
+         ) VALUES ($1, $2, 'insurance_era', $3, $4::jsonb, $5)`,
+        [claim.practice_id, claim.charge_id, paidCents, JSON.stringify(ci),
+         `ERA payment · control #${controlNumber}`],
+      ).catch(err => console.error('[cron/era-poll] payment insert failed', err))
 
-      // Advance claim + charge status
-      await supabaseAdmin.from('ehr_claims').update({
-        status, stedi_response_json: era,
-      }).eq('id', claim.id)
+      // Advance claim status.
+      await pool.query(
+        `UPDATE ehr_claims
+            SET status = $1, stedi_response_json = $2::jsonb, updated_at = NOW()
+          WHERE id = $3`,
+        [status, JSON.stringify(era), claim.id],
+      ).catch(err => console.error('[cron/era-poll] claim update failed', err))
 
-      // Charge status — paid if fully covered, denied if zero
-      const { data: charge } = await supabaseAdmin
-        .from('ehr_charges').select('allowed_cents').eq('id', claim.charge_id).maybeSingle()
+      // Advance charge status.
+      const chargeResult = await pool.query(
+        `SELECT allowed_cents FROM ehr_charges WHERE id = $1 LIMIT 1`,
+        [claim.charge_id],
+      ).catch(() => ({ rows: [] as any[] }))
+      const charge = chargeResult.rows[0]
       const fullyPaid = charge && paidCents >= Number(charge.allowed_cents)
-      await supabaseAdmin.from('ehr_charges')
-        .update({ status: paidCents === 0 ? 'denied' : fullyPaid ? 'paid' : 'partial' })
-        .eq('id', claim.charge_id)
+      const chargeStatus = paidCents === 0 ? 'denied' : fullyPaid ? 'paid' : 'partial'
+      await pool.query(
+        `UPDATE ehr_charges SET status = $1, updated_at = NOW() WHERE id = $2`,
+        [chargeStatus, claim.charge_id],
+      ).catch(err => console.error('[cron/era-poll] charge update failed', err))
 
       matched++
     }
   }
+
+  auditSystemEvent({
+    action: 'cron.ehr-era-poll.run',
+    details: { eras_checked: eras.length, matched, unmatched },
+  }).catch(() => {})
 
   return NextResponse.json({ checked: eras.length, matched, unmatched })
 }
