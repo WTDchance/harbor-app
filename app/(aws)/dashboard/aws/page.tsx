@@ -85,12 +85,20 @@ export default async function AwsDashboardPage() {
         )}
       </section>
 
-      <a
-        href="/api/auth/logout"
-        className="inline-block px-3 py-1.5 text-sm border rounded text-gray-700 hover:bg-gray-50"
-      >
-        Sign out
-      </a>
+      <div className="flex items-center gap-2">
+        <a
+          href="/dashboard/aws/calls"
+          className="inline-block px-3 py-1.5 text-sm border rounded text-teal-700 border-teal-200 hover:bg-teal-50"
+        >
+          Calls →
+        </a>
+        <a
+          href="/api/auth/logout"
+          className="inline-block px-3 py-1.5 text-sm border rounded text-gray-700 hover:bg-gray-50"
+        >
+          Sign out
+        </a>
+      </div>
     </main>
   )
 }

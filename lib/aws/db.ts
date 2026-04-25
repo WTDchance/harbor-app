@@ -87,3 +87,22 @@ export async function getUserAndPractice(
   }
   return { user, practice }
 }
+
+// ── Drizzle layer ─────────────────────────────────────────────────────────
+// Lightweight ORM on top of the existing pg.Pool. Use `db` for typed queries,
+// drop down to `pool.query()` for raw SQL or transactions.
+
+import { drizzle } from 'drizzle-orm/node-postgres'
+import * as schema from './schema'
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __harborDrizzle: ReturnType<typeof drizzle> | undefined
+}
+
+export const db = globalThis.__harborDrizzle ?? drizzle(pool, { schema, casing: 'snake_case' })
+if (process.env.NODE_ENV !== 'production') {
+  globalThis.__harborDrizzle = db
+}
+
+export { schema }
