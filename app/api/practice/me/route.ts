@@ -1,89 +1,39 @@
-// app/api/practice/me/route.ts
-// Returns the effective practice for the current user.
-//
-// This is THE canonical way for client-side pages to resolve which practice
-// they should display. It respects the admin act-as cookie so the admin can
-// view any practice's dashboard without data leaking across practices.
-//
-// All dashboard pages MUST call this instead of directly querying
-// users.practice_id from the browser Supabase client.
+// Returns the authenticated user's practice. Used by dashboard layout +
+// many pages to display practice name and feature flags.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getEffectivePracticeId } from '@/lib/active-practice'
+import { NextResponse } from 'next/server'
+import { getServerSession } from '@/lib/aws/session'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const session = await getServerSession()
+  if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 
-    const practiceId = await getEffectivePracticeId(supabase, user)
-    if (!practiceId) {
-      return NextResponse.json({ error: 'No practice found' }, { status: 404 })
-    }
-
-    // Use supabaseAdmin (service role) to bypass RLS — the act-as cookie
-    // may point to a practice the user doesn't own per RLS policies.
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('*')
-      .eq('id', practiceId)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-    }
-
-    return NextResponse.json({ practice })
-  } catch (err) {
-    console.error('[practice/me] error', err)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+  const { rows } = await pool.query(
+    `SELECT p.id, p.name, p.slug, p.timezone, p.provisioning_state, p.voice_provider,
+            p.twilio_phone_number, p.signalwire_number, p.greeting,
+            COALESCE(p.ehr_enabled, false) AS ehr_enabled,
+            p.founding_member, u.role, u.full_name AS user_full_name
+       FROM users u
+       LEFT JOIN practices p ON p.id = u.practice_id
+      WHERE u.cognito_sub = $1
+      LIMIT 1`,
+    [session.sub],
+  )
+  const r = rows[0]
+  if (!r?.id) {
+    return NextResponse.json({ error: 'no_practice' }, { status: 404 })
   }
-}
-
-/**
- * PATCH /api/practice/me
- *
- * Accepts a whitelisted subset of practice settings the therapist can
- * toggle from their own dashboard. Keep this strict — anything here is
- * self-serve. Admin-only knobs stay in /api/admin/*.
- */
-const SELF_SERVE_FIELDS = ['is_crisis_capable'] as const
-
-export async function PATCH(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    const practiceId = await getEffectivePracticeId(supabase, user)
-    if (!practiceId) return NextResponse.json({ error: 'No practice found' }, { status: 404 })
-
-    let body: any
-    try { body = await req.json() } catch { return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 }) }
-
-    const updates: Record<string, any> = { updated_at: new Date().toISOString() }
-    for (const f of SELF_SERVE_FIELDS) {
-      if (f in body) {
-        const v = body[f]
-        if (typeof v === 'boolean') updates[f] = v
-      }
-    }
-    if (Object.keys(updates).length === 1) {
-      return NextResponse.json({ error: 'No valid fields' }, { status: 400 })
-    }
-
-    const { error } = await supabaseAdmin
-      .from('practices')
-      .update(updates)
-      .eq('id', practiceId)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ ok: true })
-  } catch (err) {
-    console.error('[practice/me PATCH] error', err)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
-  }
+  return NextResponse.json({
+    practice: {
+      id: r.id, name: r.name, slug: r.slug, timezone: r.timezone,
+      provisioning_state: r.provisioning_state, voice_provider: r.voice_provider,
+      twilio_phone_number: r.twilio_phone_number, signalwire_number: r.signalwire_number,
+      greeting: r.greeting, ehr_enabled: r.ehr_enabled, founding_member: r.founding_member,
+    },
+    user: { role: r.role, full_name: r.user_full_name, email: session.email },
+  })
 }
