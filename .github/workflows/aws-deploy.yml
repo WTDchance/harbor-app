@@ -59,6 +59,27 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Fetch NEXT_PUBLIC_* build args from SSM
+        id: pubvars
+        run: |
+          # Pull all NEXT_PUBLIC_* params for this env so they can be inlined
+          # by `next build`. These are non-secret by design (browser-visible).
+          PARAMS=$(aws ssm get-parameters-by-path \
+            --path /harbor-${{ env.ENVIRONMENT }}/ \
+            --recursive \
+            --with-decryption \
+            --query 'Parameters[?contains(Name, `NEXT_PUBLIC`)].[Name,Value]' \
+            --output text)
+          : > build_args.env
+          while IFS=$'\t' read -r name value; do
+            [ -z "$name" ] && continue
+            key="${name##*/}"
+            echo "$key=$value" >> build_args.env
+          done <<< "$PARAMS"
+          echo "Resolved $(wc -l < build_args.env) NEXT_PUBLIC_* keys"
+          # Echo just the keys (not values) for visibility
+          cut -d= -f1 build_args.env
+
       - name: Build + push image
         id: build
         env:
@@ -66,8 +87,15 @@ jobs:
           TAG: ${{ steps.meta.outputs.image_tag }}
         run: |
           IMAGE_URI=$REGISTRY/$ECR_REPO:$TAG
+          # Convert build_args.env into --build-arg KEY=VALUE flags
+          BUILD_ARGS=()
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            BUILD_ARGS+=( --build-arg "$line" )
+          done < build_args.env
           docker build \
             --build-arg NODE_ENV=${{ env.ENVIRONMENT }} \
+            "${BUILD_ARGS[@]}" \
             -t $IMAGE_URI \
             -t $REGISTRY/$ECR_REPO:latest \
             .
