@@ -9,7 +9,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 import { resolvePracticeIdForApi } from "@/lib/active-practice";
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 const BIO_SOFT_CAP = 1500;
 
@@ -19,9 +18,7 @@ async function getAuthenticatedUser(req: NextRequest) {
     return { user: null, error: "Missing or invalid authorization header" };
   }
   const token = authHeader.slice(7);
-  const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  const { data: { user }, error } = await supabase.auth.getUser(token);
   if (error || !user) return { user: null, error: "Unauthorized" };
   return { user, error: null };
 }

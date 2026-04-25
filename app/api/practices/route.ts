@@ -1,12 +1,16 @@
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getPractice() {
-  // supabase client removed (Cognito auth)
-  const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
+  )
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   const { data } = await supabase.from('practices').select('id, name').eq('notification_email', user.email).single()
   return data
@@ -38,11 +42,14 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    // supabase client removed (Cognito auth)
-    const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const cookieStore = await cookies()
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
+    )
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await request.json()
     const { name, ai_name, phone_number, timezone } = body

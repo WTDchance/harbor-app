@@ -2,15 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { sendSMS } from '@/lib/twilio'
 import { detectCrisis } from '@/lib/crisis-phrases'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const body = await req.json()
     const { transcript, caller_phone, patient_name, appointment_id } = body

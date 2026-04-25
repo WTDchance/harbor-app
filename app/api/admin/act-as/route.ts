@@ -10,7 +10,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabaseAdmin as supabase } from "@/lib/supabase";
 import { ACT_AS_COOKIE } from "@/lib/active-practice";
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "chancewonser@gmail.com")
   .toLowerCase();
@@ -19,9 +18,7 @@ async function authAdmin(req: NextRequest) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
   const token = authHeader.slice(7);
-  const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  const { data: { user } } = await supabase.auth.getUser(token);
   if (!user?.email) return null;
   if (user.email.toLowerCase() !== ADMIN_EMAIL) return null;
   return user;

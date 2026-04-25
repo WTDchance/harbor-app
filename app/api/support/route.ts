@@ -2,15 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { resolvePracticeIdForApi } from '@/lib/active-practice'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 // GET /api/support — list tickets for the authenticated practice
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient()
-    const __ctx = await requireApiSession();
-    if (__ctx instanceof NextResponse) return __ctx;
-    const session = { user: { id: __ctx.user.id, email: __ctx.session.email } } as any;
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
@@ -59,9 +56,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const supabase = await createClient()
-    const __ctx = await requireApiSession();
-    if (__ctx instanceof NextResponse) return __ctx;
-    const session = { user: { id: __ctx.user.id, email: __ctx.session.email } } as any;
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }

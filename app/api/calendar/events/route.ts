@@ -1,14 +1,25 @@
- import { supabaseAdmin } from '@/lib/supabase'
+ import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import { supabaseAdmin } from '@/lib/supabase'
 import { NextRequest, NextResponse } from 'next/server'
 import { createDAVClient } from 'tsdav'
 import { resolvePracticeIdForApi } from '@/lib/active-practice'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 async function getPracticeId(): Promise<string | null> {
-  // supabase client removed (Cognito auth)
-  const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  const cookieStore = await cookies()
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (s) => {
+          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
+        }
+      }
+    }
+  )
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   return resolvePracticeIdForApi(supabaseAdmin, user)
 }

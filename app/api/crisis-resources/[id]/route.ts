@@ -2,15 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { createClient } from '@/lib/supabase-server'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 export const dynamic = 'force-dynamic'
 
 async function resolvePracticeId(): Promise<string | null> {
   const supabase = await createClient()
-  const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   // Honor the admin act-as cookie so an admin viewing Harbor Demo gets the
   // Harbor Demo feed URL, not their own user.practice_id.

@@ -14,7 +14,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
 import { createClient } from '@/lib/supabase-server'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 const COUPON_ID = 'mom_free_forever'
 const PROMO_CODE = 'MOM-FREE'
@@ -24,10 +23,10 @@ async function isAdmin(req: NextRequest): Promise<boolean> {
   if (!adminEmail) return false
   try {
     const supabase = await createClient()
-    const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
-  if (!user?.email) return false
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+    if (!user?.email) return false
     return user.email.toLowerCase() === adminEmail
   } catch {
     return false

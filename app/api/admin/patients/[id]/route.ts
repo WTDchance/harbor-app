@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 // GET /api/admin/patients/:id — fetch a single patient (or use id=search with query params)
 export async function GET(
@@ -65,10 +64,8 @@ export async function DELETE(
 
     if (!isCronAuth) {
       const supabase = await createClient()
-      const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
-  if (authError || !user) {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError || !user) {
         return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
       }
       const adminEmail = process.env.ADMIN_EMAIL

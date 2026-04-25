@@ -3,7 +3,6 @@ import { createClient } from '@/lib/supabase-server'
 import { runAndPersistEligibilityCheck } from '@/lib/stedi/eligibility'
 import { knownPayerNames, resolvePayerIdWithDb } from '@/lib/stedi/payers'
 import { getEffectivePracticeId } from '@/lib/active-practice'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 // Real-time eligibility check. Called from the insurance dashboard
 // ("Verify" button) and any caller passing a user session cookie.
@@ -12,10 +11,8 @@ import { requireApiSession } from '@/lib/aws/api-auth'
 export async function POST(req: NextRequest) {
   try {
     const supabase = await createClient()
-    const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     // Resolves via the users table (or admin act-as cookie) so this works
     // regardless of whether the logged-in email matches notification_email.

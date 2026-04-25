@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 // GET /api/admin/signups
 // Returns the last 100 practices with signup/provisioning status plus the
@@ -9,10 +8,12 @@ import { requireApiSession } from '@/lib/aws/api-auth'
 export async function GET(_request: NextRequest) {
   try {
     const supabase = await createClient()
-    const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
-  if (authError || !user) {
+    const {
+      data: { user },
+      error: authError,
+    } = await supabase.auth.getUser()
+
+    if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
 

@@ -13,16 +13,13 @@ import { supabaseAdmin } from '@/lib/supabase'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { createClient } from '@/lib/supabase-server'
 import QRCode from 'qrcode'
-import { requireApiSession } from '@/lib/aws/api-auth'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
 
 async function resolvePracticeId(): Promise<string | null> {
   const supabase = await createClient()
-  const __ctx = await requireApiSession();
-  if (__ctx instanceof NextResponse) return __ctx;
-  const user = { id: __ctx.user.id, email: __ctx.session.email };
+  const { data: { user } } = await supabase.auth.getUser()
   if (!user) return null
   // Honor the admin act-as cookie so admins viewing another practice get
   // that practice's QR, not their own users.practice_id.
