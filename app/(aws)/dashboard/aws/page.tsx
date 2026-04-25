@@ -1,104 +1,122 @@
-// AWS-side dashboard placeholder.
-//
-// Confirms the full Cognito → RDS round trip works:
-//   1. middleware saw a harbor_id cookie (cookie presence check)
-//   2. getServerSession() verifies the ID token against Cognito JWKS
-//   3. getUserAndPractice() resolves the cognito sub → users row → practices row
-//
-// Phase 4 replaces this with the real EHR dashboard.
+// AWS-side dashboard landing — links to all ported features.
 
-import { getServerSession } from '@/lib/aws/session'
-import { getUserAndPractice } from '@/lib/aws/db'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
+import { getServerSession } from '@/lib/aws/session'
+import { getUserAndPractice, db, schema } from '@/lib/aws/db'
+import { eq, gte, count, desc, and, sql } from 'drizzle-orm'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export default async function AwsDashboardPage() {
   const session = await getServerSession()
-  // Middleware should have caught this, but double-belt-and-suspenders for the
-  // edge case of a present-but-invalid ID token cookie.
   if (!session) redirect('/login/aws?next=/dashboard/aws')
+  const row = await getUserAndPractice(session.sub)
 
-  let userPracticeError: string | null = null
-  let row: Awaited<ReturnType<typeof getUserAndPractice>> = null
-  try {
-    row = await getUserAndPractice(session.sub)
-  } catch (e: unknown) {
-    userPracticeError = e instanceof Error ? e.message : 'unknown'
+  if (!row?.practice) {
+    return (
+      <main className="max-w-3xl mx-auto p-8">
+        <h1 className="text-2xl font-semibold mb-2">Harbor</h1>
+        <p className="text-amber-700 text-sm">
+          No practice linked to <code>{session.email}</code>. Contact support.
+        </p>
+        <a href="/api/auth/logout" className="mt-4 inline-block text-sm text-gray-600 hover:underline">Sign out</a>
+      </main>
+    )
   }
+  const practiceId = row.practice.id
+
+  // Quick stats
+  const [callStats, patientStats, upcomingStats] = await Promise.all([
+    db.select({ total: count() }).from(schema.callLogs).where(eq(schema.callLogs.practiceId, practiceId)),
+    db.select({ total: count() }).from(schema.patients).where(eq(schema.patients.practiceId, practiceId)),
+    db.select({ total: count() }).from(schema.appointments).where(and(
+      eq(schema.appointments.practiceId, practiceId),
+      gte(schema.appointments.startsAt, new Date()),
+    )),
+  ])
+
+  // 7-day call count
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+  const [recentCalls] = await db.select({ total: count() })
+    .from(schema.callLogs)
+    .where(and(
+      eq(schema.callLogs.practiceId, practiceId),
+      gte(schema.callLogs.startedAt, sevenDaysAgo),
+    ))
 
   return (
-    <main className="max-w-2xl mx-auto p-8">
-      <h1 className="text-2xl font-semibold mb-2">Harbor AWS Dashboard</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Phase 1 sanity surface. Real EHR pages land in Phase 4.
-      </p>
-
-      <section className="bg-white border rounded-lg p-4 mb-4">
-        <h2 className="text-sm font-medium text-gray-700 mb-2">Cognito session</h2>
-        <dl className="text-sm grid grid-cols-3 gap-y-1">
-          <dt className="text-gray-500">sub</dt>
-          <dd className="col-span-2 font-mono text-xs">{session.sub}</dd>
-          <dt className="text-gray-500">email</dt>
-          <dd className="col-span-2">{session.email || <em>not in token</em>}</dd>
-          <dt className="text-gray-500">verified</dt>
-          <dd className="col-span-2">{session.emailVerified ? 'yes' : 'no'}</dd>
-          <dt className="text-gray-500">expires</dt>
-          <dd className="col-span-2">{session.expiresAt}</dd>
-        </dl>
-      </section>
-
-      <section className="bg-white border rounded-lg p-4 mb-4">
-        <h2 className="text-sm font-medium text-gray-700 mb-2">RDS lookup</h2>
-        {userPracticeError && (
-          <p className="text-sm text-red-600">DB error: {userPracticeError}</p>
-        )}
-        {!userPracticeError && !row && (
-          <p className="text-sm text-amber-700">
-            No <code>users</code> row for cognito_sub <code>{session.sub}</code>.
-            Seed task #59 should have created one — verify the demo seed.
+    <main className="max-w-5xl mx-auto p-8">
+      <div className="flex items-baseline justify-between mb-8">
+        <div>
+          <h1 className="text-2xl font-semibold">{row.practice.name}</h1>
+          <p className="text-sm text-gray-500 mt-1">
+            Signed in as {session.email} · {row.user.role}
+            {row.practice.voiceProvider !== 'twilio' && ` · voice:${row.practice.voiceProvider}`}
           </p>
-        )}
-        {row && (
-          <dl className="text-sm grid grid-cols-3 gap-y-1">
-            <dt className="text-gray-500">user.id</dt>
-            <dd className="col-span-2 font-mono text-xs">{row.user.id}</dd>
-            <dt className="text-gray-500">user.role</dt>
-            <dd className="col-span-2">{row.user.role}</dd>
-            <dt className="text-gray-500">user.full_name</dt>
-            <dd className="col-span-2">{row.user.full_name || <em>—</em>}</dd>
-            <dt className="text-gray-500">practice</dt>
-            <dd className="col-span-2">
-              {row.practice ? (
-                <>
-                  <span className="font-medium">{row.practice.name}</span>{' '}
-                  <span className="text-gray-500">
-                    ({row.practice.provisioning_state}, voice:{row.practice.voice_provider})
-                  </span>
-                </>
-              ) : (
-                <em>not linked</em>
-              )}
-            </dd>
-          </dl>
-        )}
-      </section>
+        </div>
+        <a href="/api/auth/logout" className="text-sm text-gray-500 hover:text-gray-700">Sign out</a>
+      </div>
 
-      <div className="flex items-center gap-2">
-        <a
+      {/* Stat tiles */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-8">
+        <Tile label="Total calls" value={callStats[0]?.total ?? 0} />
+        <Tile label="Calls (7d)" value={recentCalls?.total ?? 0} />
+        <Tile label="Patients" value={patientStats[0]?.total ?? 0} />
+        <Tile label="Upcoming" value={upcomingStats[0]?.total ?? 0} />
+      </div>
+
+      {/* Section grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <NavCard
           href="/dashboard/aws/calls"
-          className="inline-block px-3 py-1.5 text-sm border rounded text-teal-700 border-teal-200 hover:bg-teal-50"
-        >
-          Calls →
-        </a>
-        <a
-          href="/api/auth/logout"
-          className="inline-block px-3 py-1.5 text-sm border rounded text-gray-700 hover:bg-gray-50"
-        >
-          Sign out
-        </a>
+          title="Calls"
+          desc="Every call answered by Ellie, with transcripts and outcome."
+        />
+        <NavCard
+          href="/dashboard/aws/patients"
+          title="Patients"
+          desc="Longitudinal record per patient — calls, appointments, notes."
+        />
+        <NavCard
+          href="/dashboard/aws/appointments"
+          title="Appointments"
+          desc="Upcoming sessions and recent activity."
+        />
+        <NavCard
+          href="#"
+          title="Progress notes"
+          desc="Coming next: SOAP notes drafted from call transcripts."
+          disabled
+        />
       </div>
     </main>
+  )
+}
+
+function Tile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="bg-white border rounded-lg p-3">
+      <p className="text-xs uppercase tracking-wide text-gray-500">{label}</p>
+      <p className="text-2xl font-semibold mt-1">{value}</p>
+    </div>
+  )
+}
+
+function NavCard({ href, title, desc, disabled }: { href: string; title: string; desc: string; disabled?: boolean }) {
+  if (disabled) {
+    return (
+      <div className="bg-gray-50 border border-dashed rounded-lg p-4 opacity-60">
+        <p className="font-medium">{title}</p>
+        <p className="text-xs text-gray-500 mt-1">{desc}</p>
+      </div>
+    )
+  }
+  return (
+    <Link href={href} className="block bg-white border rounded-lg p-4 hover:border-teal-300 hover:shadow-sm transition">
+      <p className="font-medium text-teal-700">{title} →</p>
+      <p className="text-xs text-gray-500 mt-1">{desc}</p>
+    </Link>
   )
 }
