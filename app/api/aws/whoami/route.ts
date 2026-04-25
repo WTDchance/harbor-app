@@ -1,11 +1,9 @@
-// Returns the authenticated Cognito user + their practice. Used by client
-// components that need email/practice for chrome (sidebar header etc).
-//
-// Returns 401 if not signed in. Client treats that as "redirect to /login/aws".
+// Returns the authenticated Cognito user + their practice (incl. ehr_enabled
+// flag). Used by the dashboard layout to populate the sidebar/nav.
 
 import { NextResponse } from 'next/server'
 import { getServerSession } from '@/lib/aws/session'
-import { getUserAndPractice } from '@/lib/aws/db'
+import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -16,14 +14,36 @@ export async function GET() {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
 
-  let practice: { id: string; name: string } | null = null
+  // Single query: user + their practice (with the ehr-related columns the
+  // legacy layout expects).
+  let practice: { id: string; name: string; ehrEnabled: boolean; voiceProvider: string } | null = null
   let role: string | null = null
   try {
-    const row = await getUserAndPractice(session.sub)
-    if (row?.practice) practice = { id: row.practice.id, name: row.practice.name }
-    if (row?.user) role = row.user.role
+    const r = await pool.query(
+      `SELECT u.role,
+              p.id          AS practice_id,
+              p.name        AS practice_name,
+              COALESCE(p.ehr_enabled, false) AS ehr_enabled,
+              p.voice_provider
+         FROM users u
+    LEFT JOIN practices p ON p.id = u.practice_id
+        WHERE u.cognito_sub = $1
+        LIMIT 1`,
+      [session.sub],
+    )
+    if (r.rows[0]) {
+      role = r.rows[0].role
+      if (r.rows[0].practice_id) {
+        practice = {
+          id: r.rows[0].practice_id,
+          name: r.rows[0].practice_name,
+          ehrEnabled: r.rows[0].ehr_enabled === true,
+          voiceProvider: r.rows[0].voice_provider,
+        }
+      }
+    }
   } catch {
-    // DB unreachable shouldn't block the auth check — chrome can render without practice.
+    // ehr_enabled column may not exist on this RDS yet — return without it
   }
 
   return NextResponse.json({
