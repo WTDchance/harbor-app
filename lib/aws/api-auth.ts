@@ -76,3 +76,18 @@ export async function requireAdminSession(): Promise<ApiAuthContext | NextRespon
   }
   return ctx
 }
+
+
+/**
+ * EHR routes only — same as requireApiSession but additionally rejects with
+ * 403 if the caller's practice does not have ehr_enabled = true. The /ehr/*
+ * pages are gated client-side as well; this is the server-side enforcement.
+ */
+export async function requireEhrApiSession(): Promise<ApiAuthContext | NextResponse> {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practice || ctx.practice.ehr_enabled !== true) {
+    return NextResponse.json({ error: 'ehr_not_enabled' }, { status: 403 })
+  }
+  return ctx
+}

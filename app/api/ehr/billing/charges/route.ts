@@ -1,61 +1,93 @@
-// app/api/ehr/billing/charges/route.ts
-// List and manually create charges.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
-import { feeForCpt } from '@/lib/ehr/billing'
+// Harbor EHR — list + manually create charges.
+// Auto-charge creation from signed notes lives in lib/ehr/billing.ts (still
+// Supabase-coupled — phase-4b will port createChargesForSignedNote).
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { feeForCpt } from '@/lib/ehr/billing' // pure helper — no Supabase deps
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const status = searchParams.get('status')
-  const patientId = searchParams.get('patient_id')
-  const limit = Math.min(parseInt(searchParams.get('limit') || '200', 10) || 200, 500)
-  let q = supabaseAdmin
-    .from('ehr_charges')
-    .select('id, patient_id, note_id, appointment_id, cpt_code, units, fee_cents, allowed_cents, copay_cents, billed_to, status, service_date, place_of_service, created_at')
-    .eq('practice_id', auth.practiceId)
-    .order('service_date', { ascending: false })
-    .limit(limit)
-  if (status) q = q.eq('status', status)
-  if (patientId) q = q.eq('patient_id', patientId)
-  const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ charges: data ?? [] })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const sp = req.nextUrl.searchParams
+  const status = sp.get('status')
+  const patientId = sp.get('patient_id')
+  const limit = Math.min(Number(sp.get('limit') ?? 200), 500)
+
+  const conds: string[] = ['practice_id = $1']
+  const args: unknown[] = [ctx.practiceId]
+  if (status)    { args.push(status);    conds.push(`status = $${args.length}`) }
+  if (patientId) { args.push(patientId); conds.push(`patient_id = $${args.length}`) }
+  args.push(limit)
+
+  const { rows } = await pool.query(
+    `SELECT id, patient_id, note_id, appointment_id, cpt_code, units,
+            fee_cents, allowed_cents, copay_cents, billed_to, status,
+            service_date, place_of_service, created_at
+       FROM ehr_charges
+      WHERE ${conds.join(' AND ')}
+      ORDER BY service_date DESC
+      LIMIT $${args.length}`,
+    args,
+  )
+
+  await auditEhrAccess({
+    ctx,
+    action: 'billing.charge.list',
+    resourceType: 'ehr_charge',
+    details: { count: rows.length, status, patient_id: patientId },
+  })
+  return NextResponse.json({ charges: rows })
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
   const body = await req.json().catch(() => null)
   if (!body?.patient_id || !body?.cpt_code) {
     return NextResponse.json({ error: 'patient_id and cpt_code required' }, { status: 400 })
   }
-  const { data: practice } = await supabaseAdmin
-    .from('practices').select('default_fee_schedule_cents').eq('id', auth.practiceId).maybeSingle()
-  const fee = body.fee_cents ?? feeForCpt(body.cpt_code, practice?.default_fee_schedule_cents as any)
 
-  const row = {
-    practice_id: auth.practiceId,
-    patient_id: body.patient_id,
-    note_id: body.note_id ?? null,
-    appointment_id: body.appointment_id ?? null,
-    cpt_code: body.cpt_code,
-    units: body.units ?? 1,
-    fee_cents: fee,
-    allowed_cents: body.allowed_cents ?? fee,
-    copay_cents: body.copay_cents ?? 0,
-    billed_to: body.billed_to ?? 'insurance',
-    status: 'pending' as const,
-    service_date: body.service_date ?? new Date().toISOString().slice(0, 10),
-    place_of_service: body.place_of_service ?? null,
-    created_by: auth.user.id,
-  }
-  const { data, error } = await supabaseAdmin.from('ehr_charges').insert(row).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Per-practice CPT fee override lives in practices.default_fee_schedule_cents (jsonb).
+  const practiceFee = await pool.query(
+    `SELECT default_fee_schedule_cents FROM practices WHERE id = $1 LIMIT 1`,
+    [ctx.practiceId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const schedule = practiceFee.rows[0]?.default_fee_schedule_cents ?? null
+  const fee = body.fee_cents ?? feeForCpt(body.cpt_code, schedule)
+
+  const { rows } = await pool.query(
+    `INSERT INTO ehr_charges (
+       practice_id, patient_id, note_id, appointment_id,
+       cpt_code, units, fee_cents, allowed_cents, copay_cents, billed_to,
+       status, service_date, place_of_service, created_by
+     ) VALUES (
+       $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'pending', $11, $12, $13
+     ) RETURNING *`,
+    [
+      ctx.practiceId, body.patient_id, body.note_id ?? null, body.appointment_id ?? null,
+      body.cpt_code, body.units ?? 1, fee, body.allowed_cents ?? fee, body.copay_cents ?? 0,
+      body.billed_to ?? 'insurance',
+      body.service_date ?? new Date().toISOString().slice(0, 10),
+      body.place_of_service ?? null,
+      ctx.user.id,
+    ],
+  )
+  const charge = rows[0]
+
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.create',
-    resourceId: data.id, details: { kind: 'charge_manual', cpt: row.cpt_code, fee_cents: row.fee_cents },
+    ctx,
+    action: 'billing.charge.create',
+    resourceType: 'ehr_charge',
+    resourceId: charge.id,
+    details: { kind: 'charge_manual', cpt: charge.cpt_code, fee_cents: charge.fee_cents },
   })
-  return NextResponse.json({ charge: data }, { status: 201 })
+  return NextResponse.json({ charge }, { status: 201 })
 }

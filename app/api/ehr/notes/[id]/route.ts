@@ -1,53 +1,41 @@
-// app/api/ehr/notes/[id]/route.ts
 // Harbor EHR — read, update, delete a single progress note.
-// Signed notes are immutable; PATCH on a signed note returns 409.
+// Signed notes are immutable; PATCH on a signed note returns 409. Only
+// drafts can be hard-deleted; signed/amended notes stay for audit.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-const UPDATABLE_FIELDS = new Set([
-  'title',
-  'note_format',
-  'subjective',
-  'objective',
-  'assessment',
-  'plan',
-  'body',
-  'appointment_id',
-  'therapist_id',
-  'cpt_codes',
-  'icd10_codes',
-  'linked_goal_ids',
-])
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+const UPDATABLE_FIELDS = [
+  'title', 'note_format', 'subjective', 'objective', 'assessment', 'plan',
+  'body', 'appointment_id', 'therapist_id', 'cpt_codes', 'icd10_codes',
+] as const
+const ARRAY_FIELDS = new Set(['cpt_codes', 'icd10_codes'])
 
 async function loadNote(noteId: string, practiceId: string) {
-  const { data } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .select('*')
-    .eq('id', noteId)
-    .eq('practice_id', practiceId)
-    .maybeSingle()
-  return data
+  const { rows } = await pool.query(
+    `SELECT * FROM ehr_progress_notes WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [noteId, practiceId],
+  )
+  return rows[0] ?? null
 }
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
-  const note = await loadNote(id, auth.practiceId)
+  const note = await loadNote(id, ctx.practiceId!)
   if (!note) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
-    action: 'note.view',
-    resourceId: id,
-  })
+
+  await auditEhrAccess({ ctx, action: 'note.view', resourceId: id })
   return NextResponse.json({ note })
 }
 
@@ -55,11 +43,11 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
-  const existing = await loadNote(id, auth.practiceId)
+  const existing = await loadNote(id, ctx.practiceId!)
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (existing.status === 'signed' || existing.status === 'amended') {
     return NextResponse.json(
@@ -69,48 +57,49 @@ export async function PATCH(
   }
 
   let body: any
-  try {
-    body = await req.json()
-  } catch {
+  try { body = await req.json() } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
   }
 
-  const patch: Record<string, any> = {}
-  for (const [k, v] of Object.entries(body)) {
-    if (UPDATABLE_FIELDS.has(k)) patch[k] = v
+  const sets: string[] = []
+  const args: unknown[] = []
+  for (const k of UPDATABLE_FIELDS) {
+    if (!(k in body)) continue
+    args.push(ARRAY_FIELDS.has(k) ? (Array.isArray(body[k]) ? body[k] : []) : body[k])
+    sets.push(`${k} = $${args.length}${ARRAY_FIELDS.has(k) ? '::text[]' : ''}`)
   }
-  if (Object.keys(patch).length === 0) {
+  if (sets.length === 0) {
     return NextResponse.json({ error: 'No updatable fields supplied' }, { status: 400 })
   }
+  sets.push(`updated_at = NOW()`)
+  args.push(id, ctx.practiceId)
 
-  const { data, error } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .update(patch)
-    .eq('id', id)
-    .eq('practice_id', auth.practiceId)
-    .select()
-    .single()
+  const { rows } = await pool.query(
+    `UPDATE ehr_progress_notes
+        SET ${sets.join(', ')}
+      WHERE id = $${args.length - 1} AND practice_id = $${args.length}
+    RETURNING *`,
+    args,
+  )
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
   await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
+    ctx,
     action: 'note.update',
     resourceId: id,
-    details: { fields: Object.keys(patch) },
+    details: { fields: sets.slice(0, -1).map(s => s.split(' = ')[0]) },
   })
-  return NextResponse.json({ note: data })
+  return NextResponse.json({ note: rows[0] })
 }
 
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
-  const existing = await loadNote(id, auth.practiceId)
+  const existing = await loadNote(id, ctx.practiceId!)
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (existing.status !== 'draft') {
     return NextResponse.json(
@@ -119,19 +108,10 @@ export async function DELETE(
     )
   }
 
-  const { error } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .delete()
-    .eq('id', id)
-    .eq('practice_id', auth.practiceId)
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
-    action: 'note.delete',
-    resourceId: id,
-    severity: 'warn',
-  })
+  await pool.query(
+    `DELETE FROM ehr_progress_notes WHERE id = $1 AND practice_id = $2`,
+    [id, ctx.practiceId],
+  )
+  await auditEhrAccess({ ctx, action: 'note.delete', resourceId: id })
   return NextResponse.json({ success: true })
 }
