@@ -8,7 +8,7 @@ async function getPractice() {
   if (__ctx instanceof NextResponse) return __ctx;
   const user = { id: __ctx.user.id, email: __ctx.session.email };
   if (!user) return null
-  const { data } = await supabaseAdmin.from('practices').select('id, name').eq('notification_email', user.email).single()
+  const { data } = await supabase.from('practices').select('id, name').eq('notification_email', user.email).single()
   return data
 }
 
