@@ -1,49 +1,46 @@
-/**
- * GET /api/calendar/ics-qr
- *
- * Returns an SVG QR code of the authenticated practice's webcal:// subscription
- * URL. Scanning it on a phone opens the native calendar "subscribe" prompt.
- *
- * Auth: session-based via the browser Supabase client. Scopes to the caller's
- * practice_id. The QR is rendered on demand at request time so regenerating
- * the token produces a new QR without requiring a separate redraw step.
- */
-import { NextRequest } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getEffectivePracticeId } from '@/lib/active-practice'
-import { createClient } from '@/lib/supabase-server'
+// SVG QR code of the practice's webcal:// subscribe URL. Scanning on a
+// phone opens the native calendar "subscribe to calendar" prompt.
+//
+// Auth: standard Cognito session. Rendered on demand so a token rotation
+// produces a new QR on next render with no separate redraw step.
+//
+// Token system unified around calendar_token (same as /api/calendar/feed).
+
+import { NextResponse } from 'next/server'
+import { randomBytes } from 'node:crypto'
 import QRCode from 'qrcode'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
 
-export const dynamic = 'force-dynamic'
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-async function resolvePracticeId(): Promise<string | null> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  // Honor the admin act-as cookie so admins viewing another practice get
-  // that practice's QR, not their own users.practice_id.
-  return await getEffectivePracticeId(supabase, user)
+function publicAppUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '')
+    .replace(/\/$/, '')
 }
 
-export async function GET(_req: NextRequest) {
-  const practiceId = await resolvePracticeId()
-  if (!practiceId) {
-    return new Response('Unauthorized', { status: 401 })
+export async function GET() {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return new NextResponse('Unauthorized', { status: 401 })
+
+  const lookup = await pool.query(
+    `SELECT calendar_token FROM practices WHERE id = $1 LIMIT 1`,
+    [ctx.practiceId],
+  )
+  let token: string | null = lookup.rows[0]?.calendar_token ?? null
+
+  if (!token) {
+    token = randomBytes(24).toString('base64url')
+    await pool.query(
+      `UPDATE practices SET calendar_token = $1 WHERE id = $2`,
+      [token, ctx.practiceId],
+    ).catch(err => console.error('[ics-qr] lazy-create failed', err))
   }
 
-  const { data: practice, error } = await supabaseAdmin
-    .from('practices')
-    .select('ics_feed_token, ics_feed_revoked_at')
-    .eq('id', practiceId)
-    .single()
-
-  if (error || !practice || !practice.ics_feed_token || practice.ics_feed_revoked_at) {
-    return new Response('Feed not available', { status: 404 })
-  }
-
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  const webcalUrl = `${base.replace(/\/$/, '').replace(/^https?:\/\//, 'webcal://')}/api/calendar/ics/${practice.ics_feed_token}`
+  const base = publicAppUrl()
+  const webcalUrl = `${base.replace(/^https?:\/\//, 'webcal://')}/api/calendar/feed?token=${token}`
 
   const svg = await QRCode.toString(webcalUrl, {
     type: 'svg',
@@ -53,7 +50,7 @@ export async function GET(_req: NextRequest) {
     width: 240,
   })
 
-  return new Response(svg, {
+  return new NextResponse(svg, {
     status: 200,
     headers: {
       'Content-Type': 'image/svg+xml; charset=utf-8',

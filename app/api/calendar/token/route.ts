@@ -1,88 +1,49 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { supabaseAdmin } from '@/lib/supabase'
-import { NextRequest, NextResponse } from 'next/server'
-import { resolvePracticeIdForApi } from '@/lib/active-practice'
+// Returns the practice's calendar_token + the public ICS subscription URL
+// (/api/calendar/feed?token=…). Used by the settings page to display the
+// "Subscribe in your calendar app" link.
+//
+// POST (rotation) is held for phase-4b — rotation invalidates anyone
+// currently subscribed, so we want a deliberate UI flow + audit row.
 
-async function getPracticeId(): Promise<string | null> {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => cookieStore.getAll(),
-        setAll: (s) => {
-          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
-        }
-      }
-    }
+import { NextResponse } from 'next/server'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+function publicAppUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '')
+    .replace(/\/$/, '')
+}
+
+export async function GET() {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ token: null })
+
+  const { rows } = await pool
+    .query(
+      `SELECT calendar_token FROM practices WHERE id = $1 LIMIT 1`,
+      [ctx.practiceId],
+    )
+    .catch(() => ({ rows: [] as any[] }))
+
+  const token = rows[0]?.calendar_token ?? null
+  if (!token) return NextResponse.json({ token: null })
+
+  return NextResponse.json({
+    token,
+    feedUrl: `${publicAppUrl()}/api/calendar/feed?token=${token}`,
+  })
+}
+
+// TODO(phase-4b): port POST. Rotates calendar_token (32 hex chars).
+// Rotation breaks any existing calendar app subscription, so the UI
+// confirmation flow + an audit_logs entry should land together.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'calendar_token_rotate_not_implemented_on_aws_yet' },
+    { status: 501 },
   )
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  return resolvePracticeIdForApi(supabaseAdmin, user)
-}
-
-export async function GET(req: NextRequest) {
-  try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: practice, error } = await supabaseAdmin
-      .from('practices')
-      .select('calendar_token')
-      .eq('id', practiceId)
-      .single()
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    if (!practice?.calendar_token) {
-      return NextResponse.json({ token: null })
-    }
-
-    return NextResponse.json({
-      token: practice.calendar_token,
-      feedUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/feed?token=${practice.calendar_token}`
-    })
-  } catch (err) {
-    console.error('[calendar/token GET]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-export async function POST(req: NextRequest) {
-  try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const newToken = Array.from({ length: 32 }, () =>
-      Math.floor(Math.random() * 16).toString(16)
-    ).join('')
-
-    const { error } = await supabaseAdmin
-      .from('practices')
-      .update({
-        calendar_token: newToken,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', practiceId)
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json({
-      token: newToken,
-      feedUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/calendar/feed?token=${newToken}`
-    })
-  } catch (err) {
-    console.error('[calendar/token POST]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
 }

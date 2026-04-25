@@ -1,93 +1,72 @@
-/**
- * GET /api/calendar/ics-token   — return the practice's ICS feed URL for the current session user
- * POST /api/calendar/ics-token  — regenerate the token (revoking any existing subscribers)
- *
- * Session-authenticated via the browser Supabase client (cookie-based).
- * Always scopes to the caller's practice_id — no cross-practice lookup.
- */
+// Calendar ICS subscribe URL.
+//
+// AWS-side simplification: the legacy code maintained two parallel token
+// systems on practices (calendar_token + ics_feed_token). We unify around
+// calendar_token — same value drives /api/calendar/feed and any subscribe
+// URLs the dashboard surfaces. One token, one feed.
+//
+// On AWS the canonical subscribe URL is /api/calendar/feed?token=<token>.
+// The legacy /api/calendar/ics/<token> path is served by /api/calendar/feed
+// — clients that already subscribed via the legacy URL keep working
+// because Apple/Google calendars only follow the URL the user pasted in
+// (we just don't surface the old path here anymore).
+//
+// GET → returns webcal:// + https:// URLs, lazy-creating a token if the
+//        practice doesn't have one yet.
+// POST → 501 (token rotation deferred to phase-4b).
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getEffectivePracticeId } from '@/lib/active-practice'
-import { createClient } from '@/lib/supabase-server'
-import crypto from 'crypto'
+import { NextResponse } from 'next/server'
+import { randomBytes } from 'node:crypto'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-async function resolvePracticeId(): Promise<string | null> {
-  const supabase = await createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  // Honor the admin act-as cookie so an admin viewing Harbor Demo gets the
-  // Harbor Demo feed URL, not their own user.practice_id.
-  return await getEffectivePracticeId(supabase, user)
+function publicAppUrl(): string {
+  return (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '')
+    .replace(/\/$/, '')
 }
 
-function buildFeedUrl(token: string): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  // webcal:// triggers native "subscribe to calendar" in Apple/Google/Outlook
-  // — we surface both the webcal:// and https:// variants to the user.
-  const httpsUrl = `${base.replace(/\/$/, '')}/api/calendar/ics/${token}`
-  const webcalUrl = httpsUrl.replace(/^https?:\/\//, 'webcal://')
-  return JSON.stringify({ https: httpsUrl, webcal: webcalUrl })
-}
-
-export async function GET(_req: NextRequest) {
-  const practiceId = await resolvePracticeId()
-  if (!practiceId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+export async function GET() {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) {
+    return NextResponse.json({ error: 'no_practice' }, { status: 404 })
   }
 
-  const { data: practice, error } = await supabaseAdmin
-    .from('practices')
-    .select('ics_feed_token, ics_feed_revoked_at')
-    .eq('id', practiceId)
-    .single()
+  // Fetch existing token, lazy-create if missing.
+  const lookup = await pool.query(
+    `SELECT calendar_token FROM practices WHERE id = $1 LIMIT 1`,
+    [ctx.practiceId],
+  )
+  let token: string | null = lookup.rows[0]?.calendar_token ?? null
 
-  if (error || !practice) {
-    return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+  if (!token) {
+    token = randomBytes(24).toString('base64url')
+    await pool.query(
+      `UPDATE practices SET calendar_token = $1 WHERE id = $2`,
+      [token, ctx.practiceId],
+    ).catch(err => console.error('[ics-token] lazy-create failed', err))
   }
 
-  if (!practice.ics_feed_token) {
-    // Lazy-create a token on first access
-    const token = crypto.randomBytes(24).toString('base64url')
-    await supabaseAdmin
-      .from('practices')
-      .update({ ics_feed_token: token, ics_feed_revoked_at: null })
-      .eq('id', practiceId)
-    practice.ics_feed_token = token
-  }
-
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  const httpsUrl = `${base.replace(/\/$/, '')}/api/calendar/ics/${practice.ics_feed_token}`
+  const base = publicAppUrl()
+  const httpsUrl = `${base}/api/calendar/feed?token=${token}`
   const webcalUrl = httpsUrl.replace(/^https?:\/\//, 'webcal://')
 
   return NextResponse.json({
     https_url: httpsUrl,
     webcal_url: webcalUrl,
-    revoked: !!practice.ics_feed_revoked_at,
+    revoked: false,
   })
 }
 
-export async function POST(_req: NextRequest) {
-  const practiceId = await resolvePracticeId()
-  if (!practiceId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const newToken = crypto.randomBytes(24).toString('base64url')
-  const { error } = await supabaseAdmin
-    .from('practices')
-    .update({ ics_feed_token: newToken, ics_feed_revoked_at: null })
-    .eq('id', practiceId)
-
-  if (error) {
-    return NextResponse.json({ error: 'Failed to regenerate' }, { status: 500 })
-  }
-
-  const base = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  const httpsUrl = `${base.replace(/\/$/, '')}/api/calendar/ics/${newToken}`
-  const webcalUrl = httpsUrl.replace(/^https?:\/\//, 'webcal://')
-
-  return NextResponse.json({ https_url: httpsUrl, webcal_url: webcalUrl, revoked: false })
+// TODO(phase-4b): port POST. Token rotation kicks every existing
+// calendar-app subscriber off the feed, so it wants a confirm dialog +
+// audit row co-deployed.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'ics_token_rotate_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }
