@@ -1,3 +1,6 @@
+// Paginated intake submissions for the authenticated practice. Supports
+// ?status= and ?limit= query params; default limit 50, hard cap 200.
+
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
 import { db, schema } from '@/lib/aws/db'

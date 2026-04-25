@@ -1,3 +1,6 @@
+// Recent call_logs for the authenticated practice. Powers the calls
+// dashboard list view and a few overview cards.
+
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
 import { db, schema } from '@/lib/aws/db'

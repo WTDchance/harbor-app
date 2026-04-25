@@ -55,6 +55,10 @@ export type DbPracticeRow = {
   provisioning_state: string
   voice_provider: string
   greeting: string | null
+  ehr_enabled: boolean
+  founding_member: boolean
+  twilio_phone_number: string | null
+  signalwire_number: string | null
 }
 
 /**
@@ -76,8 +80,13 @@ export async function getUserAndPractice(
 
   let practice: DbPracticeRow | null = null
   if (user.practice_id) {
+    // ehr_enabled is added by EHR migrations; COALESCE keeps the column-missing
+    // case (older RDS without EHR migrations) returning false instead of erroring.
     const practiceResult = await pool.query<DbPracticeRow>(
-      `SELECT id, name, slug, owner_email, timezone, provisioning_state, voice_provider, greeting
+      `SELECT id, name, slug, owner_email, timezone, provisioning_state, voice_provider, greeting,
+              COALESCE(ehr_enabled, false) AS ehr_enabled,
+              COALESCE(founding_member, false) AS founding_member,
+              twilio_phone_number, signalwire_number
          FROM practices
         WHERE id = $1
         LIMIT 1`,

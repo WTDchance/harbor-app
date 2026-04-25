@@ -1,3 +1,7 @@
+// Appointments for the authenticated practice, optionally filtered by
+// scheduled-for date range (?from=&to=). Joins the patient row so the
+// calendar view can render names without a second round-trip.
+
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
 import { db, schema } from '@/lib/aws/db'

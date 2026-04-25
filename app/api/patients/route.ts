@@ -1,4 +1,7 @@
-import { NextResponse, type NextRequest } from 'next/server'
+// Patient roster + intake form summary for the authenticated practice.
+// Used by the patients dashboard and the intake widget on the overview page.
+
+import { NextResponse } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
 import { db, schema } from '@/lib/aws/db'
 import { eq, desc } from 'drizzle-orm'
@@ -6,7 +9,7 @@ import { eq, desc } from 'drizzle-orm'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(req: NextRequest) {
+export async function GET() {
   const ctx = await requireApiSession()
   if (ctx instanceof NextResponse) return ctx
   if (!ctx.practiceId) return NextResponse.json({ patients: [], completedForms: [], pendingForms: [] })

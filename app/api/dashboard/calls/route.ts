@@ -1,6 +1,10 @@
+// Dashboard widget data source. Two modes:
+//   ?mode=stats — aggregate counts + crisis count + 5 most recent calls
+//   default     — list of recent calls (?limit, hard cap 200)
+
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
-import { db, schema, pool } from '@/lib/aws/db'
+import { db, schema } from '@/lib/aws/db'
 import { eq, desc, and, gte, lte } from 'drizzle-orm'
 
 export const runtime = 'nodejs'

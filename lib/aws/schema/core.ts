@@ -33,6 +33,7 @@ export const practices = pgTable('practices', {
   twilioPhoneSid: text(),
   signalwireNumber: text(),
   greeting: text(),
+  ehrEnabled: boolean().notNull().default(false),
   createdAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 })

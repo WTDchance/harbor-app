@@ -1,3 +1,6 @@
+// All intake form rows for the authenticated practice. Used by the intake
+// dashboard list view (sent / opened / completed).
+
 import { NextResponse } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
 import { db, schema } from '@/lib/aws/db'
