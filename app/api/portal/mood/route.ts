@@ -1,9 +1,9 @@
 // Patient portal — mood check-ins.
-//
-// GET → list the patient's recent mood logs (read path, in this batch).
-// POST (log a new mood) is a write path — stays Supabase pending phase-4b.
+// GET → list the patient's recent mood logs.
+// POST → log a new mood entry. Validation: mood 1-10 required, anxiety 1-10
+//        optional, sleep_hours numeric optional, note ≤500 chars.
 
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { requirePortalSession } from '@/lib/aws/portal-auth'
 import { pool } from '@/lib/aws/db'
 import { auditPortalAccess } from '@/lib/aws/ehr/audit'
@@ -36,12 +36,53 @@ export async function GET() {
   return NextResponse.json({ logs: rows })
 }
 
-// TODO(phase-4b): port POST. Single insert with 1-10 validation on mood/
-// anxiety, optional sleep_hours, 500-char note. Trivial; held back to
-// keep this batch read-only foundation-grade for the native clients.
-export async function POST() {
-  return NextResponse.json(
-    { error: 'mood_log_create_not_implemented_on_aws_yet' },
-    { status: 501 },
+export async function POST(req: NextRequest) {
+  const sess = await requirePortalSession()
+  if (sess instanceof NextResponse) return sess
+
+  const body = await req.json().catch(() => null) as any
+  const mood = Number(body?.mood)
+  if (!Number.isInteger(mood) || mood < 1 || mood > 10) {
+    return NextResponse.json({ error: 'mood must be an integer 1-10' }, { status: 400 })
+  }
+
+  const anxietyRaw = body?.anxiety
+  let anxiety: number | null = null
+  if (anxietyRaw != null && anxietyRaw !== '') {
+    const a = Number(anxietyRaw)
+    if (!Number.isInteger(a) || a < 1 || a > 10) {
+      return NextResponse.json({ error: 'anxiety must be an integer 1-10' }, { status: 400 })
+    }
+    anxiety = a
+  }
+
+  let sleep: number | null = null
+  if (body?.sleep_hours != null && body.sleep_hours !== '') {
+    const s = Number(body.sleep_hours)
+    if (!Number.isFinite(s) || s < 0 || s > 24) {
+      return NextResponse.json({ error: 'sleep_hours must be 0-24' }, { status: 400 })
+    }
+    sleep = s
+  }
+
+  const note = typeof body?.note === 'string' ? body.note.slice(0, 500) : null
+
+  const { rows } = await pool.query(
+    `INSERT INTO ehr_mood_logs (
+       practice_id, patient_id, mood, anxiety, sleep_hours, note
+     ) VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [sess.practiceId, sess.patientId, mood, anxiety, sleep, note],
   )
+  const log = rows[0]
+
+  auditPortalAccess({
+    session: sess,
+    action: 'portal.mood.create',
+    resourceType: 'ehr_mood_log',
+    resourceId: log.id,
+    details: { mood, anxiety, has_sleep: sleep !== null, has_note: !!note },
+  }).catch(() => {})
+
+  return NextResponse.json({ log }, { status: 201 })
 }
