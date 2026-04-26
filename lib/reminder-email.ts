@@ -1,13 +1,8 @@
-import { Resend } from 'resend'
+// Appointment reminder email. Sent via SES through lib/aws/ses (was Resend).
 
-// Lazy init — avoid crashing `next build` when env vars aren't set
-let _resend: Resend | null = null
-function getResend(): Resend {
-  if (!_resend) _resend = new Resend(process.env.RESEND_API_KEY)
-  return _resend
-}
+import { sendViaSes } from './aws/ses'
 
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'Harbor <noreply@harborreceptionist.com>'
+const REPLY_TO_DEFAULT = process.env.RESEND_FROM_EMAIL || 'Harbor <noreply@harborreceptionist.com>'
 
 interface ReminderEmailParams {
   patientFirstName: string
@@ -21,26 +16,16 @@ interface ReminderEmailParams {
 
 export async function sendReminderEmail(
   to: string,
-  params: ReminderEmailParams
+  params: ReminderEmailParams,
 ): Promise<boolean> {
-  if (!process.env.RESEND_API_KEY) {
-    console.warn('RESEND_API_KEY not configured')
-    return false
-  }
   const { subject, html, text } = buildReminderEmail(params)
-  try {
-    const { error } = await getResend().emails.send({
-      from: FROM_EMAIL, to, subject, html, text,
-    })
-    if (error) {
-      console.error('Reminder email error:', error)
-      return false
-    }
-    return true
-  } catch (err) {
-    console.error('Reminder email failed:', err)
-    return false
-  }
+  return sendViaSes({
+    to,
+    subject,
+    html,
+    text,
+    replyTo: REPLY_TO_DEFAULT,
+  })
 }
 
 export function buildReminderEmail(params: ReminderEmailParams) {
@@ -58,7 +43,7 @@ export function buildReminderEmail(params: ReminderEmailParams) {
   if (practicePhone) textLines.push('Questions? Call us at ' + practicePhone)
   textLines.push('', 'We look forward to seeing you!', '- ' + practiceName)
   const text = textLines.join('\n')
-  const h = []
+  const h: string[] = []
   h.push('<div style="font-family:sans-serif;max-width:600px;margin:0 auto">')
   h.push('<div style="background:#0d5c4b;padding:24px 32px;border-radius:8px 8px 0 0">')
   h.push('<h2 style="color:#fff;margin:0">' + practiceName + '</h2>')
