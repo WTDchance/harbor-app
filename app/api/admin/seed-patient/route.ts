@@ -1,22 +1,27 @@
-// Admin-only: seed or remove a patient row under any practice so Ellie /
-// intake / reminder flows have someone to recognize. Used to prep the
-// Harbor Demo practice with Chance as a "known patient" so demo calls don't
-// return "patient not found" and so the 24-hour reminder + intake email
-// paths can be exercised end-to-end.
+// app/api/admin/seed-patient/route.ts
 //
-// Auth: Bearer ${CRON_SECRET}
+// Wave 18 (AWS port). Admin-only: seed or remove a patient row under
+// any practice so Ellie / intake / reminder flows have someone to
+// recognize. Used to prep the Harbor Demo practice with a known
+// patient for end-to-end demo calls.
 //
-// POST   { practice_id, first_name, phone, ...optional } — create/upsert
-// DELETE { practice_id, patient_id? | phone? }          — remove a stale row
+// Auth: requireAdminSession() — Cognito session must match
+// ADMIN_EMAIL allowlist.
 //
-// Behavior:
-//   - POST validates practice exists, upserts by (practice_id, phone), and
-//     refreshes name/email/DOB/notes so re-running is safe.
-//   - DELETE removes exactly one patient row scoped to practice_id,
-//     matched by patient_id (preferred) or phone.
+// POST   { practice_id, first_name, phone, ...optional } — upsert by
+//        (practice_id, phone). Refreshes name/email/DOB so re-running
+//        is safe.
+// DELETE { practice_id, patient_id? | phone? } — soft-delete by
+//        setting deleted_at = NOW (NOT hard delete — patient rows are
+//        PHI and should be recoverable for HIPAA right-of-access).
+//
+// Audit captures admin email + practice_id + payload hash.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
+import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { hashAdminPayload } from '@/lib/aws/admin/payload-hash'
 
 interface SeedBody {
   practice_id?: string
@@ -25,16 +30,12 @@ interface SeedBody {
   phone?: string
   email?: string
   date_of_birth?: string
-  preferred_session_type?: string
   notes?: string
 }
 
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
-  if (!process.env.CRON_SECRET || auth !== expected) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
 
   let body: SeedBody
   try {
@@ -43,90 +44,77 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'invalid json' }, { status: 400 })
   }
 
-  const {
-    practice_id,
-    first_name,
-    last_name,
-    phone,
-    email,
-    date_of_birth,
-    preferred_session_type,
-    notes,
-  } = body
-
+  const { practice_id, first_name, last_name, phone, email, date_of_birth, notes } = body
   if (!practice_id || !first_name || !phone) {
     return NextResponse.json(
       { error: 'practice_id, first_name, phone are required' },
-      { status: 400 }
+      { status: 400 },
     )
   }
 
-  // Verify practice exists so we don't orphan rows.
-  const { data: practice, error: practiceErr } = await supabaseAdmin
-    .from('practices')
-    .select('id, name')
-    .eq('id', practice_id)
-    .maybeSingle()
-
-  if (practiceErr) {
-    return NextResponse.json(
-      { error: `practice lookup failed: ${practiceErr.message}` },
-      { status: 500 }
-    )
-  }
-  if (!practice) {
+  // Verify practice exists.
+  const { rows: pRows } = await pool.query(
+    `SELECT id, name FROM practices WHERE id = $1 LIMIT 1`,
+    [practice_id],
+  )
+  if (pRows.length === 0) {
     return NextResponse.json({ error: 'practice not found' }, { status: 404 })
   }
 
-  // Existing patient for (practice_id, phone)? Update in place.
-  const { data: existing } = await supabaseAdmin
-    .from('patients')
-    .select('id')
-    .eq('practice_id', practice_id)
-    .eq('phone', phone)
-    .maybeSingle()
+  // Existing (practice_id, phone) row?
+  const { rows: existRows } = await pool.query(
+    `SELECT id FROM patients
+      WHERE practice_id = $1 AND phone = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [practice_id, phone],
+  )
 
-  const payload: Record<string, unknown> = {
-    practice_id,
-    first_name,
-    last_name: last_name ?? null,
-    phone,
-    email: email ?? null,
-    date_of_birth: date_of_birth ?? null,
-    preferred_session_type: preferred_session_type ?? null,
-    notes: notes ?? null,
+  let patient: any
+  let created = false
+  if (existRows[0]) {
+    const upd = await pool.query(
+      `UPDATE patients
+          SET first_name = $1,
+              last_name = $2,
+              email = $3,
+              date_of_birth = $4
+        WHERE id = $5
+        RETURNING *`,
+      [first_name, last_name ?? null, email ?? null, date_of_birth ?? null, existRows[0].id],
+    )
+    patient = upd.rows[0]
+  } else {
+    const ins = await pool.query(
+      `INSERT INTO patients
+        (practice_id, first_name, last_name, phone, email, date_of_birth)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING *`,
+      [practice_id, first_name, last_name ?? null, phone, email ?? null, date_of_birth ?? null],
+    )
+    patient = ins.rows[0]
+    created = true
   }
 
-  if (existing?.id) {
-    const { data, error } = await supabaseAdmin
-      .from('patients')
-      .update(payload)
-      .eq('id', existing.id)
-      .select()
-      .single()
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-    return NextResponse.json({ ok: true, created: false, patient: data })
-  }
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.seed_patient',
+    resourceType: 'patient',
+    resourceId: patient.id,
+    details: {
+      admin_email: ctx.session.email,
+      target_practice_id: practice_id,
+      created,
+      payload_hash: hashAdminPayload(body),
+      notes_preserved: notes ?? null,
+    },
+  })
 
-  const { data, error } = await supabaseAdmin
-    .from('patients')
-    .insert(payload)
-    .select()
-    .single()
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
-  }
-  return NextResponse.json({ ok: true, created: true, patient: data })
+  return NextResponse.json({ ok: true, created, patient })
 }
 
 export async function DELETE(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
-  if (!process.env.CRON_SECRET || auth !== expected) {
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  }
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
 
   let body: { practice_id?: string; patient_id?: string; phone?: string }
   try {
@@ -142,18 +130,41 @@ export async function DELETE(req: NextRequest) {
   if (!patient_id && !phone) {
     return NextResponse.json(
       { error: 'patient_id or phone is required to identify the row' },
-      { status: 400 }
+      { status: 400 },
     )
   }
 
-  let query = supabaseAdmin.from('patients').delete().eq('practice_id', practice_id)
-  if (patient_id) query = query.eq('id', patient_id)
-  else if (phone) query = query.eq('phone', phone)
-
-  const { data, error } = await query.select()
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  // Soft-delete: set deleted_at instead of hard removing the row.
+  const params: any[] = [practice_id]
+  let where = `practice_id = $1 AND deleted_at IS NULL`
+  if (patient_id) {
+    params.push(patient_id)
+    where += ` AND id = $${params.length}`
+  } else if (phone) {
+    params.push(phone)
+    where += ` AND phone = $${params.length}`
   }
 
-  return NextResponse.json({ ok: true, deleted: data?.length || 0, rows: data || [] })
+  const { rows } = await pool.query(
+    `UPDATE patients SET deleted_at = NOW()
+      WHERE ${where}
+      RETURNING id, first_name, last_name`,
+    params,
+  )
+
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.seed_patient',
+    resourceType: 'patient',
+    resourceId: rows[0]?.id ?? null,
+    details: {
+      admin_email: ctx.session.email,
+      target_practice_id: practice_id,
+      action: 'soft_delete',
+      deleted_count: rows.length,
+      payload_hash: hashAdminPayload(body),
+    },
+  })
+
+  return NextResponse.json({ ok: true, deleted: rows.length, rows })
 }

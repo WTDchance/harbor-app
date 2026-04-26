@@ -83,6 +83,14 @@ export type EhrAuditAction =
   | 'patient.continuity_summary.view'
   | 'patient.export'
   | 'assessment.interpret'
+  | 'admin.run_migration'
+  | 'admin.seed_patient'
+  | 'admin.repair_practice'
+  | 'admin.update_practice'
+  | 'admin.bootstrap_password'
+  | 'admin.act_as.set'
+  | 'admin.act_as.clear'
+  | 'admin.patient.delete'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

@@ -1,159 +1,83 @@
-// Admin endpoint to apply the patient intake columns migration
-// Requires CRON_SECRET bearer token
-// POST /api/admin/run-migration
+// app/api/admin/run-migration/route.ts
+//
+// Wave 18 (AWS port). Apply ad-hoc SQL migrations to RDS. Used to
+// roll out schema bumps (column adds, index creates) without redeploying
+// the app. The legacy version on Supabase only worked around supabase-js
+// not supporting raw SQL by probing column existence; this AWS version
+// has a real pool and can execute SQL directly.
+//
+// Auth: requireAdminSession() — Cognito session must match
+// ADMIN_EMAIL allowlist.
+//
+// Audit captures: admin email + statement_count + payload SHA-256 hash.
+// Raw SQL is NOT stored to keep audit_logs from leaking secrets, but
+// the hash makes after-the-fact verification possible (a regulator can
+// re-hash an asserted payload and compare).
+//
+// Each statement runs in its own transaction so a partial migration
+// only fails the offending statement and leaves prior statements
+// committed.
+//
+// Body shape:
+//   { statements: string[] }   — list of SQL statements
+//   { sql: string }            — single statement (legacy convenience)
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
+import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { hashAdminPayload } from '@/lib/aws/admin/payload-hash'
 
-// Each statement is a single ALTER TABLE that Supabase can run via the PostgREST
-// SQL execution (using .rpc or raw postgres). We use a workaround: attempt to
-// insert a row with the new column name. If it fails with "column does not exist",
-// we know we need to add it.
-//
-// Since supabase-js doesn't support raw SQL, we use the approach of attempting
-// updates that reference new columns. The actual migration SQL should be run
-// via Supabase Dashboard SQL Editor.
+export async function POST(req: NextRequest) {
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
 
-const REQUIRED_COLUMNS = [
-  'pronouns',
-  'address',
-  'emergency_contact_name',
-  'emergency_contact_phone',
-  'referral_source',
-  'insurance_provider',
-  'insurance_member_id',
-  'insurance_group_number',
-  'intake_completed',
-  'intake_completed_at',
-  'updated_at',
-  'telehealth_preference',
-  'preferred_times',
-]
-
-export async function GET(request: NextRequest) {
-  const authHeader = request.headers.get('authorization') || ''
-  const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Check which columns exist by trying to select them
-  const results: { column: string; exists: boolean; error?: string }[] = []
-
-  for (const col of REQUIRED_COLUMNS) {
-    try {
-      const { error } = await supabaseAdmin
-        .from('patients')
-        .select(col)
-        .limit(1)
-
-      if (error && error.message.includes('column') && error.message.includes('does not exist')) {
-        results.push({ column: col, exists: false })
-      } else if (error) {
-        results.push({ column: col, exists: false, error: error.message })
-      } else {
-        results.push({ column: col, exists: true })
-      }
-    } catch (err: any) {
-      results.push({ column: col, exists: false, error: err?.message })
-    }
-  }
-
-  const missing = results.filter(r => !r.exists).map(r => r.column)
-
-  return NextResponse.json({
-    total_checked: REQUIRED_COLUMNS.length,
-    existing: results.filter(r => r.exists).length,
-    missing: missing.length,
-    missing_columns: missing,
-    details: results,
-    migration_sql: missing.length > 0
-      ? 'Run in Supabase SQL Editor:\n\n' + generateMigrationSQL(missing)
-      : 'All columns exist — no migration needed.',
-  })
-}
-
-function generateMigrationSQL(missing: string[]): string {
-  const typeMap: Record<string, string> = {
-    pronouns: 'TEXT',
-    address: 'TEXT',
-    emergency_contact_name: 'TEXT',
-    emergency_contact_phone: 'TEXT',
-    referral_source: 'TEXT',
-    insurance_provider: 'TEXT',
-    insurance_member_id: 'TEXT',
-    insurance_group_number: 'TEXT',
-    intake_completed: 'BOOLEAN DEFAULT FALSE',
-    intake_completed_at: 'TIMESTAMP WITH TIME ZONE',
-    updated_at: 'TIMESTAMP WITH TIME ZONE',
-    telehealth_preference: 'TEXT',
-    preferred_times: 'TEXT',
-  }
-
-  return missing
-    .map(col => `ALTER TABLE patients ADD COLUMN IF NOT EXISTS ${col} ${typeMap[col] || 'TEXT'};`)
-    .join('\n')
-}
-
-export async function POST(request: NextRequest) {
-  const authHeader = request.headers.get('authorization') || ''
-  const cronSecret = process.env.CRON_SECRET
-  if (!cronSecret || authHeader !== `Bearer ${cronSecret}`) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  // Attempt to add columns using Supabase's postgres connection
-  // This uses a workaround — we call a postgres function if available
-  const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
-
-  if (!SUPABASE_URL || !SERVICE_KEY) {
-    return NextResponse.json({ error: 'Missing Supabase credentials' }, { status: 500 })
-  }
-
-  // Use Supabase's SQL API (available on all plans)
-  const migrationSQL = `
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS pronouns TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS address TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS emergency_contact_name TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS emergency_contact_phone TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS referral_source TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_provider TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_member_id TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS insurance_group_number TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_completed BOOLEAN DEFAULT FALSE;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS intake_completed_at TIMESTAMP WITH TIME ZONE;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS telehealth_preference TEXT;
-    ALTER TABLE patients ADD COLUMN IF NOT EXISTS preferred_times TEXT;
-  `
-
-  // Try the Supabase SQL endpoint
-  const projectRef = SUPABASE_URL.replace('https://', '').replace('.supabase.co', '')
-  const sqlUrl = `${SUPABASE_URL}/rest/v1/rpc/exec_sql`
-
-  // Fallback: try direct postgres via pg_net if available, or return the SQL for manual execution
+  let body: { statements?: unknown; sql?: unknown }
   try {
-    // Method 1: Try supabase.rpc with a known function
-    const { error: rpcError } = await supabaseAdmin.rpc('exec_sql', { sql: migrationSQL })
-
-    if (!rpcError) {
-      return NextResponse.json({ ok: true, method: 'rpc', message: 'Migration applied via exec_sql' })
-    }
-
-    // Method 2: Return the SQL for manual execution
-    return NextResponse.json({
-      ok: false,
-      message: 'Auto-migration not available. Run this SQL in Supabase Dashboard → SQL Editor:',
-      sql: migrationSQL,
-      dashboard_url: `https://supabase.com/dashboard/project/${projectRef}/sql/new`,
-    })
-  } catch (err: any) {
-    return NextResponse.json({
-      ok: false,
-      message: 'Run this SQL manually in Supabase Dashboard → SQL Editor:',
-      sql: migrationSQL,
-      error: err?.message,
-    })
+    body = (await req.json()) as { statements?: unknown; sql?: unknown }
+  } catch {
+    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
   }
+
+  const stmts: string[] = Array.isArray(body.statements)
+    ? body.statements.filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+    : typeof body.sql === 'string' && body.sql.trim().length > 0
+      ? [body.sql]
+      : []
+
+  if (stmts.length === 0) {
+    return NextResponse.json({ error: 'statements (string[]) or sql (string) required' }, { status: 400 })
+  }
+
+  const payloadHash = hashAdminPayload({ statements: stmts })
+  const results: Array<{ ok: boolean; rows_affected?: number; error?: string }> = []
+
+  for (const stmt of stmts) {
+    try {
+      const r = await pool.query(stmt)
+      results.push({ ok: true, rows_affected: r.rowCount ?? 0 })
+    } catch (err) {
+      results.push({ ok: false, error: (err as Error).message })
+    }
+  }
+
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.run_migration',
+    resourceType: 'rds_migration',
+    resourceId: null,
+    details: {
+      admin_email: ctx.session.email,
+      statement_count: stmts.length,
+      success_count: results.filter((r) => r.ok).length,
+      failure_count: results.filter((r) => !r.ok).length,
+      payload_hash: payloadHash,
+    },
+  })
+
+  const allOk = results.every((r) => r.ok)
+  return NextResponse.json(
+    { ok: allOk, statement_count: stmts.length, results, payload_hash: payloadHash },
+    { status: allOk ? 200 : 207 },
+  )
 }
