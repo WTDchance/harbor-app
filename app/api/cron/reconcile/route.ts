@@ -23,19 +23,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/supabase';
 import { logEvent, hasEventWithDedupeKey } from '@/lib/events';
 import { assertCronAuthorized } from '@/lib/cron-auth';
-import twilio from 'twilio';
+import { sendSMS as signalwireSendSMS } from '@/lib/aws/signalwire';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
-const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
-const TWILIO_FROM = process.env.TWILIO_PHONE_NUMBER;
-
-function getTwilioClient() {
-  if (!TWILIO_SID || !TWILIO_TOKEN) return null;
-  return twilio(TWILIO_SID, TWILIO_TOKEN);
-}
+// Wave 27e: Twilio swapped for SignalWire (lib/aws/signalwire). The
+// signalwireConfigured() guard inside sendSMS lets the call no-op
+// quietly if env vars are absent in dev/staging.
 
 interface ReconcileCounts {
   orphan_patients: number;
@@ -368,18 +363,19 @@ async function sendOwnerAlerts(): Promise<number> {
 
     const body = `Harbor alert (${practice.name ?? 'your practice'}): ${evt.message ?? evt.event_type}. Open the health page to review.`;
 
-    // SMS
-    if (practice.alert_sms_enabled && practice.owner_phone && twilioClient && TWILIO_FROM) {
-      try {
-        await twilioClient.messages.create({
-          to: practice.owner_phone,
-          from: TWILIO_FROM,
-          body,
-        });
+    // SMS via SignalWire (Wave 27e). sendSMS no-ops gracefully when
+    // SignalWire env vars are missing — owner alerts still log an event
+    // and email path runs independently.
+    if (practice.alert_sms_enabled && practice.owner_phone) {
+      const result = await signalwireSendSMS({
+        to: practice.owner_phone,
+        body,
+        practiceId: evt.practice_id,
+      });
+      if (result.ok) {
         sent++;
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[reconciler] owner SMS failed', err);
+      } else {
+        console.error('[reconciler] owner SMS failed via SignalWire:', result.reason);
       }
     }
 
