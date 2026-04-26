@@ -1,17 +1,21 @@
 // app/api/ehr/assessments/assign/route.ts
-// Therapist assigns an instrument to a patient. Creates a patient_assessments
-// row with status='pending' that the patient will complete via their portal.
+//
+// Wave 22 (AWS port). Therapist assigns an instrument to a patient.
+// Creates a patient_assessments row with status='pending' that the
+// patient will complete via their portal.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { getInstrument } from '@/lib/ehr/instruments'
 
 const DEFAULT_WINDOW_DAYS = 14
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
   const body = await req.json().catch(() => null)
   if (!body?.patient_id || !body?.assessment_type) {
     return NextResponse.json({ error: 'patient_id and assessment_type required' }, { status: 400 })
@@ -19,39 +23,44 @@ export async function POST(req: NextRequest) {
   const inst = getInstrument(body.assessment_type)
   if (!inst) return NextResponse.json({ error: `Unknown instrument ${body.assessment_type}` }, { status: 400 })
 
-  // Patient belongs to caller's practice?
-  const { data: patient } = await supabaseAdmin
-    .from('patients').select('id, practice_id, first_name, last_name')
-    .eq('id', body.patient_id).maybeSingle()
-  if (!patient || patient.practice_id !== auth.practiceId) {
+  const { rows: pRows } = await pool.query(
+    `SELECT id, practice_id, first_name, last_name FROM patients
+      WHERE id = $1 AND deleted_at IS NULL LIMIT 1`,
+    [body.patient_id],
+  )
+  const patient = pRows[0]
+  if (!patient || patient.practice_id !== ctx.practiceId) {
     return NextResponse.json({ error: 'Patient not found for this practice' }, { status: 404 })
   }
 
-  const expires = new Date(Date.now() + (body.window_days ?? DEFAULT_WINDOW_DAYS) * 24 * 60 * 60 * 1000)
+  const expiresMs = Date.now() + (body.window_days ?? DEFAULT_WINDOW_DAYS) * 24 * 60 * 60 * 1000
 
-  const { data, error } = await supabaseAdmin
-    .from('patient_assessments')
-    .insert({
-      practice_id: auth.practiceId,
-      patient_id: body.patient_id,
-      patient_name: `${patient.first_name} ${patient.last_name}`.trim(),
-      assessment_type: inst.id,
-      status: 'pending',
-      administered_via: body.via || 'portal',
-      assigned_at: new Date().toISOString(),
-      assigned_by: auth.user.id,
-      expires_at: expires.toISOString(),
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO patient_assessments
+          (practice_id, patient_id, assessment_type, status,
+           administered_by, completed_at, created_at)
+        VALUES ($1, $2, $3, 'pending', $4, NULL, NOW())
+        RETURNING *`,
+      [ctx.practiceId, body.patient_id, inst.id, ctx.user.id],
+    )
+
+    await auditEhrAccess({
+      ctx,
+      action: 'note.create',
+      resourceType: 'patient_assessment',
+      resourceId: rows[0].id,
+      details: {
+        kind: 'assessment_assigned',
+        instrument: inst.id,
+        patient_id: patient.id,
+        expires_at: new Date(expiresMs).toISOString(),
+        via: body.via || 'portal',
+      },
     })
-    .select()
-    .single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId,
-    action: 'note.create',
-    resourceId: data.id,
-    details: { kind: 'assessment_assigned', instrument: inst.id, patient_id: patient.id, expires_at: expires.toISOString() },
-  })
-
-  return NextResponse.json({ assessment: data }, { status: 201 })
+    return NextResponse.json({ assessment: rows[0] }, { status: 201 })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
 }

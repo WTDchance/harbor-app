@@ -1,52 +1,66 @@
 // app/api/ehr/appointments/[id]/session/route.ts
-// Start / stop / read the actual-session timer on an appointment.
-// Does NOT touch the scheduled times — stamps actual_started_at /
-// actual_ended_at separately so you can compare plan vs. reality.
+//
+// Wave 22 (AWS port). Start / stop / read the actual-session timer on
+// an appointment. Does NOT touch scheduled times — stamps
+// actual_started_at / actual_ended_at separately so plan-vs-reality
+// is preserved.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
-  const { data } = await supabaseAdmin
-    .from('appointments')
-    .select('id, actual_started_at, actual_ended_at')
-    .eq('id', id).eq('practice_id', auth.practiceId).maybeSingle()
-  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const { rows } = await pool.query(
+    `SELECT id, actual_started_at, actual_ended_at FROM appointments
+      WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [id, ctx.practiceId],
+  )
+  if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   return NextResponse.json({
-    started_at: data.actual_started_at,
-    ended_at: data.actual_ended_at,
+    started_at: rows[0].actual_started_at,
+    ended_at: rows[0].actual_ended_at,
   })
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
   const body = await req.json().catch(() => ({}))
   const action = body?.action
 
-  const now = new Date().toISOString()
-  const patch: any = {}
+  let sql: string
+  let args: any[]
   if (action === 'start') {
-    patch.actual_started_at = now
-    patch.actual_ended_at = null
+    sql = `UPDATE appointments SET actual_started_at = NOW(), actual_ended_at = NULL
+            WHERE id = $1 AND practice_id = $2
+            RETURNING id, actual_started_at, actual_ended_at`
+    args = [id, ctx.practiceId]
   } else if (action === 'stop') {
-    patch.actual_ended_at = now
+    sql = `UPDATE appointments SET actual_ended_at = NOW()
+            WHERE id = $1 AND practice_id = $2
+            RETURNING id, actual_started_at, actual_ended_at`
+    args = [id, ctx.practiceId]
   } else if (action === 'reset') {
-    patch.actual_started_at = null
-    patch.actual_ended_at = null
+    sql = `UPDATE appointments SET actual_started_at = NULL, actual_ended_at = NULL
+            WHERE id = $1 AND practice_id = $2
+            RETURNING id, actual_started_at, actual_ended_at`
+    args = [id, ctx.practiceId]
   } else {
     return NextResponse.json({ error: 'action must be start | stop | reset' }, { status: 400 })
   }
 
-  const { data, error } = await supabaseAdmin
-    .from('appointments').update(patch).eq('id', id).eq('practice_id', auth.practiceId)
-    .select('id, actual_started_at, actual_ended_at').single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({
-    started_at: data.actual_started_at,
-    ended_at: data.actual_ended_at,
-  })
+  try {
+    const { rows } = await pool.query(sql, args)
+    if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json({
+      started_at: rows[0].actual_started_at,
+      ended_at: rows[0].actual_ended_at,
+    })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
 }

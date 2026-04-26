@@ -1,28 +1,43 @@
-// app/api/ehr/group-sessions/[id]/route.ts — full session detail with participants.
+// app/api/ehr/group-sessions/[id]/route.ts
+//
+// Wave 22 (AWS port). Full session detail with participants. POST
+// upserts a participant (attendance + participation_note).
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
-  const { data: session } = await supabaseAdmin
-    .from('ehr_group_sessions').select('*').eq('id', id).eq('practice_id', auth.practiceId).maybeSingle()
+
+  const { rows: sessRows } = await pool.query(
+    `SELECT * FROM ehr_group_sessions WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [id, ctx.practiceId],
+  )
+  const session = sessRows[0]
   if (!session) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { data: participants } = await supabaseAdmin
-    .from('ehr_group_participants')
-    .select('id, patient_id, attendance, participation_note, note_id')
-    .eq('group_session_id', id).eq('practice_id', auth.practiceId)
+  const { rows: participants } = await pool.query(
+    `SELECT id, patient_id, attendance, participation_note, note_id
+       FROM ehr_group_participants
+      WHERE group_session_id = $1 AND practice_id = $2`,
+    [id, ctx.practiceId],
+  )
 
-  // Patient info
-  const patientIds = (participants ?? []).map((p: any) => p.patient_id)
-  const { data: patients } = patientIds.length
-    ? await supabaseAdmin.from('patients').select('id, first_name, last_name').in('id', patientIds)
-    : { data: [] as any[] }
-  const patientMap = new Map((patients ?? []).map((p: any) => [p.id, p]))
-  const enriched = (participants ?? []).map((p: any) => ({
+  const patientIds = participants.map((p: any) => p.patient_id)
+  let patientMap = new Map<string, { id: string; first_name: string; last_name: string }>()
+  if (patientIds.length > 0) {
+    const { rows: pat } = await pool.query<{ id: string; first_name: string; last_name: string }>(
+      `SELECT id, first_name, last_name FROM patients
+        WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+      [patientIds],
+    )
+    for (const p of pat) patientMap.set(p.id, p)
+  }
+  const enriched = participants.map((p: any) => ({
     ...p,
     patient: patientMap.get(p.patient_id) ?? null,
   }))
@@ -30,37 +45,44 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   return NextResponse.json({ session, participants: enriched })
 }
 
-// Add or update a participant. Body: { patient_id, attendance?, participation_note? }
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
+
   const body = await req.json().catch(() => null)
   if (!body?.patient_id) return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
 
-  // Verify session and patient belong to this practice
-  const [{ data: session }, { data: patient }] = await Promise.all([
-    supabaseAdmin.from('ehr_group_sessions').select('id').eq('id', id).eq('practice_id', auth.practiceId).maybeSingle(),
-    supabaseAdmin.from('patients').select('id').eq('id', body.patient_id).eq('practice_id', auth.practiceId).maybeSingle(),
+  const [sessRes, patRes] = await Promise.all([
+    pool.query(`SELECT id FROM ehr_group_sessions WHERE id = $1 AND practice_id = $2 LIMIT 1`, [id, ctx.practiceId]),
+    pool.query(
+      `SELECT id FROM patients WHERE id = $1 AND practice_id = $2 AND deleted_at IS NULL LIMIT 1`,
+      [body.patient_id, ctx.practiceId],
+    ),
   ])
-  if (!session) return NextResponse.json({ error: 'Session not found' }, { status: 404 })
-  if (!patient) return NextResponse.json({ error: 'Patient not in this practice' }, { status: 404 })
+  if (sessRes.rows.length === 0) return NextResponse.json({ error: 'Session not found' }, { status: 404 })
+  if (patRes.rows.length === 0) return NextResponse.json({ error: 'Patient not in this practice' }, { status: 404 })
 
-  // Upsert on (group_session_id, patient_id)
-  const { data, error } = await supabaseAdmin
-    .from('ehr_group_participants')
-    .upsert({
-      group_session_id: id,
-      practice_id: auth.practiceId,
-      patient_id: body.patient_id,
-      attendance: body.attendance ?? 'attended',
-      participation_note: body.participation_note ?? null,
-    }, { onConflict: 'group_session_id,patient_id' })
-    .select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.update',
-    resourceId: id, details: { kind: 'group_participant_set', patient_id: body.patient_id, attendance: data.attendance },
-  })
-  return NextResponse.json({ participant: data })
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO ehr_group_participants
+          (group_session_id, practice_id, patient_id, attendance, participation_note)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (group_session_id, patient_id) DO UPDATE
+          SET attendance = EXCLUDED.attendance,
+              participation_note = EXCLUDED.participation_note
+        RETURNING *`,
+      [id, ctx.practiceId, body.patient_id, body.attendance ?? 'attended', body.participation_note ?? null],
+    )
+    await auditEhrAccess({
+      ctx,
+      action: 'note.update',
+      resourceType: 'ehr_group_session',
+      resourceId: id,
+      details: { kind: 'group_participant_set', patient_id: body.patient_id, attendance: rows[0].attendance },
+    })
+    return NextResponse.json({ participant: rows[0] })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
 }

@@ -8,7 +8,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
-import { centsToDollars } from '@/lib/ehr/billing'
+import { centsToDollars } from '@/lib/aws/billing/calc'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'

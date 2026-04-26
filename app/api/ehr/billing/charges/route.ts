@@ -6,7 +6,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
-import { feeForCpt } from '@/lib/ehr/billing' // pure helper — no Supabase deps
+import { feeForCpt } from '@/lib/aws/billing/calc' // pure helper — no Supabase deps
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'

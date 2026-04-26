@@ -1,22 +1,20 @@
 // app/api/ehr/appointments/conflicts/route.ts
-// Detect scheduling conflicts. Used by the appointments UI before
-// confirming a new appointment.
 //
-// GET ?date=YYYY-MM-DD&time=HH:MM&duration=45&exclude_id=...
-// Returns appointments on the same date that overlap with the
-// proposed window. Same-practice only.
+// Wave 22 (AWS port). Detect scheduling conflicts. Used by the
+// appointments UI before confirming a new slot.
+//
+// AWS schema: appointments.scheduled_for (timestamptz). The legacy
+// query keyed off (appointment_date, appointment_time) — we now
+// derive both from scheduled_for + duration_minutes.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-
-function toMinutes(hhmm: string): number {
-  const [h, m] = hhmm.split(':').map(Number)
-  return (h || 0) * 60 + (m || 0)
-}
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
 
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
   const { searchParams } = new URL(req.url)
   const date = searchParams.get('date')
   const time = searchParams.get('time')
@@ -24,30 +22,43 @@ export async function GET(req: NextRequest) {
   const excludeId = searchParams.get('exclude_id')
   if (!date || !time) return NextResponse.json({ error: 'date and time required' }, { status: 400 })
 
-  const start = toMinutes(time)
-  const end = start + duration
+  // Build the proposed window in UTC (caller passes local clock — the UI
+  // is practice-tz scoped, so this matches legacy semantics).
+  const startIso = `${date}T${time.length === 5 ? time + ':00' : time}Z`
+  const startMs = new Date(startIso).getTime()
+  if (Number.isNaN(startMs)) return NextResponse.json({ error: 'invalid date/time' }, { status: 400 })
+  const endIso = new Date(startMs + duration * 60_000).toISOString()
+  const dayStart = new Date(`${date}T00:00:00Z`).toISOString()
+  const dayEnd = new Date(`${date}T23:59:59Z`).toISOString()
 
-  let q = supabaseAdmin
-    .from('appointments')
-    .select('id, appointment_date, appointment_time, duration_minutes, patient_name, status')
-    .eq('practice_id', auth.practiceId)
-    .eq('appointment_date', date)
-    .in('status', ['scheduled', 'confirmed'])
-  if (excludeId) q = q.neq('id', excludeId)
-  const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const params: any[] = [ctx.practiceId, dayStart, dayEnd]
+  let where = `practice_id = $1
+        AND scheduled_for >= $2 AND scheduled_for <= $3
+        AND status IN ('scheduled','confirmed')`
+  if (excludeId) {
+    params.push(excludeId)
+    where += ` AND id <> $${params.length}`
+  }
 
-  const conflicts = (data ?? []).filter((a) => {
-    const s = toMinutes((a.appointment_time as string).slice(0, 5))
-    const e = s + (a.duration_minutes || 45)
-    // overlap iff (startA < endB) && (endA > startB)
-    return start < e && end > s
-  })
+  const { rows } = await pool.query(
+    `SELECT id, scheduled_for, duration_minutes, patient_name, status
+       FROM appointments WHERE ${where}`,
+    params,
+  )
+
+  const conflicts = rows
+    .map((a: any) => {
+      const s = new Date(a.scheduled_for).getTime()
+      const e = s + (a.duration_minutes || 45) * 60_000
+      const overlap = startMs < e && new Date(endIso).getTime() > s
+      return overlap ? a : null
+    })
+    .filter(Boolean)
 
   return NextResponse.json({
-    conflicts: conflicts.map((c) => ({
+    conflicts: conflicts.map((c: any) => ({
       id: c.id,
-      time: (c.appointment_time as string).slice(0, 5),
+      time: new Date(c.scheduled_for).toISOString().slice(11, 16),
       duration_minutes: c.duration_minutes,
       patient_name: c.patient_name,
       status: c.status,

@@ -1,19 +1,40 @@
-// app/api/ehr/assessment-schedules/[id]/route.ts — stop or resume a schedule.
+// app/api/ehr/assessment-schedules/[id]/route.ts
+//
+// Wave 22 (AWS port). Stop or resume / change cadence on a schedule.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
   const { id } = await params
   const body = await req.json().catch(() => null)
-  const patch: any = {}
-  if (typeof body?.is_active === 'boolean') patch.is_active = body.is_active
-  if (Number.isInteger(body?.cadence_weeks)) patch.cadence_weeks = body.cadence_weeks
-  if (!Object.keys(patch).length) return NextResponse.json({ error: 'No updatable fields' }, { status: 400 })
 
-  const { data, error } = await supabaseAdmin
-    .from('ehr_assessment_schedules').update(patch).eq('id', id).eq('practice_id', auth.practiceId).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ schedule: data })
+  const sets: string[] = []
+  const args: any[] = [id, ctx.practiceId]
+  if (typeof body?.is_active === 'boolean') {
+    args.push(body.is_active)
+    sets.push(`is_active = $${args.length}`)
+  }
+  if (Number.isInteger(body?.cadence_weeks)) {
+    args.push(body.cadence_weeks)
+    sets.push(`cadence_weeks = $${args.length}`)
+  }
+  if (sets.length === 0) return NextResponse.json({ error: 'No updatable fields' }, { status: 400 })
+
+  try {
+    const { rows } = await pool.query(
+      `UPDATE ehr_assessment_schedules SET ${sets.join(', ')}
+        WHERE id = $1 AND practice_id = $2
+        RETURNING *`,
+      args,
+    )
+    if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json({ schedule: rows[0] })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
 }
