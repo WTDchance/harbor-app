@@ -1,19 +1,29 @@
-// app/api/ehr/mood-logs/route.ts — therapist reads a patient's mood log history.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+// Therapist-side mood log history for a single patient.
+// patient_id is required (this view is always patient-scoped).
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const patientId = searchParams.get('patient_id')
-  if (!patientId) return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
-  const { data, error } = await supabaseAdmin
-    .from('ehr_mood_logs')
-    .select('id, mood, anxiety, sleep_hours, note, logged_at')
-    .eq('practice_id', auth.practiceId).eq('patient_id', patientId)
-    .order('logged_at', { ascending: true })
-    .limit(90)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ logs: data ?? [] })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const patientId = req.nextUrl.searchParams.get('patient_id')
+  if (!patientId) {
+    return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
+  }
+
+  const { rows } = await pool.query(
+    `SELECT id, mood, anxiety, sleep_hours, note, logged_at
+       FROM ehr_mood_logs
+      WHERE practice_id = $1 AND patient_id = $2
+      ORDER BY logged_at ASC LIMIT 90`,
+    [ctx.practiceId, patientId],
+  )
+
+  return NextResponse.json({ logs: rows })
 }

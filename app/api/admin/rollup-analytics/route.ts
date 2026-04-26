@@ -1,202 +1,115 @@
-// Tier 2C: Daily practice analytics rollup
-// Aggregates call_logs, appointments, patients, and intake_forms
-// into a single practice_analytics row per practice per day.
-// Run via cron or manually: POST /api/admin/rollup-analytics
-// Optional body: { "date": "2026-04-17" } — defaults to yesterday
+// Daily practice analytics rollup.
+//
+// Aggregates yesterday's call_logs / appointments / patients / intake_forms
+// into one practice_analytics row per practice per day. Designed for cron
+// invocation (Bearer ${CRON_SECRET}). Idempotent via UPSERT on
+// (practice_id, date).
+//
+// AWS canonical schema notes:
+//   call_logs.started_at replaces the legacy created_at filter.
+//   appointments.scheduled_for replaces appointment_date.
+//   appointments.status='no_show' replaces the legacy boolean no_show.
+//   AWS canonical call_logs lacks is_new_patient / booking_attempted /
+//   booking_succeeded / topics_discussed / sentiment_score columns —
+//   derived where possible from call_type + booking_outcome, otherwise null.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
-export async function POST(req: NextRequest) {
-  // Auth: require CRON_SECRET bearer token
-  const authHeader = req.headers.get('authorization')
-  const expected = `Bearer ${process.env.CRON_SECRET}`
-  if (!process.env.CRON_SECRET || authHeader !== expected) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-  try {
-    const body = await req.json().catch(() => ({}))
-    const targetDate = body.date || getYesterday()
-
-    console.log(`[Analytics] Rolling up metrics for ${targetDate}`)
-
-    // Get all active practices
-    const { data: practices, error: practicesErr } = await supabaseAdmin
-      .from('practices')
-      .select('id, name')
-
-    if (practicesErr || !practices) {
-      console.error('[Analytics] Failed to fetch practices:', practicesErr?.message)
-      return NextResponse.json({ error: 'Failed to fetch practices' }, { status: 500 })
-    }
-
-    const results: Array<{ practice_id: string; practice_name: string; status: string }> = []
-
-    for (const practice of practices) {
-      try {
-        const analytics = await computeDailyAnalytics(practice.id, targetDate)
-
-        // Upsert into practice_analytics (unique on practice_id + date)
-        const { error: upsertErr } = await supabaseAdmin
-          .from('practice_analytics')
-          .upsert(
-            {
-              practice_id: practice.id,
-              date: targetDate,
-              ...analytics,
-              computed_at: new Date().toISOString(),
-            },
-            { onConflict: 'practice_id,date' }
-          )
-
-        if (upsertErr) {
-          console.error(`[Analytics] Upsert failed for ${practice.name}:`, upsertErr.message)
-          results.push({ practice_id: practice.id, practice_name: practice.name, status: `error: ${upsertErr.message}` })
-        } else {
-          console.log(`[Analytics] ${practice.name}: ${analytics.total_calls} calls, ${analytics.total_bookings} bookings, ${analytics.new_patients} new patients`)
-          results.push({ practice_id: practice.id, practice_name: practice.name, status: 'ok' })
-        }
-      } catch (err: any) {
-        console.error(`[Analytics] Error computing for ${practice.name}:`, err?.message)
-        results.push({ practice_id: practice.id, practice_name: practice.name, status: `error: ${err?.message}` })
-      }
-    }
-
-    return NextResponse.json({
-      success: true,
-      date: targetDate,
-      practices_processed: results.length,
-      results,
-    })
-  } catch (error: any) {
-    console.error('[Analytics] Rollup error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-// Also support GET for quick manual trigger from browser with query param
-export async function GET(req: NextRequest) {
-  const authHeader = req.headers.get('authorization')
-  const expected = `Bearer ${process.env.CRON_SECRET}`
-  if (!process.env.CRON_SECRET || authHeader !== expected) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
-
-  const { searchParams } = new URL(req.url)
-  const date = searchParams.get('date') || getYesterday()
-
-  // Delegate to POST handler logic
-  const fakeReq = new NextRequest(req.url, {
-    method: 'POST',
-    headers: req.headers,
-    body: JSON.stringify({ date }),
-  })
-  return POST(fakeReq)
+function unauthorized() {
+  return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 }
 
 function getYesterday(): string {
   const d = new Date()
   d.setDate(d.getDate() - 1)
-  return d.toISOString().split('T')[0]
+  return d.toISOString().slice(0, 10)
 }
 
 async function computeDailyAnalytics(practiceId: string, date: string) {
   const dayStart = `${date}T00:00:00.000Z`
   const dayEnd = `${date}T23:59:59.999Z`
 
-  // --- Call metrics ---
-  const { data: calls } = await supabaseAdmin
-    .from('call_logs')
-    .select('id, duration_seconds, call_outcome, is_new_patient, booking_attempted, booking_succeeded, topics_discussed, sentiment_score')
-    .eq('practice_id', practiceId)
-    .gte('created_at', dayStart)
-    .lte('created_at', dayEnd)
+  const callsRes = await pool
+    .query(
+      `SELECT id, duration_seconds, call_type, booking_outcome
+         FROM call_logs
+        WHERE practice_id = $1
+          AND started_at >= $2 AND started_at <= $3`,
+      [practiceId, dayStart, dayEnd],
+    )
+    .catch(() => ({ rows: [] as any[] }))
+  const calls = callsRes.rows
 
-  const callList = calls || []
-  const totalCalls = callList.length
-  const newPatientCalls = callList.filter(c => c.is_new_patient === true).length
-  const returningPatientCalls = callList.filter(c => c.is_new_patient === false).length
-
-  const durations = callList.map(c => c.duration_seconds).filter((d): d is number => d != null && d > 0)
-  const avgCallDuration = durations.length > 0
+  const totalCalls = calls.length
+  const newPatientCalls = calls.filter(c => c.call_type === 'new_patient').length
+  const returningPatientCalls = calls.filter(c => c.call_type === 'existing_patient').length
+  const durations = calls.map(c => c.duration_seconds).filter((d): d is number => d != null && d > 0)
+  const avgCallDuration = durations.length
     ? durations.reduce((a, b) => a + b, 0) / durations.length
     : null
+  const bookingAttempted = calls.filter(c => c.booking_outcome != null).length
+  const bookingSucceeded = calls.filter(c => c.booking_outcome === 'booked').length
+  const bookingConversionRate = bookingAttempted > 0 ? bookingSucceeded / bookingAttempted : null
 
-  const sentiments = callList.map(c => c.sentiment_score).filter((s): s is number => s != null)
-  const avgSentiment = sentiments.length > 0
-    ? sentiments.reduce((a, b) => a + b, 0) / sentiments.length
-    : null
+  const intakesSentRes = await pool
+    .query(
+      `SELECT COUNT(*)::int AS c FROM intake_forms
+        WHERE practice_id = $1
+          AND created_at >= $2 AND created_at <= $3`,
+      [practiceId, dayStart, dayEnd],
+    )
+    .catch(() => ({ rows: [{ c: 0 }] }))
+  const intakeSentNum = intakesSentRes.rows[0]?.c ?? 0
 
-  // --- Booking metrics ---
-  const bookingAttempted = callList.filter(c => c.booking_attempted === true).length
-  const bookingSucceeded = callList.filter(c => c.booking_succeeded === true).length
-  const bookingConversionRate = bookingAttempted > 0
-    ? bookingSucceeded / bookingAttempted
-    : null
+  const intakesCompletedRes = await pool
+    .query(
+      `SELECT COUNT(*)::int AS c FROM intake_forms
+        WHERE practice_id = $1 AND status = 'completed'
+          AND completed_at >= $2 AND completed_at <= $3`,
+      [practiceId, dayStart, dayEnd],
+    )
+    .catch(() => ({ rows: [{ c: 0 }] }))
+  const intakeCompletedNum = intakesCompletedRes.rows[0]?.c ?? 0
 
-  // --- Topic counts ---
-  const topicCounts: Record<string, number> = {}
-  for (const call of callList) {
-    if (Array.isArray(call.topics_discussed)) {
-      for (const topic of call.topics_discussed) {
-        topicCounts[topic] = (topicCounts[topic] || 0) + 1
-      }
-    }
-  }
-
-  // --- Intake metrics ---
-  const { count: intakesSent } = await supabaseAdmin
-    .from('intake_forms')
-    .select('id', { count: 'exact', head: true })
-    .eq('practice_id', practiceId)
-    .gte('created_at', dayStart)
-    .lte('created_at', dayEnd)
-
-  const { count: intakesCompleted } = await supabaseAdmin
-    .from('intake_forms')
-    .select('id', { count: 'exact', head: true })
-    .eq('practice_id', practiceId)
-    .eq('status', 'completed')
-    .gte('completed_at', dayStart)
-    .lte('completed_at', dayEnd)
-
-  const intakeSentNum = intakesSent || 0
-  const intakeCompletedNum = intakesCompleted || 0
   const intakeCompletionRate = intakeSentNum > 0
     ? intakeCompletedNum / intakeSentNum
     : null
 
-  // --- Appointment metrics ---
-  const { data: appointments } = await supabaseAdmin
-    .from('appointments')
-    .select('id, status, no_show')
-    .eq('practice_id', practiceId)
-    .gte('appointment_date', dayStart)
-    .lte('appointment_date', dayEnd)
+  const apptRes = await pool
+    .query(
+      `SELECT id, status FROM appointments
+        WHERE practice_id = $1
+          AND scheduled_for >= $2 AND scheduled_for <= $3`,
+      [practiceId, dayStart, dayEnd],
+    )
+    .catch(() => ({ rows: [] as any[] }))
+  const appts = apptRes.rows
+  const totalAppointments = appts.length
+  const totalNoShows = appts.filter(a => a.status === 'no_show' || a.status === 'no-show').length
+  const totalCancellations = appts.filter(a => a.status === 'cancelled').length
+  const noShowRate = totalAppointments > 0 ? totalNoShows / totalAppointments : null
 
-  const appointmentList = appointments || []
-  const totalAppointments = appointmentList.length
-  const totalNoShows = appointmentList.filter(a => a.no_show === true).length
-  const totalCancellations = appointmentList.filter(a => a.status === 'cancelled').length
-  const noShowRate = totalAppointments > 0
-    ? totalNoShows / totalAppointments
-    : null
-
-  // --- New patients ---
-  const { count: newPatients } = await supabaseAdmin
-    .from('patients')
-    .select('id', { count: 'exact', head: true })
-    .eq('practice_id', practiceId)
-    .gte('created_at', dayStart)
-    .lte('created_at', dayEnd)
+  const newPatientsRes = await pool
+    .query(
+      `SELECT COUNT(*)::int AS c FROM patients
+        WHERE practice_id = $1
+          AND created_at >= $2 AND created_at <= $3`,
+      [practiceId, dayStart, dayEnd],
+    )
+    .catch(() => ({ rows: [{ c: 0 }] }))
+  const newPatients = newPatientsRes.rows[0]?.c ?? 0
 
   return {
     total_calls: totalCalls,
     new_patient_calls: newPatientCalls,
     returning_patient_calls: returningPatientCalls,
     avg_call_duration_seconds: avgCallDuration,
-    avg_sentiment: avgSentiment,
+    avg_sentiment: null as number | null, // not on AWS canonical schema
     total_bookings: bookingSucceeded,
     booking_conversion_rate: bookingConversionRate,
     intakes_sent: intakeSentNum,
@@ -206,7 +119,113 @@ async function computeDailyAnalytics(practiceId: string, date: string) {
     total_no_shows: totalNoShows,
     total_cancellations: totalCancellations,
     no_show_rate: noShowRate,
-    new_patients: newPatients || 0,
-    topic_counts_json: topicCounts,
+    new_patients: newPatients,
+    topic_counts_json: {} as Record<string, number>, // not on AWS canonical schema
   }
+}
+
+async function runRollup(date: string) {
+  const { rows: practices } = await pool.query(
+    `SELECT id, name FROM practices`,
+  )
+
+  const results: Array<{ practice_id: string; practice_name: string; status: string }> = []
+
+  for (const practice of practices) {
+    try {
+      const analytics = await computeDailyAnalytics(practice.id, date)
+      // UPSERT on (practice_id, date). The practice_analytics table may not
+      // exist on every cluster — wrap and degrade gracefully.
+      try {
+        await pool.query(
+          `INSERT INTO practice_analytics (
+             practice_id, date, total_calls, new_patient_calls, returning_patient_calls,
+             avg_call_duration_seconds, avg_sentiment, total_bookings,
+             booking_conversion_rate, intakes_sent, intakes_completed,
+             intake_completion_rate, total_appointments, total_no_shows,
+             total_cancellations, no_show_rate, new_patients, topic_counts_json,
+             computed_at
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, NOW()
+           )
+           ON CONFLICT (practice_id, date) DO UPDATE SET
+             total_calls = EXCLUDED.total_calls,
+             new_patient_calls = EXCLUDED.new_patient_calls,
+             returning_patient_calls = EXCLUDED.returning_patient_calls,
+             avg_call_duration_seconds = EXCLUDED.avg_call_duration_seconds,
+             avg_sentiment = EXCLUDED.avg_sentiment,
+             total_bookings = EXCLUDED.total_bookings,
+             booking_conversion_rate = EXCLUDED.booking_conversion_rate,
+             intakes_sent = EXCLUDED.intakes_sent,
+             intakes_completed = EXCLUDED.intakes_completed,
+             intake_completion_rate = EXCLUDED.intake_completion_rate,
+             total_appointments = EXCLUDED.total_appointments,
+             total_no_shows = EXCLUDED.total_no_shows,
+             total_cancellations = EXCLUDED.total_cancellations,
+             no_show_rate = EXCLUDED.no_show_rate,
+             new_patients = EXCLUDED.new_patients,
+             topic_counts_json = EXCLUDED.topic_counts_json,
+             computed_at = NOW()`,
+          [
+            practice.id, date,
+            analytics.total_calls, analytics.new_patient_calls, analytics.returning_patient_calls,
+            analytics.avg_call_duration_seconds, analytics.avg_sentiment, analytics.total_bookings,
+            analytics.booking_conversion_rate, analytics.intakes_sent, analytics.intakes_completed,
+            analytics.intake_completion_rate, analytics.total_appointments, analytics.total_no_shows,
+            analytics.total_cancellations, analytics.no_show_rate, analytics.new_patients,
+            JSON.stringify(analytics.topic_counts_json),
+          ],
+        )
+        results.push({ practice_id: practice.id, practice_name: practice.name, status: 'ok' })
+      } catch (err) {
+        const msg = (err as Error).message
+        console.error(`[rollup-analytics] upsert failed for ${practice.name}:`, msg)
+        results.push({
+          practice_id: practice.id,
+          practice_name: practice.name,
+          status: `error: ${msg}`,
+        })
+      }
+    } catch (err) {
+      console.error(`[rollup-analytics] compute failed for ${practice.name}:`, err)
+      results.push({
+        practice_id: practice.id,
+        practice_name: practice.name,
+        status: `error: ${(err as Error).message}`,
+      })
+    }
+  }
+
+  auditSystemEvent({
+    action: 'cron.rollup-analytics.run',
+    details: {
+      date,
+      total_practices: practices.length,
+      ok: results.filter(r => r.status === 'ok').length,
+      errors: results.filter(r => r.status.startsWith('error')).length,
+    },
+  }).catch(() => {})
+
+  return { date, practices_processed: results.length, results }
+}
+
+export async function POST(req: NextRequest) {
+  const auth = req.headers.get('authorization') || ''
+  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    return unauthorized()
+  }
+  const body = await req.json().catch(() => ({}))
+  const date = body?.date || getYesterday()
+  const out = await runRollup(date)
+  return NextResponse.json({ success: true, ...out })
+}
+
+export async function GET(req: NextRequest) {
+  const auth = req.headers.get('authorization') || ''
+  if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    return unauthorized()
+  }
+  const date = req.nextUrl.searchParams.get('date') || getYesterday()
+  const out = await runRollup(date)
+  return NextResponse.json({ success: true, ...out })
 }

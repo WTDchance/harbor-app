@@ -1,101 +1,135 @@
-// app/api/ehr/reports/caseload/route.ts
-// Whole-panel caseload: for every active patient, aggregate:
-//   - name
-//   - last appointment date (completed)
-//   - next upcoming appointment
-//   - open (draft) notes count
-//   - latest PHQ-9 score + delta from baseline
-//   - last mood log
-//   - balance owed
+// Whole-panel caseload — one row per patient with the headline numbers
+// the dashboard caseload page wants: last completed appt, next upcoming
+// appt, draft note count, latest PHQ-9 + delta from baseline, last mood
+// log, balance owed.
+//
+// Heavy aggregation done in Node (7 parallel SELECTs assembled in-memory).
+// Long-term this wants a materialized view; fine to ship as-is for v1.
+//
+// AWS canonical schema notes:
+//   appointments.scheduled_for replaces legacy appointment_date.
+//   ehr_payments.received_at falls back to created_at via COALESCE.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+import { NextResponse } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
 
-export async function GET(_req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export async function GET() {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ rows: [] })
 
   const [patients, appts, notes, assessments, moods, charges, payments] = await Promise.all([
-    supabaseAdmin.from('patients')
-      .select('id, first_name, last_name, phone, email, referral_source, created_at')
-      .eq('practice_id', auth.practiceId).limit(1000),
-    supabaseAdmin.from('appointments')
-      .select('patient_id, appointment_date, status')
-      .eq('practice_id', auth.practiceId).limit(5000),
-    supabaseAdmin.from('ehr_progress_notes')
-      .select('patient_id, status')
-      .eq('practice_id', auth.practiceId).limit(5000),
-    supabaseAdmin.from('patient_assessments')
-      .select('patient_id, assessment_type, score, completed_at, status')
-      .eq('practice_id', auth.practiceId).eq('status', 'completed')
-      .order('completed_at', { ascending: true }).limit(5000),
-    supabaseAdmin.from('ehr_mood_logs')
-      .select('patient_id, mood, logged_at')
-      .eq('practice_id', auth.practiceId)
-      .order('logged_at', { ascending: false }).limit(2000),
-    supabaseAdmin.from('ehr_charges')
-      .select('patient_id, allowed_cents, status')
-      .eq('practice_id', auth.practiceId).limit(5000),
-    supabaseAdmin.from('ehr_payments')
-      .select('patient_id, amount_cents')
-      .eq('practice_id', auth.practiceId).limit(5000),
+    pool.query(
+      `SELECT id, first_name, last_name, phone, email, referral_source, created_at
+         FROM patients
+        WHERE practice_id = $1 LIMIT 1000`,
+      [ctx.practiceId],
+    ),
+    pool.query(
+      `SELECT patient_id, scheduled_for, status
+         FROM appointments
+        WHERE practice_id = $1 LIMIT 5000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT patient_id, status FROM ehr_progress_notes
+        WHERE practice_id = $1 LIMIT 5000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT patient_id, assessment_type, score, completed_at
+         FROM patient_assessments
+        WHERE practice_id = $1 AND status = 'completed'
+        ORDER BY completed_at ASC LIMIT 5000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT patient_id, mood, logged_at FROM ehr_mood_logs
+        WHERE practice_id = $1
+        ORDER BY logged_at DESC LIMIT 2000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT patient_id, allowed_cents, status FROM ehr_charges
+        WHERE practice_id = $1 LIMIT 5000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT patient_id, amount_cents FROM ehr_payments
+        WHERE practice_id = $1 LIMIT 5000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
   ])
 
-  const today = new Date().toISOString().slice(0, 10)
+  const nowIso = new Date().toISOString()
 
   const lastApptByPt = new Map<string, string>()
   const nextApptByPt = new Map<string, string>()
-  for (const a of appts.data ?? []) {
-    if (!a.patient_id || !a.appointment_date) continue
+  for (const a of appts.rows) {
+    if (!a.patient_id || !a.scheduled_for) continue
+    const ts = new Date(a.scheduled_for).toISOString()
     if (a.status === 'completed') {
       const cur = lastApptByPt.get(a.patient_id)
-      if (!cur || a.appointment_date > cur) lastApptByPt.set(a.patient_id, a.appointment_date)
+      if (!cur || ts > cur) lastApptByPt.set(a.patient_id, ts)
     } else if (a.status === 'scheduled' || a.status === 'confirmed') {
-      if (a.appointment_date >= today) {
+      if (ts >= nowIso) {
         const cur = nextApptByPt.get(a.patient_id)
-        if (!cur || a.appointment_date < cur) nextApptByPt.set(a.patient_id, a.appointment_date)
+        if (!cur || ts < cur) nextApptByPt.set(a.patient_id, ts)
       }
     }
   }
 
   const openNotesByPt = new Map<string, number>()
-  for (const n of notes.data ?? []) {
+  for (const n of notes.rows) {
     if (n.status === 'draft' && n.patient_id) {
       openNotesByPt.set(n.patient_id, (openNotesByPt.get(n.patient_id) ?? 0) + 1)
     }
   }
 
-  // Track PHQ-9 trajectory — baseline and latest per patient
+  // PHQ-9 baseline + latest per patient (rows are ASC by completed_at).
   const phqBaseline = new Map<string, number>()
   const phqLatest = new Map<string, { score: number; date: string }>()
-  for (const a of assessments.data ?? []) {
+  for (const a of assessments.rows) {
     if (!a.patient_id || a.score == null) continue
     const t = (a.assessment_type || '').toUpperCase().replace(/-/g, '')
     if (t !== 'PHQ9') continue
     if (!phqBaseline.has(a.patient_id)) phqBaseline.set(a.patient_id, a.score)
-    phqLatest.set(a.patient_id, { score: a.score, date: a.completed_at?.slice(0, 10) ?? '' })
+    phqLatest.set(a.patient_id, {
+      score: a.score,
+      date: a.completed_at ? a.completed_at.toISOString().slice(0, 10) : '',
+    })
   }
 
   const lastMoodByPt = new Map<string, { mood: number; logged_at: string }>()
-  for (const m of moods.data ?? []) {
+  for (const m of moods.rows) {
     if (m.patient_id && !lastMoodByPt.has(m.patient_id)) {
       lastMoodByPt.set(m.patient_id, { mood: m.mood, logged_at: m.logged_at })
     }
   }
 
   const balanceByPt = new Map<string, number>()
-  for (const c of charges.data ?? []) {
+  for (const c of charges.rows) {
     if (c.patient_id && c.status !== 'void' && c.status !== 'written_off') {
-      balanceByPt.set(c.patient_id, (balanceByPt.get(c.patient_id) ?? 0) + Number(c.allowed_cents))
+      balanceByPt.set(
+        c.patient_id,
+        (balanceByPt.get(c.patient_id) ?? 0) + Number(c.allowed_cents || 0),
+      )
     }
   }
-  for (const p of payments.data ?? []) {
+  for (const p of payments.rows) {
     if (p.patient_id) {
-      balanceByPt.set(p.patient_id, (balanceByPt.get(p.patient_id) ?? 0) - Number(p.amount_cents))
+      balanceByPt.set(
+        p.patient_id,
+        (balanceByPt.get(p.patient_id) ?? 0) - Number(p.amount_cents || 0),
+      )
     }
   }
 
-  const rows = (patients.data ?? []).map((p: any) => {
+  const rows = patients.rows.map(p => {
     const phqBase = phqBaseline.get(p.id)
     const phqLast = phqLatest.get(p.id)
     const mood = lastMoodByPt.get(p.id)

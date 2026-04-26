@@ -1,17 +1,32 @@
-// app/api/ehr/waitlist/route.ts — list and update waitlist entries.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+// Practice waitlist list view. Sorted by composite_score DESC then
+// created_at DESC. composite_score is computed by the cancellation-fill
+// dispatcher when entries are evaluated.
+
+import { NextResponse } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { data, error } = await supabaseAdmin
-    .from('waitlist')
-    .select('id, patient_name, patient_phone, patient_email, insurance_type, session_type, reason, priority, status, notes, flexible_day_time, opt_in_last_minute, opt_in_flash_fill, composite_score, created_at')
-    .eq('practice_id', auth.practiceId)
-    .order('composite_score', { ascending: false, nullsFirst: false })
-    .order('created_at', { ascending: false })
-    .limit(200)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ entries: data ?? [] })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ entries: [] })
+
+  const { rows } = await pool
+    .query(
+      `SELECT id, patient_name, patient_phone, patient_email,
+              insurance_type, session_type, reason, priority, status,
+              notes, flexible_day_time, opt_in_last_minute, opt_in_flash_fill,
+              composite_score, created_at
+         FROM waitlist
+        WHERE practice_id = $1
+        ORDER BY composite_score DESC NULLS LAST, created_at DESC
+        LIMIT 200`,
+      [ctx.practiceId],
+    )
+    .catch(() => ({ rows: [] as any[] }))
+
+  return NextResponse.json({ entries: rows })
 }

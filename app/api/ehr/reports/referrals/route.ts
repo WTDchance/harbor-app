@@ -1,40 +1,54 @@
-// app/api/ehr/reports/referrals/route.ts — who's sending patients + conversion.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+// Who's sending us patients + per-source first-visit conversion.
 
-export async function GET(_req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+import { NextResponse } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
 
-  const [{ data: patients }, { data: appts }] = await Promise.all([
-    supabaseAdmin.from('patients')
-      .select('id, referral_source, created_at')
-      .eq('practice_id', auth.practiceId).limit(2000),
-    supabaseAdmin.from('appointments')
-      .select('patient_id, status')
-      .eq('practice_id', auth.practiceId).limit(5000),
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+type Bucket = {
+  source: string
+  patients: number
+  had_first_session: number
+  active_patients: number // ≥ 1 completed session AND created within last 60 days
+}
+
+export async function GET() {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ rows: [], total_patients: 0 })
+
+  const [patients, appts] = await Promise.all([
+    pool.query(
+      `SELECT id, referral_source, created_at
+         FROM patients
+        WHERE practice_id = $1 LIMIT 2000`,
+      [ctx.practiceId],
+    ),
+    pool.query(
+      `SELECT patient_id, status FROM appointments
+        WHERE practice_id = $1 LIMIT 5000`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
   ])
 
   const completedByPt = new Map<string, number>()
-  for (const a of appts ?? []) {
+  for (const a of appts.rows) {
     if (a.status === 'completed' && a.patient_id) {
       completedByPt.set(a.patient_id, (completedByPt.get(a.patient_id) ?? 0) + 1)
     }
   }
 
-  type Bucket = {
-    source: string
-    patients: number
-    had_first_session: number
-    active_patients: number // had a session in last 60 days — simplified: ≥ 1 completed session
-  }
-
   const bySource = new Map<string, Bucket>()
   const sinceCutoff = Date.now() - 60 * 24 * 60 * 60 * 1000
-  for (const p of patients ?? []) {
+  for (const p of patients.rows) {
     const src = (p.referral_source || 'Unknown').trim() || 'Unknown'
     let b = bySource.get(src)
-    if (!b) { b = { source: src, patients: 0, had_first_session: 0, active_patients: 0 }; bySource.set(src, b) }
+    if (!b) {
+      b = { source: src, patients: 0, had_first_session: 0, active_patients: 0 }
+      bySource.set(src, b)
+    }
     b.patients++
     const sessions = completedByPt.get(p.id) ?? 0
     if (sessions > 0) b.had_first_session++
@@ -42,11 +56,11 @@ export async function GET(_req: NextRequest) {
   }
 
   const rows = Array.from(bySource.values())
-    .map((b) => ({
+    .map(b => ({
       ...b,
       conversion_rate: b.patients ? Math.round((b.had_first_session / b.patients) * 100) : 0,
     }))
     .sort((a, b) => b.patients - a.patients)
 
-  return NextResponse.json({ rows, total_patients: patients?.length ?? 0 })
+  return NextResponse.json({ rows, total_patients: patients.rows.length })
 }

@@ -1,50 +1,19 @@
-// app/api/ehr/assessments/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+// Therapist-side assessment list + manual create (e.g. paper PHQ-9
+// transcribed into the chart).
+//
+// GET requires ?patient_id= and returns all assessments for that patient
+// in chronological order so the UI can chart trends.
+//
+// POST inserts a manually-administered assessment. Severity is inferred
+// from instrument + score when not supplied.
 
-export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const patientId = searchParams.get('patient_id')
-  if (!patientId) return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-  const { data, error } = await supabaseAdmin
-    .from('patient_assessments')
-    .select('id, assessment_type, score, severity, completed_at, created_at, administered_by, notes')
-    .eq('practice_id', auth.practiceId).eq('patient_id', patientId)
-    .order('completed_at', { ascending: true, nullsFirst: false })
-    .order('created_at', { ascending: true })
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ assessments: data })
-}
-
-export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const body = await req.json().catch(() => null)
-  if (!body?.patient_id || !body?.assessment_type || typeof body?.score !== 'number') {
-    return NextResponse.json({ error: 'patient_id, assessment_type, score required' }, { status: 400 })
-  }
-  const severity = body.severity || inferSeverity(body.assessment_type, body.score)
-  const row: any = {
-    practice_id: auth.practiceId,
-    patient_id: body.patient_id,
-    assessment_type: body.assessment_type,
-    score: body.score,
-    severity,
-    administered_by: body.administered_by || 'therapist',
-    notes: body.notes ?? null,
-    completed_at: body.completed_at || new Date().toISOString(),
-  }
-  const { data, error } = await supabaseAdmin.from('patient_assessments').insert(row).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.create',
-    resourceId: data.id, details: { kind: 'assessment', type: row.assessment_type, score: row.score, severity },
-  })
-  return NextResponse.json({ assessment: data }, { status: 201 })
-}
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 function inferSeverity(type: string, score: number): string {
   const t = (type || '').toUpperCase()
@@ -65,4 +34,70 @@ function inferSeverity(type: string, score: number): string {
     return score >= 3 ? 'positive' : 'negative'
   }
   return 'unspecified'
+}
+
+export async function GET(req: NextRequest) {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const patientId = req.nextUrl.searchParams.get('patient_id')
+  if (!patientId) {
+    return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
+  }
+
+  const { rows } = await pool.query(
+    `SELECT id, assessment_type, score, severity, completed_at, created_at,
+            administered_by, notes
+       FROM patient_assessments
+      WHERE practice_id = $1 AND patient_id = $2
+      ORDER BY completed_at ASC NULLS LAST, created_at ASC`,
+    [ctx.practiceId, patientId],
+  )
+
+  return NextResponse.json({ assessments: rows })
+}
+
+export async function POST(req: NextRequest) {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const body = await req.json().catch(() => null) as any
+  if (!body?.patient_id || !body?.assessment_type || typeof body?.score !== 'number') {
+    return NextResponse.json(
+      { error: 'patient_id, assessment_type, score required' },
+      { status: 400 },
+    )
+  }
+
+  const severity = body.severity || inferSeverity(body.assessment_type, body.score)
+  const { rows } = await pool.query(
+    `INSERT INTO patient_assessments (
+       practice_id, patient_id, assessment_type, score, severity,
+       administered_by, notes, completed_at, status
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'completed')
+     RETURNING *`,
+    [
+      ctx.practiceId, body.patient_id, body.assessment_type,
+      body.score, severity,
+      body.administered_by || 'therapist',
+      body.notes ?? null,
+      body.completed_at || new Date().toISOString(),
+    ],
+  )
+  const assessment = rows[0]
+
+  await auditEhrAccess({
+    ctx,
+    action: 'note.create', // no dedicated assessment.create enum entry; closest match
+    resourceType: 'patient_assessment',
+    resourceId: assessment.id,
+    details: {
+      kind: 'assessment_manual',
+      type: body.assessment_type,
+      score: body.score,
+      severity,
+    },
+  })
+
+  return NextResponse.json({ assessment }, { status: 201 })
 }

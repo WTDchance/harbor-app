@@ -1,20 +1,36 @@
-// app/api/ehr/scheduling-requests/route.ts — therapist list + approve/decline.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+// Therapist-side scheduling requests — list of patient-submitted timeslot
+// requests pending therapist response.
+//
+// GET → list, optional ?status= filter.
+// POST/PATCH approve/decline are write paths and stay in legacy until the
+// notification fan-out wave (creating an appointment + notifying patient).
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const status = searchParams.get('status')
-  let q = supabaseAdmin
-    .from('ehr_scheduling_requests')
-    .select('id, patient_id, preferred_windows, patient_note, therapist_note, duration_minutes, appointment_type, status, appointment_id, created_at, responded_at')
-    .eq('practice_id', auth.practiceId)
-    .order('created_at', { ascending: false })
-  if (status) q = q.eq('status', status)
-  const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ requests: data ?? [] })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ requests: [] })
+
+  const status = req.nextUrl.searchParams.get('status')
+  const conds: string[] = ['practice_id = $1']
+  const args: unknown[] = [ctx.practiceId]
+  if (status) { args.push(status); conds.push(`status = $${args.length}`) }
+
+  const { rows } = await pool.query(
+    `SELECT id, patient_id, preferred_windows, patient_note, therapist_note,
+            duration_minutes, appointment_type, status, appointment_id,
+            created_at, responded_at
+       FROM ehr_scheduling_requests
+      WHERE ${conds.join(' AND ')}
+      ORDER BY created_at DESC LIMIT 200`,
+    args,
+  )
+
+  return NextResponse.json({ requests: rows })
 }

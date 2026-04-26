@@ -1,45 +1,67 @@
-// app/api/ehr/homework/route.ts — therapist list + assign.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+// Therapist-side homework — list of homework assigned to patients.
+// GET → list (optional ?patient_id= filter).
+// POST → assign new homework. Single insert, audit-logged.
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const patientId = searchParams.get('patient_id')
-  let q = supabaseAdmin
-    .from('ehr_homework')
-    .select('id, patient_id, note_id, title, description, due_date, status, completed_at, completion_note, created_at')
-    .eq('practice_id', auth.practiceId)
-    .order('created_at', { ascending: false })
-  if (patientId) q = q.eq('patient_id', patientId)
-  const { data, error } = await q
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json({ homework: data ?? [] })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ homework: [] })
+
+  const patientId = req.nextUrl.searchParams.get('patient_id')
+  const conds: string[] = ['practice_id = $1']
+  const args: unknown[] = [ctx.practiceId]
+  if (patientId) { args.push(patientId); conds.push(`patient_id = $${args.length}`) }
+
+  const { rows } = await pool.query(
+    `SELECT id, patient_id, note_id, title, description, due_date,
+            status, completed_at, completion_note, created_at
+       FROM ehr_homework
+      WHERE ${conds.join(' AND ')}
+      ORDER BY created_at DESC LIMIT 200`,
+    args,
+  )
+
+  return NextResponse.json({ homework: rows })
 }
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const body = await req.json().catch(() => null)
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const body = await req.json().catch(() => null) as any
   if (!body?.patient_id || !body?.title) {
     return NextResponse.json({ error: 'patient_id and title required' }, { status: 400 })
   }
-  const { data, error } = await supabaseAdmin
-    .from('ehr_homework').insert({
-      practice_id: auth.practiceId,
-      patient_id: body.patient_id,
-      note_id: body.note_id ?? null,
-      title: body.title,
-      description: body.description ?? null,
-      due_date: body.due_date ?? null,
-      status: 'assigned',
-      created_by: auth.user.id,
-    }).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  const { rows } = await pool.query(
+    `INSERT INTO ehr_homework (
+       practice_id, patient_id, note_id, title, description,
+       due_date, status, created_by
+     ) VALUES ($1, $2, $3, $4, $5, $6, 'assigned', $7)
+     RETURNING *`,
+    [
+      ctx.practiceId, body.patient_id,
+      body.note_id ?? null, body.title, body.description ?? null,
+      body.due_date ?? null, ctx.user.id,
+    ],
+  )
+  const homework = rows[0]
+
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.create',
-    resourceId: data.id, details: { kind: 'homework', patient_id: body.patient_id, title: body.title },
+    ctx,
+    action: 'note.update', // closest enum entry; refine if a homework.* action lands later
+    resourceType: 'ehr_homework',
+    resourceId: homework.id,
+    details: { kind: 'homework_assign', patient_id: body.patient_id, title: body.title },
   })
-  return NextResponse.json({ homework: data }, { status: 201 })
+
+  return NextResponse.json({ homework }, { status: 201 })
 }
