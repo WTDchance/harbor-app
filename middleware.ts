@@ -34,10 +34,22 @@ const PUBLIC_API_PREFIXES = [
   '/api/cron/',
   '/api/admin/',
   '/api/stripe/webhook',
-  '/api/vapi/webhook',
+  '/api/vapi/webhook',          // legacy carrier — kept for inbound webhook compat
   '/api/sms/',
   '/api/signup',
   '/api/audit-log',
+  // Wave 27 carrier-swap public webhook paths. SignalWire signs each
+  // inbound POST with x-signalwire-signature; Retell signs lifecycle
+  // events with x-retell-signature. Those signatures are verified at
+  // route level — middleware can't see them since it runs before route
+  // handlers. /api/voice/tools/* is gated by RETELL_AGENT_ID match
+  // inside parseRetellToolCall (Wave 27c).
+  '/api/signalwire/',
+  '/api/retell/',
+  '/api/voice/',
+  '/api/twilio/',               // deprecation stubs — keep public so
+                                // stale Twilio dashboards see the
+                                // 'this number has moved' TwiML.
 ]
 
 function isPublic(pathname: string): boolean {
