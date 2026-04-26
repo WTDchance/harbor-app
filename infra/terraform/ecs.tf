@@ -55,6 +55,11 @@ locals {
     { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.anthropic_api_key.arn },
     { name = "STEDI_API_KEY",     valueFrom = aws_ssm_parameter.stedi_api_key.arn },
     { name = "OPENAI_API_KEY",    valueFrom = aws_ssm_parameter.openai_api_key.arn },
+    # Stripe webhook signing secrets (Wave 25). Two distinct endpoints:
+    #   subscriptions  → app/api/stripe/webhook/route.ts
+    #   billing        → app/api/ehr/billing/stripe-webhook/route.ts
+    { name = "STRIPE_WEBHOOK_SECRET",     valueFrom = aws_ssm_parameter.stripe_webhook_subscriptions.arn },
+    { name = "STRIPE_EHR_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_billing.arn },
   ]
 }
 

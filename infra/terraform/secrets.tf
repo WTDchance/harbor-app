@@ -59,3 +59,29 @@ resource "aws_ssm_parameter" "openai_api_key" {
     ignore_changes = [value]
   }
 }
+
+resource "aws_ssm_parameter" "stripe_webhook_subscriptions" {
+  name        = "/${local.name_prefix}/api-keys/stripe-webhook-subscriptions"
+  description = "Stripe signing secret for the subscription/checkout endpoint — consumed by app/api/stripe/webhook (Wave 15)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
+resource "aws_ssm_parameter" "stripe_webhook_billing" {
+  name        = "/${local.name_prefix}/api-keys/stripe-webhook-billing"
+  description = "Stripe signing secret for the EHR-billing endpoint — consumed by app/api/ehr/billing/stripe-webhook (Wave 15)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
