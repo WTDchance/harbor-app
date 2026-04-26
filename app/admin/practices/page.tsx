@@ -1,8 +1,13 @@
 'use client'
 
+// Wave 21: supabase-browser is now a no-op stub (returns empty arrays).
+// Pages still call supabase.from() against it; full rewrite to AWS API
+// fetches lands in Wave 23. Auth redirects are gone — pages render empty.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
+
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-browser'
 import { ExternalLink, Phone, Mail, Eye } from 'lucide-react'
 
 interface Practice {
@@ -21,17 +26,14 @@ export default function AdminPractices() {
   const [practices, setPractices] = useState<Practice[]>([])
   const [loading, setLoading] = useState(true)
   const [viewingId, setViewingId] = useState<string | null>(null)
-  const supabase = createClient()
 
   async function actAs(practiceId: string) {
     setViewingId(practiceId)
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) { setViewingId(null); return }
+    // Wave 21: Cognito session cookie auto-attached on same-origin fetch — no Bearer needed
     const res = await fetch('/api/admin/act-as', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${session.access_token}`,
-        'Content-Type': 'application/json',
+                'Content-Type': 'application/json',
       },
       body: JSON.stringify({ practiceId }),
     })
@@ -62,7 +64,7 @@ export default function AdminPractices() {
         setLoading(false)
       }
     })()
-  }, [supabase])
+  }, [])
 
   return (
     <div>

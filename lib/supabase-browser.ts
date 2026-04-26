@@ -35,8 +35,23 @@ function makeQuery(): any {
 
 const stub = {
   auth: {
-    getUser: async (): Promise<Resp<{ user: null }>> => ({ data: { user: null }, error: null }),
-    getSession: async (): Promise<Resp<{ session: null }>> => ({ data: { session: null }, error: null }),
+    // Wave 21: return a fake non-null user/session so client pages that
+    // do `if (!user) router.push('/login')` don't bounce Cognito-authed
+    // users. Real auth happens via Cognito cookies on every API call;
+    // this stub just keeps the legacy null-check from blowing up.
+    getUser: async () => ({
+      data: { user: { id: 'cognito-stub', email: '' as string, aud: 'authenticated' } },
+      error: null,
+    }),
+    getSession: async () => ({
+      data: {
+        session: {
+          access_token: '',
+          user: { id: 'cognito-stub', email: '' as string, aud: 'authenticated' },
+        },
+      },
+      error: null,
+    }),
     signInWithPassword: async () => ({ data: { user: null, session: null }, error: { message: 'use cognito' } }),
     signOut: async () => ({ error: null }),
     resetPasswordForEmail: async () => ({ data: null, error: { message: 'use cognito' } }),

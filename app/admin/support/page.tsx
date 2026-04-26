@@ -1,7 +1,6 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabaseAdmin } from '@/lib/supabase'
 
 interface Ticket {
   id: string

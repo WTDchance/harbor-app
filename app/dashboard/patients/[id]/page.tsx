@@ -1,4 +1,8 @@
 "use client";
+
+// Wave 21: supabase-browser is now a no-op stub. Auth via Cognito cookies.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
 // app/dashboard/patients/[id]/page.tsx
 // Harbor - Patient Detail View
 // FIX: Shows FULL patient information from both patients table AND intake demographics.

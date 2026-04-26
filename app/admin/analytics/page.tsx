@@ -1,8 +1,13 @@
 'use client'
 
+// Wave 21: supabase-browser is now a no-op stub (returns empty arrays).
+// Pages still call supabase.from() against it; full rewrite to AWS API
+// fetches lands in Wave 23. Auth redirects are gone — pages render empty.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
+
 import { useEffect, useState } from 'react'
 import { Phone, Users, AlertTriangle, TrendingUp } from 'lucide-react'
-import { createClient } from '@/lib/supabase-browser'
 
 interface PracticeAnalytics {
   id: string
@@ -20,7 +25,6 @@ export default function AdminAnalyticsPage() {
   const [crisisCount, setCrisisCount] = useState(0)
   const [newPracticesMonth, setNewPracticesMonth] = useState(0)
   const [practices, setPractices] = useState<PracticeAnalytics[]>([])
-  const supabase = createClient()
 
   useEffect(() => {
     const fetchAnalytics = async () => {
@@ -32,7 +36,7 @@ export default function AdminAnalyticsPage() {
 
       if (allPractices && allPractices.length > 0) {
         setPractices(
-          allPractices.map(p => ({
+          allPractices.map((p: any) => ({
             id: p.id,
             name: p.name,
             therapist_name: p.therapist_name,
@@ -97,20 +101,20 @@ export default function AdminAnalyticsPage() {
               .from('call_logs')
               .select('*', { count: 'exact', head: true })
               .eq('practice_id', p.id)
-              .then(r => ({ count: r.count || 0 })),
+              .then((r: any) => ({ count: r.count || 0 })),
             supabase
               .from('waitlist')
               .select('*', { count: 'exact', head: true })
               .eq('practice_id', p.id)
               .eq('status', 'waiting')
-              .then(r => ({ count: r.count || 0 })),
+              .then((r: any) => ({ count: r.count || 0 })),
           ])
 
           statsMap[p.id] = { calls: callCount as number, waitlist: waitlistCount as number }
         }
 
         setPractices(
-          allPractices.map(p => ({
+          allPractices.map((p: any) => ({
             id: p.id,
             name: p.name,
             therapist_name: p.therapist_name,
@@ -124,7 +128,7 @@ export default function AdminAnalyticsPage() {
     }
 
     fetchAnalytics()
-  }, [supabase])
+  }, [])
 
   // Get top 5 practices by call count
   const topPractices = [...practices]

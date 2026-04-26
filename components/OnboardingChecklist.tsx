@@ -2,17 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
-import { createClient } from '@/lib/supabase-browser';
-
-const supabase = createClient();
-
+// Wave 21: supabase-browser stub — Cognito-era no-op.
 async function authFetch(url: string, options?: RequestInit) {
-  const { data: { session } } = await supabase.auth.getSession();
+  // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
   return fetch(url, {
     ...options,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${session?.access_token}`,
       ...options?.headers,
     },
   });

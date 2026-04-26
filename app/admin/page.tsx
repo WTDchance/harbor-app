@@ -1,8 +1,13 @@
 'use client'
 
+// Wave 21: supabase-browser is now a no-op stub (returns empty arrays).
+// Pages still call supabase.from() against it; full rewrite to AWS API
+// fetches lands in Wave 23. Auth redirects are gone — pages render empty.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
+
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-browser'
 import { Phone, Users, MessageSquare, TrendingUp, PlusCircle, ArrowRight } from 'lucide-react'
 
 interface Practice {
@@ -25,7 +30,6 @@ export default function AdminOverview() {
   const [practices, setPractices] = useState<Practice[]>([])
   const [stats, setStats] = useState<Record<string, PracticeStats>>({})
   const [loading, setLoading] = useState(true)
-  const supabase = createClient()
 
   useEffect(() => {
     const fetchData = async () => {
@@ -42,8 +46,8 @@ export default function AdminOverview() {
         const statsMap: Record<string, PracticeStats> = {}
         for (const p of practicesData) {
           const [{ count: callCount }, { count: waitlistCount }] = await Promise.all([
-            supabase.from('call_logs').select('*', { count: 'exact', head: true }).eq('practice_id', p.id).then(r => ({ count: r.count || 0 })),
-            supabase.from('waitlist').select('*', { count: 'exact', head: true }).eq('practice_id', p.id).eq('status', 'waiting').then(r => ({ count: r.count || 0 })),
+            supabase.from('call_logs').select('*', { count: 'exact', head: true }).eq('practice_id', p.id).then((r: any) => ({ count: r.count || 0 })),
+            supabase.from('waitlist').select('*', { count: 'exact', head: true }).eq('practice_id', p.id).eq('status', 'waiting').then((r: any) => ({ count: r.count || 0 })),
           ])
           statsMap[p.id] = { practiceId: p.id, callCount: callCount as number, waitlistCount: waitlistCount as number }
         }
@@ -52,7 +56,7 @@ export default function AdminOverview() {
       setLoading(false)
     }
     fetchData()
-  }, [supabase])
+  }, [])
 
   const totalCalls = Object.values(stats).reduce((sum, s) => sum + s.callCount, 0)
   const totalWaitlist = Object.values(stats).reduce((sum, s) => sum + s.waitlistCount, 0)

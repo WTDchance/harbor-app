@@ -1,4 +1,8 @@
 "use client";
+
+// Wave 21: supabase-browser is now a no-op stub. Auth via Cognito cookies.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
 // app/dashboard/messaging/page.tsx
 // Harbor - Unified SMS Inbox
 // Shows all text conversations for a practice in a sidebar/inbox format.

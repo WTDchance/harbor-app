@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { createClient } from '@/lib/supabase-browser'
 import { usePractice } from '@/lib/hooks/usePractice'
 import MFAEnroll from '@/components/MFAEnroll'
 import { ForwardingToggle } from '@/components/ForwardingToggle'
@@ -56,98 +55,37 @@ const DEFAULT_HOURS: HoursMap = {
 }
 
 // --- MFA Settings Section (HIPAA §164.312(d)) --------------------------------
+//
+// Wave 21: Cognito-era stub. The legacy Supabase MFA enrollment +
+// listFactors + unenroll APIs don't apply on AWS — Cognito MFA is
+// configured at the user-pool level via the Hosted UI / admin console.
+// Render a static informational card so the settings page stops trying
+// to call supabase.auth.mfa.* (which the browser stub doesn't support).
 function MFASection() {
-  const supabase = createClient()
-  const [mfaEnabled, setMfaEnabled] = useState(false)
-  const [showEnroll, setShowEnroll] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [unenrolling, setUnenrolling] = useState(false)
-
-  const checkMFA = useCallback(async () => {
-    const { data } = await supabase.auth.mfa.listFactors()
-    setMfaEnabled(!!(data?.totp && data.totp.length > 0))
-    setLoading(false)
-  }, [supabase])
-
-  useEffect(() => { checkMFA() }, [checkMFA])
-
-  async function handleUnenroll() {
-    if (!confirm('Are you sure you want to disable two-factor authentication? This will make your account less secure.')) return
-    setUnenrolling(true)
-    try {
-      const { data } = await supabase.auth.mfa.listFactors()
-      const factor = data?.totp?.[0]
-      if (factor) {
-        await supabase.auth.mfa.unenroll({ factorId: factor.id })
-        fetch('/api/audit-log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'mfa_unenrolled', details: { factor_id: factor.id }, severity: 'warning' }),
-        }).catch(() => {})
-      }
-      setMfaEnabled(false)
-    } catch {}
-    setUnenrolling(false)
-  }
-
-  if (loading) return null
-
   return (
     <div className="bg-white rounded-xl border border-gray-200 mb-6">
       <div className="p-5 border-b border-gray-100">
         <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Account Security</h2>
-        <p className="text-xs text-gray-400 mt-1">Protect your account with two-factor authentication</p>
+        <p className="text-xs text-gray-400 mt-1">Multi-factor authentication is managed at the login screen</p>
       </div>
       <div className="p-5">
-        {showEnroll ? (
-          <MFAEnroll
-            onComplete={() => { setShowEnroll(false); setMfaEnabled(true) }}
-            onCancel={() => setShowEnroll(false)}
-          />
-        ) : mfaEnabled ? (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-green-50 flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M3 8.5l3 3 7-7" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Two-factor authentication is enabled</p>
-                <p className="text-xs text-gray-500">Your account is protected with an authenticator app</p>
-              </div>
-            </div>
-            <button
-              onClick={handleUnenroll}
-              disabled={unenrolling}
-              className="text-sm text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
-            >
-              {unenrolling ? 'Disabling...' : 'Disable'}
-            </button>
+        <div className="flex items-start gap-3">
+          <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center flex-shrink-0">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 1l6 3v4c0 4-3 6-6 7-3-1-6-3-6-7V4l6-3z" stroke="#2563eb" strokeWidth="1.5" strokeLinejoin="round" />
+              <path d="M5 8l2 2 4-4" stroke="#2563eb" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </div>
-        ) : (
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-full bg-amber-50 flex items-center justify-center">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                  <path d="M8 2l-6 12h12L8 2z" stroke="#d97706" strokeWidth="1.5" strokeLinejoin="round" />
-                  <path d="M8 7v3M8 12v0.5" stroke="#d97706" strokeWidth="1.5" strokeLinecap="round" />
-                </svg>
-              </div>
-              <div>
-                <p className="text-sm font-medium text-gray-900">Two-factor authentication is not enabled</p>
-                <p className="text-xs text-gray-500">Add an extra layer of security to your account</p>
-              </div>
-            </div>
-            <button
-              onClick={() => setShowEnroll(true)}
-              className="px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
-              style={{ backgroundColor: '#1f375d' }}
-            >
-              Enable 2FA
-            </button>
+          <div className="flex-1">
+            <p className="text-sm font-medium text-gray-900">Multi-factor authentication</p>
+            <p className="text-xs text-gray-500 mt-1">
+              Two-factor authentication for your Harbor account is managed through
+              the Harbor login screen. To set up or change MFA, sign out and use
+              the &quot;Manage account&quot; option on the login page, or contact
+              support at hello@harborreceptionist.com.
+            </p>
           </div>
-        )}
+        </div>
       </div>
     </div>
   )
@@ -275,7 +213,6 @@ export default function SettingsPage() {
   const [therapistError, setTherapistError] = useState<string | null>(null)
 
   const searchParams = useSearchParams()
-  const supabase = createClient()
 
   // Use the server-side practice resolver to respect act-as cookie
   const { practice: resolvedPractice, loading: practiceLoading, error: practiceError } = usePractice()
@@ -456,8 +393,8 @@ export default function SettingsPage() {
   const loadTherapists = useCallback(async () => {
     setTherapistsLoading(true)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { setTherapistsLoading(false); return }
+      // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
+if (!session) { setTherapistsLoading(false); return }
       const res = await fetch('/api/therapists', {
         headers: { Authorization: `Bearer ${session.access_token}` },
       })
@@ -467,7 +404,7 @@ export default function SettingsPage() {
       }
     } catch {}
     setTherapistsLoading(false)
-  }, [supabase])
+  }, [])
 
   useEffect(() => {
     if (!practiceLoading && resolvedPractice) loadTherapists()
@@ -626,15 +563,14 @@ export default function SettingsPage() {
     setTherapistSaving(true)
     setTherapistError(null)
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) { setTherapistSaving(false); return }
+      // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
+if (!session) { setTherapistSaving(false); return }
       const url = editingTherapistId ? `/api/therapists/${editingTherapistId}` : '/api/therapists'
       const method = editingTherapistId ? 'PATCH' : 'POST'
       const res = await fetch(url, {
         method,
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           display_name: therapistForm.display_name.trim(),
@@ -661,8 +597,8 @@ export default function SettingsPage() {
   const handleTherapistDelete = async (id: string) => {
     if (!confirm('Remove this therapist from the active roster? Their record is kept for history and can be reactivated later.')) return
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      if (!session) return
+      // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
+if (!session) return
       const res = await fetch(`/api/therapists/${id}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${session.access_token}` },

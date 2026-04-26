@@ -1,12 +1,13 @@
 // app/dashboard/ehr/notes/new/page.tsx
-// Create a new progress note. Server component fetches the patient list
-// (so the form can populate the dropdown), then renders the client editor.
+//
+// Wave 21 (AWS port). Server component — Cognito + pool. Fetches the
+// patient list to populate the editor dropdown and (optionally) resolves
+// patient_id from a pre-filled appointment_id.
 
 import Link from 'next/link'
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
+import { redirect } from 'next/navigation'
 import { ChevronLeft } from 'lucide-react'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { NoteEditor, type NoteFormValue } from '@/components/ehr/NoteEditor'
 import { NOTE_TEMPLATES } from '@/lib/ehr/note-templates'
@@ -20,47 +21,29 @@ export default async function NewNotePage({
   searchParams: Promise<{ patient_id?: string; appointment_id?: string; template?: string }>
 }) {
   const { patient_id: prefilledPatientId, appointment_id: prefilledAppointmentId, template: templateId } = await searchParams
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }: any) => {
-              cookieStore.set(name, value, options)
-            })
-          } catch {}
-        },
-      },
-    },
-  )
-  const { data: { user } } = await supabase.auth.getUser()
-  const practiceId = await getEffectivePracticeId(supabaseAdmin, user)
+
+  const practiceId = await getEffectivePracticeId(null)
+  if (!practiceId) redirect('/dashboard')
 
   // If appointment_id was passed but patient_id wasn't, resolve the
   // patient from the appointment so the editor's dropdown lands on it.
   let resolvedPatientId = prefilledPatientId
   if (!resolvedPatientId && prefilledAppointmentId) {
-    const { data: appt } = await supabaseAdmin
-      .from('appointments')
-      .select('patient_id')
-      .eq('id', prefilledAppointmentId)
-      .eq('practice_id', practiceId!)
-      .maybeSingle()
-    if (appt?.patient_id) resolvedPatientId = appt.patient_id
+    const { rows } = await pool.query<{ patient_id: string }>(
+      `SELECT patient_id FROM appointments
+        WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+      [prefilledAppointmentId, practiceId],
+    )
+    if (rows[0]?.patient_id) resolvedPatientId = rows[0].patient_id
   }
 
-  const { data: patients = [] } = await supabaseAdmin
-    .from('patients')
-    .select('id, first_name, last_name')
-    .eq('practice_id', practiceId!)
-    .order('last_name', { ascending: true })
+  const { rows: patients } = await pool.query<{ id: string; first_name: string; last_name: string }>(
+    `SELECT id, first_name, last_name FROM patients
+      WHERE practice_id = $1 AND deleted_at IS NULL
+      ORDER BY last_name NULLS LAST, first_name NULLS LAST`,
+    [practiceId],
+  )
 
-  // If ?patient_id=X or ?template=Y is passed, seed the editor with a
-  // partially-filled NoteFormValue. Templates come from NOTE_TEMPLATES.
   const tpl = templateId ? NOTE_TEMPLATES.find((t) => t.id === templateId) : undefined
   const initial: NoteFormValue | undefined = (resolvedPatientId || tpl || prefilledAppointmentId)
     ? {
@@ -101,7 +84,7 @@ export default async function NewNotePage({
       )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <NoteEditor patients={patients ?? []} mode="create" initial={initial} />
+        <NoteEditor patients={patients} mode="create" initial={initial} />
       </div>
     </div>
   )

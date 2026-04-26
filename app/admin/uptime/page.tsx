@@ -1,9 +1,7 @@
 "use client"
 
 import { useState, useEffect, useCallback } from "react"
-import { createClient } from "@/lib/supabase-browser"
 
-const supabase = createClient()
 
 type SentryIssue = {
   id: string
@@ -128,10 +126,10 @@ export default function UptimeDashboard() {
   const [period, setPeriod] = useState(30)
   const [error, setError] = useState<string | null>(null)
 
-  const getToken = useCallback(async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    return session?.access_token || ""
-  }, [])
+  // Wave 21: Cognito session cookie is auto-attached on same-origin fetches.
+  // getToken() retained as a no-op so existing fetch sites compile; the
+  // returned empty string just means no Authorization header is set.
+  const getToken = useCallback(async () => '', [])
 
   const fetchLive = useCallback(async () => {
     try {

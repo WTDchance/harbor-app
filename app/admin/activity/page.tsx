@@ -1,8 +1,13 @@
 'use client'
 
+// Wave 21: supabase-browser is now a no-op stub (returns empty arrays).
+// Pages still call supabase.from() against it; full rewrite to AWS API
+// fetches lands in Wave 23. Auth redirects are gone — pages render empty.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
+
 import { useState, useEffect } from 'react'
 import { Phone, Clock, AlertTriangle } from 'lucide-react'
-import { createClient } from '@/lib/supabase-browser'
 
 interface ActivityLog {
   id: string
@@ -69,7 +74,6 @@ export default function AdminActivityPage() {
   const [arrivals, setArrivals] = useState<PatientArrival[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | 'crisis' | '24h' | '7d'>('all')
-  const supabase = createClient()
 
   useEffect(() => {
     const fetchLogs = async () => {
@@ -93,7 +97,7 @@ export default function AdminActivityPage() {
     }
 
     fetchLogs()
-  }, [filter, supabase])
+  }, [filter])
 
   useEffect(() => {
     const fetchArrivals = async () => {
@@ -106,7 +110,7 @@ export default function AdminActivityPage() {
     }
 
     fetchArrivals()
-  }, [supabase])
+  }, [])
 
   const crisisCount = logs.filter(l => l.crisis_detected).length
   const today = logs.filter(l => {

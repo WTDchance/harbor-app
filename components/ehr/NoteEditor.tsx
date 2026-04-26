@@ -6,7 +6,6 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClient } from '@/lib/supabase-browser'
 import { CodePicker } from '@/components/ehr/CodePicker'
 import { CPT_CODES, ICD10_CODES } from '@/lib/ehr/codes'
 import { Target } from 'lucide-react'
@@ -40,7 +39,6 @@ type Props = {
 
 export function NoteEditor({ patients, initial, mode }: Props) {
   const router = useRouter()
-  const supabase = createClient()
 
   const [form, setForm] = useState<NoteFormValue>(
     initial ?? {

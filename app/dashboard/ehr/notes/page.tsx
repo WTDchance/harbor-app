@@ -3,10 +3,9 @@
 // with a practice_id filter resolved from the current user.
 
 import Link from 'next/link'
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
+import { redirect } from 'next/navigation'
 import { FileText, Plus } from 'lucide-react'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 
 export const dynamic = 'force-dynamic'
@@ -14,7 +13,7 @@ export const dynamic = 'force-dynamic'
 type NoteRow = {
   id: string
   title: string
-  note_format: string
+  format: string
   status: string
   created_at: string
   updated_at: string
@@ -22,41 +21,32 @@ type NoteRow = {
 }
 
 export default async function EhrNotesListPage() {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }: any) => {
-              cookieStore.set(name, value, options)
-            })
-          } catch {}
-        },
-      },
-    },
+  // Wave 21: Cognito + pool. The /dashboard/ehr layout already gates on
+  // ehr_enabled + Cognito session, so by the time we get here we have a
+  // valid session — but practice_id may still be null for users with no
+  // users row, in which case we redirect to /dashboard.
+  const practiceId = await getEffectivePracticeId(null)
+  if (!practiceId) redirect('/dashboard')
+
+  const { rows: notes } = await pool.query<NoteRow>(
+    `SELECT id, title, format, status, created_at, updated_at, patient_id
+       FROM ehr_progress_notes
+      WHERE practice_id = $1
+      ORDER BY created_at DESC
+      LIMIT 200`,
+    [practiceId],
   )
-  const { data: { user } } = await supabase.auth.getUser()
-  const practiceId = await getEffectivePracticeId(supabaseAdmin, user)
 
-  const { data: notes = [] } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .select('id, title, note_format, status, created_at, updated_at, patient_id')
-    .eq('practice_id', practiceId!)
-    .order('created_at', { ascending: false })
-    .limit(200)
-
-  const patientIds = Array.from(new Set((notes ?? []).map((n: NoteRow) => n.patient_id)))
-  const { data: patients = [] } = patientIds.length
-    ? await supabaseAdmin
-        .from('patients')
-        .select('id, first_name, last_name')
-        .in('id', patientIds)
-    : { data: [] as { id: string; first_name: string; last_name: string }[] }
-  const patientMap = new Map((patients ?? []).map((p: any) => [p.id, p]))
+  const patientIds = Array.from(new Set(notes.map((n) => n.patient_id)))
+  const patientMap = new Map<string, { id: string; first_name: string; last_name: string }>()
+  if (patientIds.length > 0) {
+    const { rows: patients } = await pool.query<{ id: string; first_name: string; last_name: string }>(
+      `SELECT id, first_name, last_name FROM patients
+        WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
+      [patientIds],
+    )
+    for (const p of patients) patientMap.set(p.id, p)
+  }
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-4">
@@ -107,7 +97,7 @@ export default async function EhrNotesListPage() {
                         <div className="text-xs text-gray-500 mt-1">
                           {patient ? `${patient.first_name} ${patient.last_name}` : 'Unknown patient'}
                           {' · '}
-                          {n.note_format.toUpperCase()}
+                          {n.format.toUpperCase()}
                           {' · '}
                           Last updated {formatDate(n.updated_at)}
                         </div>

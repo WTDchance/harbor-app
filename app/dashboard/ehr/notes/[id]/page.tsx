@@ -4,11 +4,9 @@
 //   - signed/amended: show read-only view with signed metadata
 
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
-import { cookies } from 'next/headers'
-import { createServerClient } from '@supabase/ssr'
+import { notFound, redirect } from 'next/navigation'
 import { ChevronLeft, GitBranch } from 'lucide-react'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
 import { getEffectivePracticeId } from '@/lib/active-practice'
 import { NoteEditor, type NoteFormValue } from '@/components/ehr/NoteEditor'
 import { SignButton } from './SignButton'
@@ -24,53 +22,35 @@ export default async function NoteDetailPage({
 }) {
   const { id } = await params
 
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }: any) => {
-              cookieStore.set(name, value, options)
-            })
-          } catch {}
-        },
-      },
-    },
+  const practiceId = await getEffectivePracticeId(null)
+  if (!practiceId) redirect('/dashboard')
+
+  const { rows: noteRows } = await pool.query(
+    `SELECT * FROM ehr_progress_notes WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [id, practiceId],
   )
-  const { data: { user } } = await supabase.auth.getUser()
-  const practiceId = await getEffectivePracticeId(supabaseAdmin, user)
-
-  const { data: note } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .select('*')
-    .eq('id', id)
-    .eq('practice_id', practiceId!)
-    .maybeSingle()
-
+  const note = noteRows[0]
   if (!note) return notFound()
 
-  const { data: patients = [] } = await supabaseAdmin
-    .from('patients')
-    .select('id, first_name, last_name')
-    .eq('practice_id', practiceId!)
-    .order('last_name', { ascending: true })
+  const { rows: patients } = await pool.query<{ id: string; first_name: string; last_name: string }>(
+    `SELECT id, first_name, last_name FROM patients
+      WHERE practice_id = $1 AND deleted_at IS NULL
+      ORDER BY last_name NULLS LAST, first_name NULLS LAST`,
+    [practiceId],
+  )
 
   const initial: NoteFormValue = {
     id: note.id,
     patient_id: note.patient_id,
     title: note.title,
-    note_format: note.note_format,
+    note_format: note.format ?? note.note_format ?? 'soap',
     subjective: note.subjective,
     objective: note.objective,
     assessment: note.assessment,
-    plan: note.plan,
-    body: note.body,
-    cpt_codes: note.cpt_codes,
-    icd10_codes: note.icd10_codes,
+    plan: note.plan ?? note.plan_text ?? null,
+    body: note.body ?? note.content ?? null,
+    cpt_codes: Array.isArray(note.cpt_codes) ? note.cpt_codes : (note.cpt_code ? [note.cpt_code] : []),
+    icd10_codes: Array.isArray(note.icd10_codes) ? note.icd10_codes : (Array.isArray(note.icd_codes) ? note.icd_codes : []),
     status: note.status,
   }
 
@@ -80,20 +60,21 @@ export default async function NoteDetailPage({
   // Lineage — if this note amends another, or has amendments pointing at it.
   let parent: { id: string; title: string; signed_at: string | null } | null = null
   if (note.amendment_of) {
-    const { data } = await supabaseAdmin
-      .from('ehr_progress_notes')
-      .select('id, title, signed_at')
-      .eq('id', note.amendment_of)
-      .eq('practice_id', practiceId!)
-      .maybeSingle()
-    if (data) parent = data
+    const { rows: parentRows } = await pool.query(
+      `SELECT id, title, signed_at FROM ehr_progress_notes
+        WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+      [note.amendment_of, practiceId],
+    )
+    if (parentRows[0]) parent = parentRows[0] as any
   }
-  const { data: childAmendments = [] } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .select('id, title, status, created_at, signed_at')
-    .eq('amendment_of', note.id)
-    .eq('practice_id', practiceId!)
-    .order('created_at', { ascending: true })
+  const { rows: childAmendments } = await pool.query<{
+    id: string; title: string; status: string; created_at: string; signed_at: string | null
+  }>(
+    `SELECT id, title, status, created_at, signed_at FROM ehr_progress_notes
+      WHERE amendment_of = $1 AND practice_id = $2
+      ORDER BY created_at ASC`,
+    [note.id, practiceId],
+  )
 
   return (
     <div className="max-w-3xl mx-auto py-8 px-4">
@@ -109,7 +90,7 @@ export default async function NoteDetailPage({
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold text-gray-900">{note.title}</h1>
           <div className="text-xs text-gray-500 mt-1 uppercase tracking-wide">
-            {note.note_format} · {note.status}
+            {note.format ?? note.note_format} · {note.status}
             {note.signed_at && (
               <> · signed {new Date(note.signed_at).toLocaleString()}</>
             )}
@@ -171,7 +152,7 @@ export default async function NoteDetailPage({
       )}
 
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <NoteEditor patients={patients ?? []} mode="edit" initial={initial} />
+        <NoteEditor patients={patients} mode="edit" initial={initial} />
       </div>
     </div>
   )

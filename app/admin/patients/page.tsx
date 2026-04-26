@@ -1,12 +1,16 @@
 "use client";
+
+// Wave 21: supabase-browser is now a no-op stub (returns empty arrays).
+// Pages still call supabase.from() against it; full rewrite to AWS API
+// fetches lands in Wave 23. Auth redirects are gone — pages render empty.
+import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
 // app/admin/patients/page.tsx
 // Admin-only patient management — hard delete patients and all related records
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
 
-const supabase = createClient();
 
 export default function AdminPatientsPage() {
   const router = useRouter();
@@ -23,9 +27,7 @@ export default function AdminPatientsPage() {
   }, []);
 
   async function checkAdminAndLoad() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { router.push("/login"); return; }
-
+    // Wave 21: auth gate happens in middleware. Just hit the API.
     // Check admin status via API
     const res = await fetch("/api/auth/me");
     if (res.ok) {

@@ -2,7 +2,6 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import { createClient } from '@/lib/supabase-browser'
 import clsx from 'clsx'
 import { useState, useEffect } from 'react'
 import {
@@ -39,7 +38,6 @@ const COLLAPSED_KEY = 'harbor_admin_sidebar_collapsed'
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const supabase = createClient()
   const [mobileOpen, setMobileOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
 
@@ -62,8 +60,9 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   }
 
   const handleSignOut = async () => {
-    await supabase.auth.signOut()
-    window.location.href = '/login'
+    // Wave 21: Cognito logout — /api/auth/logout clears harbor_id +
+    // harbor_access cookies and redirects to /login/aws.
+    window.location.href = '/api/auth/logout'
   }
 
   const sidebarWidth = collapsed ? 'md:w-16' : 'md:w-64'

@@ -1,7 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+// Wave 21: supabase-browser is now a no-op stub (returns empty arrays).
+// Pages still call supabase.from() against it; full rewrite to AWS API
+// fetches lands in Wave 23. Auth redirects are gone — pages render empty.
 import { createClient } from '@/lib/supabase-browser'
+const supabase = createClient()
+
+import { useState, useEffect, useCallback } from 'react'
 import { Shield, Download, Search, ChevronLeft, ChevronRight, Filter } from 'lucide-react'
 
 interface AuditLog {
@@ -51,7 +56,6 @@ export default function AdminAuditPage() {
   })
   const [toDate, setToDate] = useState(() => new Date().toISOString().slice(0, 10))
 
-  const supabase = createClient()
 
   // Load practices for dropdown
   useEffect(() => {
