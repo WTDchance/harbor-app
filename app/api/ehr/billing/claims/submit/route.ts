@@ -1,18 +1,27 @@
-// app/api/ehr/billing/claims/submit/route.ts
-// Batch-submit one or more charges as claims to Stedi.
-// Body: { charge_ids: string[] }
-// Respects practices.stedi_mode (sandbox | production).
+// Batch-submit charges as claims to Stedi.
+// Body: { charge_ids: string[] }   (max 50)
+// Respects practices.stedi_mode — 'production' hits Stedi, anything else
+// (default 'sandbox') synthesizes accepted responses without burning the API.
+//
+// Per-charge transactional persistence in lib/aws/stedi/claims so a partial
+// batch failure doesn't leave inconsistent rows.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
-import { submitClaimsForCharges } from '@/lib/ehr/stedi-claim'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { submitClaimsForCharges } from '@/lib/aws/stedi/claims'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const body = await req.json().catch(() => null)
-  const ids = Array.isArray(body?.charge_ids) ? body.charge_ids.filter((x: any) => typeof x === 'string') : []
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const body = await req.json().catch(() => null) as any
+  const ids = Array.isArray(body?.charge_ids)
+    ? body.charge_ids.filter((x: any) => typeof x === 'string')
+    : []
   if (ids.length === 0) {
     return NextResponse.json({ error: 'charge_ids (array) required' }, { status: 400 })
   }
@@ -21,22 +30,20 @@ export async function POST(req: NextRequest) {
   }
 
   const results = await submitClaimsForCharges({
-    supabase: supabaseAdmin,
-    practiceId: auth.practiceId,
+    practiceId: ctx.practiceId!,
     chargeIds: ids,
   })
 
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.update',
-    resourceId: 'batch',
+    ctx,
+    action: 'billing.claims.submit',
+    resourceType: 'ehr_claims_batch',
     details: {
-      kind: 'claim_submission_batch',
       count: ids.length,
-      submitted: results.filter((r) => r.status === 'submitted').length,
-      rejected: results.filter((r) => r.status === 'rejected').length,
-      errors: results.filter((r) => r.status === 'error').length,
+      submitted: results.filter(r => r.status === 'submitted').length,
+      rejected: results.filter(r => r.status === 'rejected').length,
+      errors: results.filter(r => r.status === 'error').length,
     },
-    severity: 'warn',
   })
 
   return NextResponse.json({ results })

@@ -60,6 +60,19 @@ export type EhrAuditAction =
   | 'intake.resend'
   | 'intake.submit'
   | 'intake.document.upload'
+  | 'billing.subscription.created'
+  | 'billing.subscription.updated'
+  | 'billing.subscription.cancelled'
+  | 'billing.invoice.paid'
+  | 'billing.invoice.failed'
+  | 'billing.invoice.voided'
+  | 'billing.invoice.finalized'
+  | 'billing.invoice.action_required'
+  | 'billing.payment.failed'
+  | 'billing.claims.submit'
+  | 'billing.superbill.generate'
+  | 'billing.portal.session'
+  | 'provision.checkout_completed'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

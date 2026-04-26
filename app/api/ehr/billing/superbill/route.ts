@@ -1,75 +1,101 @@
-// app/api/ehr/billing/superbill/route.ts
-// Generate a superbill PDF (printable HTML) for a patient over a date
-// range. Snapshot is stored in ehr_superbills so the document is
-// reproducible even if charges change later.
+// Superbill HTML generator (printable PDF via the browser's Print dialog).
+//
+// Snapshots the charge list into ehr_superbills so the document is
+// reproducible even if charges later change. HTML render lifted VERBATIM
+// from legacy — clinicians review these as legal billing records.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { centsToDollars } from '@/lib/ehr/billing'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 export async function GET(req: NextRequest) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
-  const { searchParams } = new URL(req.url)
-  const patientId = searchParams.get('patient_id')
-  const from = searchParams.get('from')
-  const to = searchParams.get('to')
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const sp = req.nextUrl.searchParams
+  const patientId = sp.get('patient_id')
+  const from = sp.get('from')
+  const to = sp.get('to')
   if (!patientId || !from || !to) {
     return NextResponse.json({ error: 'patient_id, from, to required' }, { status: 400 })
   }
 
-  const [practice, patient, charges] = await Promise.all([
-    supabaseAdmin.from('practices').select('name, billing_tax_id, billing_npi, billing_address, phone_number').eq('id', auth.practiceId).maybeSingle(),
-    supabaseAdmin.from('patients').select('first_name, last_name, date_of_birth, phone, email').eq('id', patientId).eq('practice_id', auth.practiceId).maybeSingle(),
-    supabaseAdmin.from('ehr_charges')
-      .select('id, cpt_code, units, fee_cents, allowed_cents, service_date, place_of_service, note_id')
-      .eq('practice_id', auth.practiceId).eq('patient_id', patientId)
-      .gte('service_date', from).lte('service_date', to)
-      .order('service_date', { ascending: true }),
+  const [practiceRes, patientRes, chargesRes] = await Promise.all([
+    pool.query(
+      `SELECT name, billing_tax_id, billing_npi, billing_address, phone_number
+         FROM practices WHERE id = $1 LIMIT 1`,
+      [ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+    pool.query(
+      `SELECT first_name, last_name, date_of_birth, phone, email
+         FROM patients WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+      [patientId, ctx.practiceId],
+    ),
+    pool.query(
+      `SELECT id, cpt_code, units, fee_cents, allowed_cents,
+              service_date, place_of_service, note_id
+         FROM ehr_charges
+        WHERE practice_id = $1 AND patient_id = $2
+          AND service_date >= $3::date AND service_date <= $4::date
+        ORDER BY service_date ASC`,
+      [ctx.practiceId, patientId, from, to],
+    ),
   ])
 
-  if (!patient.data) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
-  const rows = charges.data ?? []
+  const practice = practiceRes.rows[0]
+  const patient = patientRes.rows[0]
+  if (!patient) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
 
-  // Fetch icd10 codes from the notes linked to each charge (for the superbill)
-  const noteIds = rows.map((r: any) => r.note_id).filter(Boolean)
-  const { data: notes } = noteIds.length
-    ? await supabaseAdmin.from('ehr_progress_notes').select('id, icd10_codes').in('id', noteIds)
-    : { data: [] as any[] }
-  const icdByNote = new Map((notes ?? []).map((n: any) => [n.id, n.icd10_codes || []]))
+  const rows = chargesRes.rows
 
-  const total = rows.reduce((s: number, r: any) => s + Number(r.allowed_cents), 0)
+  // ICD-10 codes from the linked notes.
+  const noteIds = rows.map(r => r.note_id).filter(Boolean)
+  let icdByNote = new Map<string, string[]>()
+  if (noteIds.length > 0) {
+    const { rows: notes } = await pool.query(
+      `SELECT id, icd10_codes FROM ehr_progress_notes
+        WHERE id = ANY($1::uuid[])`,
+      [noteIds],
+    ).catch(() => ({ rows: [] as any[] }))
+    icdByNote = new Map(notes.map((n: any) => [n.id, n.icd10_codes || []]))
+  }
 
-  // Persist snapshot
-  await supabaseAdmin.from('ehr_superbills').insert({
-    practice_id: auth.practiceId,
-    patient_id: patientId,
-    from_date: from,
-    to_date: to,
-    charges_snapshot_json: rows,
-    total_cents: total,
-    generated_by: auth.user.id,
-  })
+  const total = rows.reduce((s, r) => s + Number(r.allowed_cents), 0)
+
+  // Persist snapshot — single insert.
+  await pool.query(
+    `INSERT INTO ehr_superbills (
+       practice_id, patient_id, from_date, to_date,
+       charges_snapshot_json, total_cents, generated_by
+     ) VALUES ($1, $2, $3::date, $4::date, $5::jsonb, $6, $7)`,
+    [ctx.practiceId, patientId, from, to, JSON.stringify(rows), total, ctx.user.id],
+  ).catch(err => console.error('[superbill] snapshot insert failed:', err.message))
 
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.view',
-    resourceId: patientId, details: { kind: 'superbill', from, to, total_cents: total, line_count: rows.length },
+    ctx,
+    action: 'billing.superbill.generate',
+    resourceType: 'ehr_superbill',
+    resourceId: patientId,
+    details: { from, to, total_cents: total, line_count: rows.length },
   })
 
-  const html = render({
-    practice: practice.data,
-    patient: patient.data,
-    rows,
-    icdByNote,
-    from, to, total,
+  const html = render({ practice, patient, rows, icdByNote, from, to, total })
+  return new NextResponse(html, {
+    status: 200,
+    headers: { 'Content-Type': 'text/html; charset=utf-8' },
   })
-  return new NextResponse(html, { status: 200, headers: { 'Content-Type': 'text/html; charset=utf-8' } })
 }
 
 function esc(s: any): string {
   if (s == null) return ''
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+  return String(s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!),
+  )
 }
 
 function render(d: any): string {

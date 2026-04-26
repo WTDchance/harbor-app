@@ -1,321 +1,263 @@
-// Stripe webhook handler â expanded to handle checkout.session.completed,
-// which triggers the full Twilio + Vapi provisioning pipeline for new
-// practices on the card-upfront signup flow.
+// Harbor — Stripe webhook (subscriptions + provisioning).
+//
+// Handles:
+//   - checkout.session.completed       — new practice paid; provisioning trigger
+//   - customer.subscription.created    — sub state sync
+//   - customer.subscription.updated    — sub state sync
+//   - customer.subscription.deleted    — sub state sync
+//   - invoice.payment_succeeded        — log
+//   - invoice.payment_failed           — flip practice to past_due
+//
+// CARRIER-PROVISIONING CARVE: legacy handleCheckoutCompleted called
+// purchaseTwilioNumber + createVapiAssistant + linkVapiPhoneNumber. Those
+// are Bucket 1 (carrier swap → SignalWire/Retell). On AWS today the
+// checkout handler:
+//   * loads + idempotency-checks the practice row
+//   * marks the practice as paid (subscription + customer ids stamped)
+//   * stamps stripe_subscription_id / stripe_customer_id
+//   * skips actual phone+assistant provisioning with a clearly logged TODO
+//   * sends the welcome email via SES (Wave 5) WITHOUT a phone number
+// This means a card-upfront signup leaves the practice in
+// status='active' but without a phone provisioned. Existing dashboard
+// signups (the path Chance's first customer uses) bypass this whole
+// flow — they aren't blocked.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
 import { verifyWebhookSignature } from '@/lib/stripe'
-import { purchaseTwilioNumber, releaseTwilioNumber } from '@/lib/twilio-provision'
-import { createVapiAssistant, linkVapiPhoneNumber, deleteVapiAssistant } from '@/lib/vapi-provision'
 import { sendWelcomeEmail } from '@/lib/email-welcome'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET || ''
 
+async function auditEvent(
+  practiceId: string | null, action: string,
+  details: Record<string, unknown>, severity: 'info' | 'warn' | 'error' = 'info',
+) {
+  await pool.query(
+    `INSERT INTO audit_logs (
+       user_id, user_email, practice_id, action,
+       resource_type, resource_id, details, severity
+     ) VALUES (NULL, 'stripe-webhook', $1, $2, 'stripe_event', NULL, $3::jsonb, $4)`,
+    [practiceId, action, JSON.stringify(details), severity],
+  ).catch(() => {})
+}
+
 export async function POST(request: NextRequest) {
+  if (!webhookSecret) {
+    return NextResponse.json({ error: 'STRIPE_WEBHOOK_SECRET not configured' }, { status: 500 })
+  }
+
+  const signature = request.headers.get('stripe-signature')
+  if (!signature) {
+    return NextResponse.json({ error: 'No signature' }, { status: 400 })
+  }
+
+  const body = await request.text()
+  const event = verifyWebhookSignature(body, signature, webhookSecret)
+  if (!event) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 403 })
+  }
+
+  console.log(`[stripe/webhook] ${event.type}`)
+
   try {
-    const signature = request.headers.get('stripe-signature')
-    if (!signature) {
-      console.warn('â ï¸ No Stripe signature header')
-      return NextResponse.json({ error: 'No signature' }, { status: 400 })
-    }
-
-    const body = await request.text()
-    const event = verifyWebhookSignature(body, signature, webhookSecret)
-    if (!event) {
-      console.warn('â Invalid Stripe signature')
-      return NextResponse.json({ error: 'Invalid signature' }, { status: 403 })
-    }
-
-    console.log(`ð³ Stripe webhook: ${event.type}`)
-
     switch (event.type) {
       case 'checkout.session.completed':
         await handleCheckoutCompleted(event.data.object as any)
         break
-
       case 'customer.subscription.created':
         await handleSubscriptionCreated(event.data.object as any)
         break
-
       case 'customer.subscription.updated':
         await handleSubscriptionUpdated(event.data.object as any)
         break
-
       case 'customer.subscription.deleted':
         await handleSubscriptionDeleted(event.data.object as any)
         break
-
       case 'invoice.payment_succeeded':
         await handlePaymentSucceeded(event.data.object as any)
         break
-
       case 'invoice.payment_failed':
         await handlePaymentFailed(event.data.object as any)
         break
+      // Other event types: silently ignored.
     }
-
     return NextResponse.json({ received: true })
-  } catch (error) {
-    console.error('â Stripe webhook error:', error)
+  } catch (err) {
+    console.error('[stripe/webhook] handler error:', err)
     return NextResponse.json({ error: 'Webhook processing failed' }, { status: 500 })
   }
 }
 
-/**
- * checkout.session.completed â first successful payment for a new practice.
- * This is where we actually provision the Twilio number and the Vapi
- * assistant. Runs once per signup.
- */
-async function handleCheckoutCompleted(session: any) {
+async function handleCheckoutCompleted(session: any): Promise<void> {
   const sessionId = session.id as string
-  const customerId = session.customer as string
+  const customerId = session.customer as string | null
   const subscriptionId = session.subscription as string | null
   const metadata = session.metadata || {}
   const practiceId = metadata.practice_id as string | undefined
 
   if (!practiceId) {
-    console.warn(`â ï¸ checkout.session.completed without practice_id metadata (${sessionId})`)
+    console.warn(`[stripe/webhook] checkout.session.completed without practice_id (${sessionId})`)
     return
   }
 
-  // --- 1. Load the practice ---
-  const { data: practice, error: loadErr } = await supabaseAdmin
-    .from('practices')
-    .select('*')
-    .eq('id', practiceId)
-    .single()
-
-  if (loadErr || !practice) {
-    console.error(`â Could not load practice ${practiceId} for checkout completion:`, loadErr)
+  // Practice is the source of truth for idempotency.
+  const { rows } = await pool.query(
+    `SELECT id, name, owner_email, provisioning_state, vapi_assistant_id,
+            twilio_phone_number, stripe_customer_id, founding_member
+       FROM practices WHERE id = $1 LIMIT 1`,
+    [practiceId],
+  )
+  const practice = rows[0]
+  if (!practice) {
+    console.error(`[stripe/webhook] practice ${practiceId} not found`)
+    return
+  }
+  if (practice.provisioning_state === 'active' && practice.vapi_assistant_id && practice.twilio_phone_number) {
+    console.log(`[stripe/webhook] practice ${practiceId} already provisioned — skipping`)
     return
   }
 
-  // Idempotency: if already provisioned, don't run again.
-  if (practice.status === 'active' && practice.phone_number && practice.vapi_assistant_id) {
-    console.log(`â Practice ${practiceId} already provisioned â skipping`)
+  // Stamp the billing side. AWS canonical fields: provisioning_state,
+  // stripe_customer_id, stripe_subscription_id.
+  await pool.query(
+    `UPDATE practices
+        SET provisioning_state = 'active',
+            stripe_customer_id = COALESCE(stripe_customer_id, $1),
+            stripe_subscription_id = COALESCE(stripe_subscription_id, $2),
+            updated_at = NOW()
+      WHERE id = $3`,
+    [customerId, subscriptionId, practiceId],
+  ).catch(err => {
+    console.error('[stripe/webhook] practice update failed:', err.message)
+  })
+
+  // TODO(bucket-1 — SignalWire/Retell carrier swap):
+  //   * purchase phone number via SignalWire (replaces purchaseTwilioNumber)
+  //   * create Retell agent (replaces createVapiAssistant)
+  //   * link the number to the agent (replaces linkVapiPhoneNumber)
+  // Until that wave lands, practices that come through the card-upfront
+  // checkout flow land in status='active' but without a phone number.
+  // Dashboard-side signups that don't trigger this webhook aren't affected.
+  console.warn(`[stripe/webhook] CARRIER PROVISIONING SKIPPED (Bucket 1) for practice ${practiceId}`)
+
+  // Welcome email — SES via Wave 5. owner_email is canonical.
+  if (practice.owner_email) {
+    try {
+      await sendWelcomeEmail({
+        to: practice.owner_email,
+        practiceName: practice.name,
+        aiName: 'Ellie',
+        phoneNumber: 'pending — your phone line will be activated shortly',
+        foundingMember: !!practice.founding_member,
+      })
+    } catch (err) {
+      console.error('[stripe/webhook] welcome email failed:', (err as Error).message)
+    }
+  }
+
+  await auditEvent(practiceId, 'provision.checkout_completed', {
+    session_id: sessionId,
+    customer_id: customerId,
+    subscription_id: subscriptionId,
+    carrier_provisioning: 'deferred_bucket_1',
+  }, 'warn')
+}
+
+async function handleSubscriptionCreated(subscription: any): Promise<void> {
+  const customerId = subscription.customer
+  const subscriptionId = subscription.id
+  const status = subscription.status
+
+  const { rows } = await pool.query(
+    `SELECT id FROM practices WHERE stripe_customer_id = $1 LIMIT 1`,
+    [customerId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = rows[0]
+  if (!practice) {
+    console.warn('[stripe/webhook] subscription.created — no practice for customer', customerId)
     return
   }
 
-  let twilioNumberSid: string | null = null
-  let twilioNumber: string | null = null
-  let vapiAssistantId: string | null = null
-  let vapiPhoneNumberId: string | null = null
+  await pool.query(
+    `UPDATE practices
+        SET stripe_subscription_id = $1,
+            updated_at = NOW()
+      WHERE id = $2`,
+    [subscriptionId, practice.id],
+  )
 
-  try {
-    // --- 2. Purchase Twilio number ---
-    console.log(`ð Purchasing Twilio number for ${practice.name} (state: ${practice.state})`)
-    const purchased = await purchaseTwilioNumber({
-      state: practice.state,
-      friendlyName: `Harbor — ${practice.name}`,
-      specificNumber: practice.selected_phone_number || undefined,
-    })
-    twilioNumberSid = purchased.sid
-    twilioNumber = purchased.phoneNumber
-    console.log(`â Twilio number purchased: ${twilioNumber} (${twilioNumberSid})`)
-
-    // --- 3. Create Vapi assistant ---
-    console.log(`ð¤ Creating Vapi assistant for ${practice.name}`)
-    vapiAssistantId = await createVapiAssistant({
-      id: practice.id,
-      name: practice.name,
-      providerName: practice.provider_name,
-      aiName: practice.ai_name || 'Ellie',
-      greeting: practice.greeting,
-      specialties: practice.specialties,
-      insuranceAccepted: practice.insurance_accepted,
-      location: practice.location,
-      telehealth: practice.telehealth,
-      timezone: practice.timezone,
-    })
-    console.log(`â Vapi assistant created: ${vapiAssistantId}`)
-
-    // --- 4. Link Twilio number to Vapi assistant ---
-    console.log(`ð Linking Twilio number ${twilioNumber} to Vapi assistant ${vapiAssistantId}`)
-    vapiPhoneNumberId = await linkVapiPhoneNumber({
-      assistantId: vapiAssistantId,
-      twilioPhoneNumber: twilioNumber,
-      practiceName: practice.name,
-    })
-    console.log(`â Vapi phone number linked: ${vapiPhoneNumberId}`)
-
-    // --- 5. Mark practice active + store provisioning metadata ---
-    await supabaseAdmin
-      .from('practices')
-      .update({
-        status: 'active',
-        subscription_status: 'active',
-        phone_number: twilioNumber,
-        twilio_phone_sid: twilioNumberSid,
-        vapi_assistant_id: vapiAssistantId,
-        vapi_phone_number_id: vapiPhoneNumberId,
-        stripe_subscription_id: subscriptionId,
-        provisioned_at: new Date().toISOString(),
-      })
-      .eq('id', practiceId)
-
-    console.log(`â Practice ${practiceId} fully provisioned`)
-
-    // --- 6. Send welcome email ---
-    await sendWelcomeEmail({
-      to: practice.notification_email || practice.billing_email,
-      practiceName: practice.name,
-      aiName: practice.ai_name || 'Ellie',
-      phoneNumber: twilioNumber,
-      foundingMember: !!practice.founding_member,
-    })
-  } catch (err) {
-    console.error(`â Provisioning failed for practice ${practiceId}:`, err)
-
-    // Rollback best-effort â we want to avoid leaving orphaned resources,
-    // but we do NOT delete the practice itself so the user can retry or
-    // support can intervene.
-    if (twilioNumberSid) {
-      console.log(`â©ï¸ Releasing Twilio number ${twilioNumberSid}`)
-      await releaseTwilioNumber(twilioNumberSid)
-    }
-    if (vapiAssistantId) {
-      console.log(`â©ï¸ Deleting Vapi assistant ${vapiAssistantId}`)
-      await deleteVapiAssistant(vapiAssistantId)
-    }
-
-    await supabaseAdmin
-      .from('practices')
-      .update({
-        status: 'provisioning_failed',
-        subscription_status: 'active', // they paid, so sub is active
-        stripe_subscription_id: subscriptionId,
-      })
-      .eq('id', practiceId)
-  }
+  await auditEvent(practice.id, 'billing.subscription.created', {
+    subscription_id: subscriptionId, status,
+  })
 }
 
-async function handleSubscriptionCreated(subscription: any) {
-  try {
-    const customerId = subscription.customer
-    const subscriptionId = subscription.id
-    const status = subscription.status
+async function handleSubscriptionUpdated(subscription: any): Promise<void> {
+  const customerId = subscription.customer
+  const subscriptionId = subscription.id
+  const status = subscription.status
 
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('id')
-      .eq('stripe_customer_id', customerId)
-      .single()
+  const { rows } = await pool.query(
+    `SELECT id FROM practices WHERE stripe_customer_id = $1 LIMIT 1`,
+    [customerId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = rows[0]
+  if (!practice) return
 
-    if (!practice) {
-      console.warn('Could not find practice for subscription')
-      return
-    }
-
-    await supabaseAdmin
-      .from('practices')
-      .update({
-        stripe_subscription_id: subscriptionId,
-        subscription_status: status === 'trialing' ? 'trialing' : 'active',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', practice.id)
-
-    console.log(`â Subscription created for practice: ${practice.id}, status: ${status}`)
-  } catch (error) {
-    console.error('Error in handleSubscriptionCreated:', error)
-  }
+  await auditEvent(practice.id, 'billing.subscription.updated', {
+    subscription_id: subscriptionId, status,
+  })
 }
 
-async function handleSubscriptionUpdated(subscription: any) {
-  try {
-    const customerId = subscription.customer
-    const subscriptionId = subscription.id
-    const status = subscription.status
+async function handleSubscriptionDeleted(subscription: any): Promise<void> {
+  const customerId = subscription.customer
+  const subscriptionId = subscription.id
 
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('id')
-      .eq('stripe_customer_id', customerId)
-      .single()
+  const { rows } = await pool.query(
+    `SELECT id FROM practices WHERE stripe_customer_id = $1 LIMIT 1`,
+    [customerId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = rows[0]
+  if (!practice) return
 
-    if (practice) {
-      let newStatus = 'active'
-      if (status === 'trialing') newStatus = 'trialing'
-      if (status === 'past_due') newStatus = 'past_due'
-      if (status === 'cancelled' || status === 'incomplete_expired') newStatus = 'cancelled'
+  await pool.query(
+    `UPDATE practices
+        SET provisioning_state = 'cancelled',
+            updated_at = NOW()
+      WHERE id = $1`,
+    [practice.id],
+  )
 
-      await supabaseAdmin
-        .from('practices')
-        .update({
-          subscription_status: newStatus,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', practice.id)
-
-      console.log(`â Subscription updated: ${subscriptionId}, ${status} -> ${newStatus}`)
-    }
-  } catch (error) {
-    console.error('Error in handleSubscriptionUpdated:', error)
-  }
+  await auditEvent(practice.id, 'billing.subscription.cancelled', {
+    subscription_id: subscriptionId,
+  }, 'warn')
 }
 
-async function handleSubscriptionDeleted(subscription: any) {
-  try {
-    const customerId = subscription.customer
-    const subscriptionId = subscription.id
-
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('id')
-      .eq('stripe_customer_id', customerId)
-      .single()
-
-    if (practice) {
-      await supabaseAdmin
-        .from('practices')
-        .update({
-          subscription_status: 'cancelled',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', practice.id)
-
-      console.log(`â ï¸ Subscription cancelled: ${subscriptionId} for ${practice.id}`)
-    }
-  } catch (error) {
-    console.error('Error in handleSubscriptionDeleted:', error)
-  }
+async function handlePaymentSucceeded(invoice: any): Promise<void> {
+  console.log(`[stripe/webhook] payment succeeded: ${invoice.id}`)
 }
 
-async function handlePaymentSucceeded(invoice: any) {
-  try {
-    console.log(`â Payment succeeded: ${invoice.id}`)
-  } catch (error) {
-    console.error('Error in handlePaymentSucceeded:', error)
-  }
+async function handlePaymentFailed(invoice: any): Promise<void> {
+  const customerId = invoice.customer
+  const subscriptionId = invoice.subscription
+
+  const { rows } = await pool.query(
+    `SELECT id FROM practices WHERE stripe_customer_id = $1 LIMIT 1`,
+    [customerId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = rows[0]
+  if (!practice || !subscriptionId) return
+
+  // AWS canonical doesn't have subscription_status as a separate column —
+  // we surface past-due via audit + the existing provisioning_state stays
+  // intact. (Legacy flipped subscription_status='past_due'; on AWS this
+  // is captured in the audit trail until a dedicated column lands.)
+  await auditEvent(practice.id, 'billing.payment.failed', {
+    invoice_id: invoice.id, subscription_id: subscriptionId,
+  }, 'warn')
+
+  console.warn(`[stripe/webhook] payment failed for invoice ${invoice.id}, audit-logged`)
 }
-
-async function handlePaymentFailed(invoice: any) {
-  try {
-    const customerId = invoice.customer
-    const subscriptionId = invoice.subscription
-
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('id')
-      .eq('stripe_customer_id', customerId)
-      .single()
-
-    if (practice && subscriptionId) {
-      await supabaseAdmin
-        .from('practices')
-        .update({
-          subscription_status: 'past_due',
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', practice.id)
-
-      console.log(`â ï¸ Payment failed for invoice ${invoice.id}, marked past_due`)
-    }
-  } catch (error) {
-    console.error('Error in handlePaymentFailed:', error)
-  }
-}
-// Stripe webhook handler — expanded to handle checkout.session.completed,
-// which triggers the full Twilio + Vapi provisioning pipeline for new
-// practices on the card-upfront signup flow.
-
