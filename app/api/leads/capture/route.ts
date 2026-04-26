@@ -1,37 +1,39 @@
+// app/api/leads/capture/route.ts
+//
+// Wave 23 (AWS port). Public lead-capture endpoint. Pool upsert.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin as supabase } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json()
+    const body = await req.json().catch(() => ({}))
     const { email, source, missed_calls_per_week, estimated_annual_loss } = body
-
     if (!email || !/^\S+@\S+\.\S+$/.test(email)) {
       return NextResponse.json({ error: 'Valid email required' }, { status: 400 })
     }
-
-    // Upsert lead — don't create duplicates
-    const { error } = await supabase
-      .from('leads')
-      .upsert(
-        {
-          email: email.toLowerCase(),
-          source: source || 'unknown',
-          missed_calls_per_week: missed_calls_per_week || null,
-          estimated_annual_loss: estimated_annual_loss || null,
-          captured_at: new Date().toISOString(),
-        },
-        { onConflict: 'email' }
+    try {
+      await pool.query(
+        `INSERT INTO leads
+            (email, source, missed_calls_per_week, estimated_annual_loss, captured_at)
+          VALUES ($1, $2, $3, $4, NOW())
+          ON CONFLICT (email) DO UPDATE
+            SET source = EXCLUDED.source,
+                missed_calls_per_week = EXCLUDED.missed_calls_per_week,
+                estimated_annual_loss = EXCLUDED.estimated_annual_loss,
+                captured_at = EXCLUDED.captured_at`,
+        [
+          String(email).toLowerCase(),
+          source || 'unknown',
+          missed_calls_per_week || null,
+          estimated_annual_loss || null,
+        ],
       )
-
-    if (error) {
-      console.error('Lead capture error:', error)
-      // Still return 200 — don't let DB errors leak to user
-      return NextResponse.json({ ok: true })
+    } catch (err) {
+      console.error('[leads/capture]', (err as Error).message)
     }
-
     return NextResponse.json({ ok: true })
   } catch {
-    return NextResponse.json({ ok: true }) // fail silently from user perspective
+    return NextResponse.json({ ok: true })
   }
 }

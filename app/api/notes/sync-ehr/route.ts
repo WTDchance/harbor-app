@@ -1,86 +1,53 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+// app/api/notes/sync-ehr/route.ts
+//
+// Wave 23 (AWS port). Cross-write helper that promotes a session_notes
+// row to an ehr_progress_notes draft. Cognito + pool, single
+// transaction so a partial promote leaves nothing behind.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-/**
- * POST /api/notes/sync-ehr
- * Sync a session note to the practice's EHR system
- * Body: { note_id }
- */
 export async function POST(req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
+  const body = await req.json().catch(() => ({}))
+  const noteId = body?.note_id
+  const patientId = body?.patient_id
+  if (!noteId || !patientId) {
+    return NextResponse.json({ error: 'note_id and patient_id required' }, { status: 400 })
+  }
+
+  const { rows: srcRows } = await pool.query(
+    `SELECT id, title, body FROM session_notes
+      WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [noteId, practiceId],
+  )
+  if (srcRows.length === 0) return NextResponse.json({ error: 'Source note not found' }, { status: 404 })
+
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
-            } catch {
-              // Middleware will handle this
-            }
-          },
-        },
-      }
+    const { rows: ins } = await pool.query(
+      `INSERT INTO ehr_progress_notes
+          (practice_id, patient_id, title, content, format, status)
+        VALUES ($1, $2, $3, $4, 'freeform', 'draft')
+        RETURNING id`,
+      [practiceId, patientId, srcRows[0].title ?? 'Synced note', srcRows[0].body ?? ''],
     )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    const { note_id } = await req.json()
-
-    if (!note_id) {
-      return NextResponse.json(
-        { error: 'note_id is required' },
-        { status: 400 }
-      )
-    }
-
-    // Update the note with pending EHR sync status
-    const { error } = await supabaseAdmin
-      .from('session_notes')
-      .update({
-        ehr_synced: false,
-        ehr_system: 'pending',
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', note_id)
-      .eq('practice_id', practice.id)
-
-    if (error) {
-      throw error
-    }
-
-    // Return pending status
-    return NextResponse.json({
-      status: 'pending',
-      message: 'EHR integration coming soon. Your note has been saved and will sync automatically once your EHR API is connected.',
+    await auditEhrAccess({
+      ctx,
+      action: 'note.create',
+      resourceType: 'ehr_progress_note',
+      resourceId: ins[0].id,
+      details: { kind: 'sync_from_session_notes', source_id: noteId },
     })
-  } catch (error: any) {
-    console.error('Error syncing to EHR:', error)
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ ok: true, ehr_note_id: ins[0].id })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }

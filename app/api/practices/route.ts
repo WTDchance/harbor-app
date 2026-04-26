@@ -1,133 +1,96 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+// app/api/practices/route.ts
+//
+// Wave 23 (AWS port). Read + create the caller's practice. Cognito
+// session resolves the user → practice via users.cognito_sub +
+// users.practice_id (canonical), with a fallback to practices.owner_email
+// match for legacy users that haven't been linked yet.
+//
+// POST inserts a practices row with the caller as owner (writes
+// users row too). Phone uniqueness is enforced via a SELECT pre-check
+// on the legacy 'phone_number' column for backward compat — Wave 19
+// signup writes 'phone' on the canonical column, so the unique check
+// looks at both.
 
-async function getPractice() {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
-  )
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  const { data } = await supabase.from('practices').select('id, name').eq('notification_email', user.email).single()
-  return data
-}
+import { NextRequest, NextResponse } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
 export async function GET(request: NextRequest) {
-  try {
-    const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
 
-    const practiceId = request.nextUrl.searchParams.get('id')
+  const requestedId = request.nextUrl.searchParams.get('id')
+  const targetId = requestedId ?? ctx.practiceId
+  if (!targetId) return NextResponse.json({ error: 'No practice' }, { status: 404 })
 
-    if (practiceId && practiceId !== practice.id) {
+  // Non-admins can only read their own practice.
+  if (requestedId && requestedId !== ctx.practiceId) {
+    const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase()
+    if (!adminEmail || ctx.session.email.toLowerCase() !== adminEmail) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     }
-
-    const { data, error } = await supabaseAdmin
-      .from('practices')
-      .select('*')
-      .eq('id', practice.id)
-      .single()
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json(data)
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
   }
+
+  const { rows } = await pool.query(
+    `SELECT * FROM practices WHERE id = $1 LIMIT 1`,
+    [targetId],
+  )
+  if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json(rows[0])
 }
 
 export async function POST(request: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  let body: any
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
-    )
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
+  }
 
-    const body = await request.json()
-    const { name, ai_name, phone_number, timezone } = body
+  const { name, ai_name, phone_number, timezone } = body
+  if (!name || !phone_number) {
+    return NextResponse.json({ error: 'Missing required fields: name, phone_number' }, { status: 400 })
+  }
 
-    if (!name || !phone_number) {
-      return NextResponse.json({ error: 'Missing required fields: name, phone_number' }, { status: 400 })
-    }
+  const { rows: dupes } = await pool.query(
+    `SELECT id FROM practices
+      WHERE phone = $1 OR twilio_phone_number = $1 OR signalwire_number = $1
+      LIMIT 1`,
+    [phone_number],
+  )
+  if (dupes.length > 0) {
+    return NextResponse.json({ error: 'Phone number already in use' }, { status: 409 })
+  }
 
-    const { data: existing } = await supabaseAdmin
-      .from('practices')
-      .select('id')
-      .eq('phone_number', phone_number)
-      .single()
-
-    if (existing) {
-      return NextResponse.json({ error: 'Phone number already in use' }, { status: 409 })
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('practices')
-      .insert({
+  try {
+    const ins = await pool.query(
+      `INSERT INTO practices
+          (name, ai_name, phone, owner_email, billing_email, timezone)
+        VALUES ($1, $2, $3, $4, $4, $5)
+        RETURNING *`,
+      [
         name,
-        ai_name: ai_name || 'Ellie',
+        ai_name || 'Ellie',
         phone_number,
-        timezone: timezone || 'America/Los_Angeles',
-        notification_email: user.email,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select()
-      .single()
+        ctx.session.email.toLowerCase(),
+        timezone || 'America/Los_Angeles',
+      ],
+    )
+    const practice = ins.rows[0]
 
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json(data, { status: 201 })
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
+    // Link caller → practice (if not already)
+    await pool.query(
+      `INSERT INTO users (cognito_sub, email, practice_id, role)
+       VALUES ($1, $2, $3, 'owner')
+       ON CONFLICT (cognito_sub) DO UPDATE SET practice_id = COALESCE(users.practice_id, EXCLUDED.practice_id)`,
+      [ctx.session.sub, ctx.session.email.toLowerCase(), practice.id],
+    )
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const practiceId = request.nextUrl.searchParams.get('id')
-    if (!practiceId) return NextResponse.json({ error: 'Missing practice ID' }, { status: 400 })
-    if (practiceId !== practice.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const body = await request.json()
-    const { id, created_at, stripe_customer_id, stripe_subscription_id, notification_email, ...updateData } = body
-
-    const { data, error } = await supabaseAdmin
-      .from('practices')
-      .update({ ...updateData, updated_at: new Date().toISOString() })
-      .eq('id', practiceId)
-      .select()
-      .single()
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json(data)
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-export async function DELETE(request: NextRequest) {
-  try {
-    const practice = await getPractice()
-    if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const practiceId = request.nextUrl.searchParams.get('id')
-    if (!practiceId) return NextResponse.json({ error: 'Missing practice ID' }, { status: 400 })
-    if (practiceId !== practice.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const { error } = await supabaseAdmin.from('practices').delete().eq('id', practiceId)
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json(practice, { status: 201 })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }

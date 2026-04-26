@@ -1,105 +1,51 @@
-// POST /api/admin/create-mom-promo
+// app/api/admin/create-mom-promo/route.ts
 //
-// One-time setup endpoint that provisions the MOM-FREE Stripe coupon and
-// promotion code so Chance's mom (Hope and Harmony Counseling) can sign up
-// for free. Idempotent: re-running returns the existing objects rather than
-// duplicating them.
-//
-// Auth: requires the caller to be the admin (matches ADMIN_EMAIL env var).
-//
-// Once this has been called once, give your mom the code "MOM-FREE" and have
-// her sign up at /signup with email dr.tracewonser@gmail.com — the signup
-// route enforces the email match server-side.
+// Wave 23 (AWS port). Admin-only — provisions the MOM-FREE Stripe
+// promotion code (one-time setup). Cognito admin session.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { stripe } from '@/lib/stripe'
-import { createClient } from '@/lib/supabase-server'
+import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-const COUPON_ID = 'mom_free_forever'
-const PROMO_CODE = 'MOM-FREE'
+const MOM_PROMO_CODE = 'MOM-FREE'
 
-async function isAdmin(req: NextRequest): Promise<boolean> {
-  const adminEmail = process.env.ADMIN_EMAIL?.toLowerCase()
-  if (!adminEmail) return false
-  try {
-    const supabase = await createClient()
-    const {
-      data: { user },
-    } = await supabase.auth.getUser()
-    if (!user?.email) return false
-    return user.email.toLowerCase() === adminEmail
-  } catch {
-    return false
-  }
-}
-
-export async function POST(req: NextRequest) {
-  if (!stripe) {
-    return NextResponse.json(
-      { error: 'Stripe is not configured on the server.' },
-      { status: 500 }
-    )
-  }
-
-  if (!(await isAdmin(req))) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+export async function POST(_req: NextRequest) {
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!stripe) return NextResponse.json({ error: 'Stripe not configured' }, { status: 500 })
 
   try {
-    // 1. Coupon: 100% off, forever. Idempotent via fixed id.
-    let coupon
-    try {
-      coupon = await stripe.coupons.retrieve(COUPON_ID)
-    } catch {
-      coupon = await stripe.coupons.create({
-        id: COUPON_ID,
-        percent_off: 100,
-        duration: 'forever',
-        name: 'Mom — free forever',
-      })
-    }
-
-    // 2. Promotion code: MOM-FREE, single-use.
-    // Stripe enforces uniqueness on `code` per account, so list-and-reuse.
+    // Check existing
     const existing = await stripe.promotionCodes.list({
-      code: PROMO_CODE,
+      code: MOM_PROMO_CODE,
       limit: 1,
+      active: true,
     })
-    let promo = existing.data[0]
-    if (!promo) {
-      promo = await stripe.promotionCodes.create({
-        coupon: coupon.id,
-        code: PROMO_CODE,
-        max_redemptions: 1,
-        active: true,
-        metadata: {
-          purpose: 'mom-free-forever',
-          locked_to_email: 'dr.tracewonser@gmail.com',
-        },
-      })
+    if (existing.data[0]) {
+      return NextResponse.json({ ok: true, already_exists: true, id: existing.data[0].id })
     }
 
-    return NextResponse.json({
-      success: true,
-      coupon: {
-        id: coupon.id,
-        percent_off: coupon.percent_off,
-        duration: coupon.duration,
-      },
-      promotion_code: {
-        id: promo.id,
-        code: promo.code,
-        active: promo.active,
-        max_redemptions: promo.max_redemptions,
-        times_redeemed: promo.times_redeemed,
-      },
-      note: 'Give MOM-FREE to mom. Signup is locked to dr.tracewonser@gmail.com server-side.',
+    // Need a 100% off coupon first
+    const coupon = await stripe.coupons.create({
+      percent_off: 100,
+      duration: 'forever',
+      name: 'MOM Free Lifetime',
     })
-  } catch (err: any) {
-    console.error('[create-mom-promo] failed:', err)
-    return NextResponse.json(
-      { error: err?.message || 'Failed to create promo code' },
-      { status: 500 }
-    )
+    const promo = await stripe.promotionCodes.create({
+      coupon: coupon.id,
+      code: MOM_PROMO_CODE,
+      max_redemptions: 1,
+    })
+    await auditEhrAccess({
+      ctx,
+      action: 'admin.run_migration',
+      resourceType: 'stripe_promotion_code',
+      resourceId: promo.id,
+      details: { admin_email: ctx.session.email, code: MOM_PROMO_CODE, coupon_id: coupon.id },
+    })
+    return NextResponse.json({ ok: true, id: promo.id, coupon_id: coupon.id })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }

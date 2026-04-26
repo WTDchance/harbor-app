@@ -1,218 +1,75 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+// app/api/notes/[id]/route.ts
+//
+// Wave 23 (AWS port). Cognito + pool. Backs the "Notes" page (the
+// generic dashboard notes — separate from /api/ehr/notes which is
+// the clinical EHR). Reads from session_notes (Wave 14 schema).
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
-/**
- * GET /api/notes/[id]
- * Return a single session note
- */
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
+
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const { rows } = await pool.query(
+    `SELECT * FROM session_notes WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [id, practiceId],
+  )
+  if (rows.length === 0) return NextResponse.json({ error: 'Note not found' }, { status: 404 })
+  return NextResponse.json({ note: rows[0] })
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
+
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  const body = await req.json().catch(() => ({}))
+  const updatable = new Set(['title', 'body', 'tags'])
+  const sets: string[] = []
+  const args: any[] = [id, practiceId]
+  for (const [k, v] of Object.entries(body)) {
+    if (!updatable.has(k)) continue
+    args.push(v)
+    sets.push(`${k} = $${args.length}`)
+  }
+  if (sets.length === 0) return NextResponse.json({ error: 'No updatable fields' }, { status: 400 })
+
   try {
-    const { id } = await params
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
-            } catch {
-              // Middleware will handle this
-            }
-          },
-        },
-      }
+    const { rows } = await pool.query(
+      `UPDATE session_notes SET ${sets.join(', ')}
+        WHERE id = $1 AND practice_id = $2
+        RETURNING *`,
+      args,
     )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    const { data: note } = await supabaseAdmin
-      .from('session_notes')
-      .select('*')
-      .eq('id', id)
-      .eq('practice_id', practice.id)
-      .single()
-
-    if (!note) {
-      return NextResponse.json({ error: 'Note not found' }, { status: 404 })
-    }
-
-    return NextResponse.json({ note })
-  } catch (error: any) {
-    console.error('Error fetching session note:', error)
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    )
+    if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json({ note: rows[0] })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }
 
-/**
- * PATCH /api/notes/[id]
- * Update a session note
- */
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
-            } catch {
-              // Middleware will handle this
-            }
-          },
-        },
-      }
-    )
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
 
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    const updates = await req.json()
-
-    // Add updated_at timestamp
-    const { data: note, error } = await supabaseAdmin
-      .from('session_notes')
-      .update({
-        ...updates,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', id)
-      .eq('practice_id', practice.id)
-      .select()
-      .single()
-
-    if (error) {
-      throw error
-    }
-
-    if (!note) {
-      return NextResponse.json({ error: 'Note not found' }, { status: 404 })
-    }
-
-    return NextResponse.json({ note })
-  } catch (error: any) {
-    console.error('Error updating session note:', error)
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    )
-  }
-}
-
-/**
- * DELETE /api/notes/[id]
- * Delete a session note
- */
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const { id } = await params
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
-            } catch {
-              // Middleware will handle this
-            }
-          },
-        },
-      }
-    )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    const { error } = await supabaseAdmin
-      .from('session_notes')
-      .delete()
-      .eq('id', id)
-      .eq('practice_id', practice.id)
-
-    if (error) {
-      throw error
-    }
-
-    return NextResponse.json({ ok: true })
-  } catch (error: any) {
-    console.error('Error deleting session note:', error)
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    )
-  }
+  const { rowCount } = await pool.query(
+    `DELETE FROM session_notes WHERE id = $1 AND practice_id = $2`,
+    [id, practiceId],
+  )
+  if ((rowCount ?? 0) === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json({ ok: true })
 }

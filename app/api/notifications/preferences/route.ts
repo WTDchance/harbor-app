@@ -1,131 +1,58 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+// app/api/notifications/preferences/route.ts
+//
+// Wave 23 (AWS port). Browser/email notification preferences for the
+// caller's practice. Cognito + pool. Stored on practices row as
+// notification_preferences JSONB.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
-/**
- * GET /api/notifications/preferences
- * Return notification preferences for current practice
- */
-export async function GET(req: NextRequest) {
+const DEFAULT_PREFS = {
+  email_calls: true,
+  email_intakes: true,
+  email_reminders: false,
+  push_calls: true,
+  push_intakes: false,
+  push_reminders: false,
+}
+
+export async function GET(_req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
-            } catch {
-              // Middleware will handle this
-            }
-          },
-        },
-      }
+    const { rows } = await pool.query(
+      `SELECT notification_preferences FROM practices WHERE id = $1 LIMIT 1`,
+      [practiceId],
     )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('notification_prefs')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    return NextResponse.json({ preferences: practice.notification_prefs })
-  } catch (error: any) {
-    console.error('Error fetching notification preferences:', error)
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    )
+    return NextResponse.json({
+      preferences: rows[0]?.notification_preferences ?? DEFAULT_PREFS,
+    })
+  } catch {
+    return NextResponse.json({ preferences: DEFAULT_PREFS })
   }
 }
 
-/**
- * PATCH /api/notifications/preferences
- * Update notification preferences (deep merge with existing)
- */
 export async function PATCH(req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const body = await req.json().catch(() => ({}))
+  const next = { ...DEFAULT_PREFS, ...(body || {}) }
+
   try {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      {
-        cookies: {
-          getAll() {
-            return cookieStore.getAll()
-          },
-          setAll(cookiesToSet) {
-            try {
-              cookiesToSet.forEach(({ name, value, options }) =>
-                cookieStore.set(name, value, options)
-              )
-            } catch {
-              // Middleware will handle this
-            }
-          },
-        },
-      }
+    await pool.query(
+      `UPDATE practices SET notification_preferences = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(next), practiceId],
     )
-
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id, notification_prefs')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Not found' }, { status: 404 })
-    }
-
-    const updates = await req.json()
-
-    // Deep merge with existing preferences
-    const currentPrefs = practice.notification_prefs || {}
-    const mergedPrefs = {
-      ...currentPrefs,
-      ...updates,
-      // Deep merge nested objects
-      crisis: { ...currentPrefs.crisis, ...updates.crisis },
-      arrival: { ...currentPrefs.arrival, ...updates.arrival },
-    }
-
-    const { error } = await supabaseAdmin
-      .from('practices')
-      .update({ notification_prefs: mergedPrefs })
-      .eq('id', practice.id)
-
-    if (error) {
-      throw error
-    }
-
-    return NextResponse.json({ preferences: mergedPrefs })
-  } catch (error: any) {
-    console.error('Error updating notification preferences:', error)
-    return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
-    )
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
+  return NextResponse.json({ ok: true, preferences: next })
 }

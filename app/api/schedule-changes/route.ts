@@ -1,136 +1,36 @@
-// Schedule Changes API
-// GET  — list recent changes for the practice
-// POST — create a new schedule change (from Ellie or dashboard)
+// app/api/schedule-changes/route.ts
+//
+// Wave 23 (AWS port). Read-only list of pending schedule changes
+// (reschedule / cancel / no-show) for the practice. SMS dispatch on
+// confirm/decline lives in Bucket 1 — the existing
+// /api/schedule-changes/[id]/confirm route persists state and the
+// carrier worker (Bucket 1) consumes the queue.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { createServerSupabase } from '@/lib/supabase-server'
-import { resolvePracticeIdForApi } from '@/lib/active-practice'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
-async function getPracticeId(): Promise<string | null> {
-  const supabase = await createServerSupabase()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  return resolvePracticeIdForApi(supabaseAdmin, user)
-}
+export async function GET(request: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-export async function GET(req: NextRequest) {
-  try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { searchParams } = new URL(req.url)
-    const limit = parseInt(searchParams.get('limit') || '50')
-    const status = searchParams.get('status') // pending, confirmed, reverted, auto_confirmed
-
-    let query = supabaseAdmin
-      .from('schedule_changes')
-      .select(`
-        *,
-        patients(first_name, last_name, phone),
-        appointments(scheduled_at, duration_minutes, status)
-      `)
-      .eq('practice_id', practiceId)
-      .order('created_at', { ascending: false })
-      .limit(limit)
-
-    if (status) {
-      query = query.eq('status', status)
-    }
-
-    const { data, error } = await query
-
-    if (error) {
-      console.error('[schedule-changes GET]', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    return NextResponse.json({ changes: data })
-  } catch (err) {
-    console.error('[schedule-changes GET]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  const status = request.nextUrl.searchParams.get('status')
+  const args: any[] = [practiceId]
+  let where = `practice_id = $1`
+  if (status) {
+    args.push(status)
+    where += ` AND status = $${args.length}`
   }
-}
-
-export async function POST(req: NextRequest) {
   try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const body = await req.json()
-    const {
-      appointment_id,
-      patient_id,
-      change_type,
-      previous_time,
-      new_time,
-      requested_by,
-      dob_verified,
-      notes,
-    } = body
-
-    if (!change_type || !requested_by) {
-      return NextResponse.json(
-        { error: 'change_type and requested_by are required' },
-        { status: 400 }
-      )
-    }
-
-    // Check practice scheduling mode
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('scheduling_mode')
-      .eq('id', practiceId)
-      .single()
-
-    const mode = practice?.scheduling_mode || 'notification'
-
-    // Determine initial status based on mode
-    let initialStatus = 'pending'
-    if (mode === 'harbor_driven') {
-      initialStatus = 'auto_confirmed'
-    }
-
-    const { data, error } = await supabaseAdmin
-      .from('schedule_changes')
-      .insert({
-        practice_id: practiceId,
-        appointment_id,
-        patient_id,
-        change_type,
-        previous_time,
-        new_time,
-        requested_by,
-        dob_verified: dob_verified || false,
-        status: initialStatus,
-        confirmed_at: initialStatus === 'auto_confirmed' ? new Date().toISOString() : null,
-        notes,
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error('[schedule-changes POST]', error)
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    // If harbor_driven mode, also update the actual appointment
-    if (mode === 'harbor_driven' && appointment_id && new_time && change_type === 'rescheduled') {
-      await supabaseAdmin
-        .from('appointments')
-        .update({ scheduled_at: new_time })
-        .eq('id', appointment_id)
-    }
-
-    // TODO: Send notification to therapist (SMS/email) for 'notification' mode
-
-    return NextResponse.json({ change: data }, { status: 201 })
+    const { rows } = await pool.query(
+      `SELECT * FROM schedule_changes WHERE ${where} ORDER BY created_at DESC LIMIT 100`,
+      args,
+    )
+    return NextResponse.json({ changes: rows })
   } catch (err) {
-    console.error('[schedule-changes POST]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }

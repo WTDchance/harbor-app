@@ -1,66 +1,61 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { randomBytes } from 'crypto'
+// app/api/outcomes/route.ts
+//
+// Wave 23 (AWS port). Therapist-side outcomes assessment list +
+// create. Cognito + pool. Token minted via crypto.randomBytes —
+// public completion lives at /api/outcomes/[token].
 
-async function getPractice() {
-    const cookieStore = await cookies()
-    const supabase = createServerClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-          { cookies: { getAll: () => cookieStore.getAll(), setAll: (s) => { try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {} } } }
-        )
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return null
-    const { data } = await supabase.from('practices').select('id').eq('notification_email', user.email).single()
-    return data
-  }
+import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
 export async function GET(req: NextRequest) {
-    try {
-          const practice = await getPractice()
-          if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-          const { searchParams } = new URL(req.url)
-          const phone = searchParams.get('phone')
-
-          let query = supabaseAdmin
-            .from('outcome_assessments')
-            .select('*')
-            .eq('practice_id', practice.id)
-            .order('created_at', { ascending: false })
-
-          if (phone) query = query.eq('patient_phone', phone)
-
-          const { data } = await query
-          return NextResponse.json({ assessments: data || [] })
-        } catch (e: any) {
-          return NextResponse.json({ error: e.message }, { status: 500 })
-        }
+  const phone = req.nextUrl.searchParams.get('phone')
+  const args: any[] = [practiceId]
+  let where = `practice_id = $1`
+  if (phone) {
+    args.push(phone)
+    where += ` AND patient_phone = $${args.length}`
   }
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM outcome_assessments WHERE ${where} ORDER BY created_at DESC`,
+      args,
+    )
+    return NextResponse.json({ assessments: rows })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
+  }
+}
 
 export async function POST(req: NextRequest) {
-    try {
-          const practice = await getPractice()
-          if (!practice) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-          const { patient_name, patient_phone, assessment_type } = await req.json()
-          const token = randomBytes(24).toString('hex')
-
-          const { data, error } = await supabaseAdmin
-            .from('outcome_assessments')
-            .insert({ practice_id: practice.id, patient_name, patient_phone, assessment_type, token })
-            .select()
-            .single()
-
-          if (error) throw error
-
-          const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://your-app.railway.app'
-          const assessmentUrl = `${appUrl}/outcomes/${token}`
-
-          return NextResponse.json({ assessment: data, assessment_url: assessmentUrl })
-        } catch (e: any) {
-          return NextResponse.json({ error: e.message }, { status: 500 })
-        }
+  try {
+    const { patient_name, patient_phone, assessment_type } = await req.json()
+    const token = randomBytes(24).toString('hex')
+    const { rows } = await pool.query(
+      `INSERT INTO outcome_assessments
+          (practice_id, patient_name, patient_phone, assessment_type, token)
+        VALUES ($1, $2, $3, $4, $5)
+        RETURNING *`,
+      [practiceId, patient_name, patient_phone, assessment_type, token],
+    )
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+    return NextResponse.json({
+      assessment: rows[0],
+      assessment_url: `${appUrl}/outcomes/${token}`,
+    })
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
+}

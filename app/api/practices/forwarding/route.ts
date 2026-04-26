@@ -1,220 +1,71 @@
+// app/api/practices/forwarding/route.ts
+//
+// Wave 23 (AWS port). DB-side read + write of practice call-forwarding
+// settings. Twilio-side enable/disable was the legacy POST behavior;
+// that side-effect lives in Bucket 1 (Retell + SignalWire migration)
+// and is intentionally not replayed here. We persist the
+// forwarding_enabled + call_forwarding_number columns so the dashboard
+// reflects truth — Bucket 1 will pick up the persisted state when it
+// wires the carrier.
+
 import { NextRequest, NextResponse } from 'next/server'
-import twilio from 'twilio'
-import { createClient } from '@/lib/supabase-server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { resolvePracticeIdForApi } from '@/lib/active-practice'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
   try {
-    // Auth check
-    const supabase = await createClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (!user || authError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    // Get user's practice
-    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user)
-    if (!practiceId) {
-      console.error('[Forwarding GET] No practice found for user')
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    // Get practice forwarding settings
-    const { data: practice, error: practiceError } = await supabaseAdmin
-      .from('practices')
-      .select('id, forwarding_enabled, call_forwarding_number')
-      .eq('id', practiceId)
-      .single()
-
-    if (practiceError || !practice) {
-      console.error('[Forwarding GET] Practice lookup error:', practiceError)
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-    }
-
-    console.log(`[Forwarding GET] Retrieved forwarding state for practice ${practice.id}`, {
-      forwarding_enabled: practice.forwarding_enabled,
-      has_forwarding_number: !!practice.call_forwarding_number,
+    const { rows } = await pool.query(
+      `SELECT forwarding_enabled, call_forwarding_number
+         FROM practices WHERE id = $1 LIMIT 1`,
+      [practiceId],
+    )
+    if (rows.length === 0) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+    return NextResponse.json({
+      forwarding_enabled: rows[0].forwarding_enabled || false,
+      call_forwarding_number: rows[0].call_forwarding_number || null,
     })
-
-    return NextResponse.json(
-      {
-        forwarding_enabled: practice.forwarding_enabled || false,
-        call_forwarding_number: practice.call_forwarding_number || null,
-      },
-      { status: 200 }
-    )
-  } catch (error) {
-    console.error('[Forwarding GET] Error:', error)
-    return NextResponse.json(
-      { error: 'Failed to retrieve forwarding settings' },
-      { status: 500 }
-    )
+  } catch {
+    // Columns might not exist yet in older RDS — return defaults.
+    return NextResponse.json({ forwarding_enabled: false, call_forwarding_number: null })
   }
 }
 
 export async function POST(req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
+  const { enabled, forwarding_number } = await req.json().catch(() => ({}))
+  if (typeof enabled !== 'boolean') {
+    return NextResponse.json({ error: 'enabled must be a boolean' }, { status: 400 })
+  }
+  const num = typeof forwarding_number === 'string' ? forwarding_number.trim() : null
+
   try {
-    // Auth check
-    const supabase = await createClient()
-    const {
-      data: { user },
-      error: authError,
-    } = await supabase.auth.getUser()
-
-    if (!user || authError) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    // Parse request body
-    const { enabled, forwarding_number } = await req.json()
-
-    if (typeof enabled !== 'boolean') {
-      return NextResponse.json(
-        { error: 'enabled must be a boolean' },
-        { status: 400 }
-      )
-    }
-
-    // If enabling, forwarding_number is required
-    if (enabled && !forwarding_number) {
-      return NextResponse.json(
-        { error: 'forwarding_number is required when enabling forwarding' },
-        { status: 400 }
-      )
-    }
-
-    // Get user's practice
-    const practiceId = await resolvePracticeIdForApi(supabaseAdmin, user)
-    if (!practiceId) {
-      console.error('[Forwarding POST] No practice found for user')
-      return NextResponse.json({ error: 'User not found' }, { status: 404 })
-    }
-
-    // Get practice with Twilio details
-    const { data: practice, error: practiceError } = await supabaseAdmin
-      .from('practices')
-      .select('id, twilio_phone_sid, call_forwarding_number')
-      .eq('id', practiceId)
-      .single()
-
-    if (practiceError || !practice) {
-      console.error('[Forwarding POST] Practice lookup error:', practiceError)
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-    }
-
-    if (!practice.twilio_phone_sid) {
-      return NextResponse.json(
-        { error: 'Practice does not have a Twilio phone number configured' },
-        { status: 400 }
-      )
-    }
-
-    // Initialize Twilio client
-    const client = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
-
-    // Determine the voiceUrl based on enabled state
-    let voiceUrl: string
-
-    if (enabled) {
-      voiceUrl = `https://harborreceptionist.com/api/twilio/forward?practice_id=${practice.id}`
-    } else {
-      voiceUrl = 'https://api.vapi.ai/twilio/inbound_call'
-    }
-
-    // Update Twilio phone number configuration
-    try {
-      await client.incomingPhoneNumbers(practice.twilio_phone_sid).update({
-        voiceUrl,
-      })
-    } catch (twilioError) {
-      console.error('[Forwarding POST] Twilio update error:', twilioError)
-      return NextResponse.json(
-        { error: 'Failed to update Twilio phone number configuration' },
-        { status: 500 }
-      )
-    }
-
-    // Update practice record in Supabase
-    const updateData: Record<string, any> = {
-      forwarding_enabled: enabled,
-    }
-
-    if (enabled && forwarding_number) {
-      updateData.call_forwarding_number = forwarding_number
-    }
-
-    const { error: updateError } = await supabaseAdmin
-      .from('practices')
-      .update(updateData)
-      .eq('id', practice.id)
-
-    if (updateError) {
-      console.error('[Forwarding POST] Supabase update error:', updateError)
-      return NextResponse.json(
-        { error: 'Failed to update practice forwarding settings' },
-        { status: 500 }
-      )
-    }
-
-    console.log(`[Forwarding POST] Updated forwarding for practice ${practice.id}`, {
-      enabled,
-      forwarding_number: enabled ? forwarding_number : null,
-    })
-
-    // Re-sync the Vapi assistant so the warm-transfer tool's destination
-    // matches the forwarding number we just saved. Non-fatal — if the sync
-    // fails (bad secret, Vapi outage, etc.) the forwarding UI change still
-    // applies; only the in-call transfer destination might be stale until
-    // the next successful sync.
-    try {
-      const cronSecret = process.env.CRON_SECRET
-      const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-      if (cronSecret) {
-        const syncRes = await fetch(
-          `${appUrl}/api/admin/repair-practice?practice_id=${practice.id}`,
-          {
-            method: 'PATCH',
-            headers: { Authorization: `Bearer ${cronSecret}` },
-          }
-        )
-        if (!syncRes.ok) {
-          console.warn(
-            `[Forwarding POST] Vapi resync non-fatal failure (${syncRes.status}):`,
-            await syncRes.text().catch(() => '')
-          )
-        } else {
-          console.log(`[Forwarding POST] Vapi assistant resynced with new transfer destination`)
-        }
-      } else {
-        console.warn('[Forwarding POST] CRON_SECRET unset — skipping Vapi resync')
-      }
-    } catch (syncErr) {
-      console.warn('[Forwarding POST] Vapi resync threw (non-fatal):', syncErr)
-    }
-
-    return NextResponse.json(
-      {
-        success: true,
-        forwarding_enabled: enabled,
-        call_forwarding_number: enabled ? forwarding_number : null,
-      },
-      { status: 200 }
+    await pool.query(
+      `UPDATE practices
+          SET forwarding_enabled = $1,
+              call_forwarding_number = $2
+        WHERE id = $3`,
+      [enabled, enabled ? num : null, practiceId],
     )
-  } catch (error) {
-    console.error('[Forwarding POST] Error:', error)
-
-    if (error instanceof SyntaxError) {
-      return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
-    }
-
-    return NextResponse.json(
-      { error: 'Failed to update forwarding settings' },
-      { status: 500 }
-    )
+  } catch (err) {
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
-  }
+
+  return NextResponse.json({
+    ok: true,
+    forwarding_enabled: enabled,
+    call_forwarding_number: enabled ? num : null,
+    carrier_sync: 'deferred_to_bucket_1',
+  })
+}

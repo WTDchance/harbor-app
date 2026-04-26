@@ -1,148 +1,167 @@
-// Per-patient SMS / email / call opt-out state, read and write.
-// Backed by three opt-out tables (sms_opt_outs, email_opt_outs, call_opt_outs)
-// keyed by (practice_id, phone) or (practice_id, email). One practice-scoped
-// endpoint per patient so the dashboard's Communication card can flip each
-// channel independently.
+// app/api/patients/[id]/communication-prefs/route.ts
+//
+// Wave 23 (AWS port). Per-patient SMS / email / call opt-out state.
+// Backed by sms_opt_outs / email_opt_outs / call_opt_outs tables
+// keyed by (practice_id, phone) or (practice_id, email). Raw SQL so
+// we don't drag in the Supabase-coupled lib/sms-optout +
+// lib/call-optout helpers (those are Bucket 5 carrier libs).
 
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin as supabase } from "@/lib/supabase";
-import { resolvePracticeIdForApi } from "@/lib/active-practice";
-import { isOptedOut as isSmsOptedOut, clearOptOut as clearSmsOptOut } from "@/lib/sms-optout";
-import { isEmailOptedOut, recordEmailOptOut, clearEmailOptOut } from "@/lib/email-optout";
-import { isCallOptedOut, recordCallOptOut, clearCallOptOut } from "@/lib/call-optout";
+import { NextRequest, NextResponse } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
 
-async function getAuthenticatedUser(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return { user: null, error: "Missing or invalid authorization header" };
-  }
-  const token = authHeader.slice(7);
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return { user: null, error: "Unauthorized" };
-  return { user, error: null };
-}
-
-async function resolvePatient(patientId: string, practiceId: string) {
-  const { data: patient } = await supabase
-    .from("patients")
-    .select("id, practice_id, phone, email")
-    .eq("id", patientId)
-    .eq("practice_id", practiceId)
-    .maybeSingle();
-  return patient;
+async function readPatient(patientId: string, practiceId: string) {
+  const { rows } = await pool.query(
+    `SELECT id, practice_id, phone, email FROM patients
+      WHERE id = $1 AND practice_id = $2 AND deleted_at IS NULL LIMIT 1`,
+    [patientId, practiceId],
+  )
+  return rows[0] ?? null
 }
 
 async function readPrefs(practiceId: string, phone: string | null, email: string | null) {
-  const [smsOut, emailOut, callOut] = await Promise.all([
-    phone ? isSmsOptedOut(practiceId, phone) : Promise.resolve(false),
-    email ? isEmailOptedOut(practiceId, email) : Promise.resolve(false),
-    phone ? isCallOptedOut(practiceId, phone) : Promise.resolve(false),
-  ]);
+  const tasks: Promise<any>[] = []
+  tasks.push(
+    phone
+      ? pool
+          .query(
+            `SELECT 1 FROM sms_opt_outs
+              WHERE practice_id = $1 AND phone = $2 LIMIT 1`,
+            [practiceId, phone],
+          )
+          .then((r) => (r.rowCount ?? 0) > 0)
+          .catch(() => false)
+      : Promise.resolve(false),
+  )
+  tasks.push(
+    email
+      ? pool
+          .query(
+            `SELECT 1 FROM email_opt_outs
+              WHERE practice_id = $1 AND email = $2 LIMIT 1`,
+            [practiceId, email],
+          )
+          .then((r) => (r.rowCount ?? 0) > 0)
+          .catch(() => false)
+      : Promise.resolve(false),
+  )
+  tasks.push(
+    phone
+      ? pool
+          .query(
+            `SELECT 1 FROM call_opt_outs
+              WHERE practice_id = $1 AND phone = $2 LIMIT 1`,
+            [practiceId, phone],
+          )
+          .then((r) => (r.rowCount ?? 0) > 0)
+          .catch(() => false)
+      : Promise.resolve(false),
+  )
+  const [smsOut, emailOut, callOut] = await Promise.all(tasks)
   return {
     sms_opted_out: !!smsOut,
     email_opted_out: !!emailOut,
     call_opted_out: !!callOut,
     phone,
     email,
-  };
+  }
 }
 
-// GET /api/patients/[id]/communication-prefs
-export async function GET(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const { user, error } = await getAuthenticatedUser(req);
-  if (error || !user) return NextResponse.json({ error }, { status: 401 });
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
 
-  const practiceId = await resolvePracticeIdForApi(supabase, user);
-  if (!practiceId) {
-    return NextResponse.json({ error: "Practice not found" }, { status: 404 });
-  }
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
 
-  const patient = await resolvePatient(params.id, practiceId);
-  if (!patient) {
-    return NextResponse.json({ error: "Patient not found" }, { status: 404 });
-  }
+  const patient = await readPatient(id, practiceId)
+  if (!patient) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
 
-  const prefs = await readPrefs(patient.practice_id, patient.phone, patient.email);
-  return NextResponse.json(prefs);
+  return NextResponse.json(await readPrefs(practiceId, patient.phone, patient.email))
 }
 
-// PATCH /api/patients/[id]/communication-prefs
-// Body: { sms_opted_out?: boolean, email_opted_out?: boolean, call_opted_out?: boolean }
-// Each field is independent — omit to leave that channel unchanged.
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  const { user, error } = await getAuthenticatedUser(req);
-  if (error || !user) return NextResponse.json({ error }, { status: 401 });
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
 
-  const practiceId = await resolvePracticeIdForApi(supabase, user);
-  if (!practiceId) {
-    return NextResponse.json({ error: "Practice not found" }, { status: 404 });
-  }
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
 
-  const patient = await resolvePatient(params.id, practiceId);
-  if (!patient) {
-    return NextResponse.json({ error: "Patient not found" }, { status: 404 });
-  }
+  const patient = await readPatient(id, practiceId)
+  if (!patient) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
 
-  const body = await req.json().catch(() => ({}));
-  const phone = patient.phone;
-  const email = patient.email;
+  const body = await req.json().catch(() => ({}))
+  const { phone, email } = patient
 
-  // SMS
-  if (typeof body.sms_opted_out === "boolean") {
+  if (typeof body.sms_opted_out === 'boolean') {
     if (!phone) {
       return NextResponse.json(
-        { error: "Cannot change SMS opt-out: patient has no phone number on file." },
-        { status: 400 }
-      );
+        { error: 'Cannot change SMS opt-out: patient has no phone number on file.' },
+        { status: 400 },
+      )
     }
     if (body.sms_opted_out) {
-      // SMS opt-outs table requires a keyword per its original design; use
-      // DASHBOARD as a sentinel so it's distinguishable from inbound STOPs.
-      await supabase.from("sms_opt_outs").upsert(
-        { practice_id: practiceId, phone, keyword: "DASHBOARD", source: "dashboard" },
-        { onConflict: "practice_id,phone" }
-      );
+      await pool.query(
+        `INSERT INTO sms_opt_outs (practice_id, phone, keyword, source)
+         VALUES ($1, $2, 'DASHBOARD', 'dashboard')
+         ON CONFLICT (practice_id, phone) DO UPDATE
+           SET keyword = EXCLUDED.keyword, source = EXCLUDED.source`,
+        [practiceId, phone],
+      )
     } else {
-      await clearSmsOptOut(practiceId, phone);
+      await pool.query(
+        `DELETE FROM sms_opt_outs WHERE practice_id = $1 AND phone = $2`,
+        [practiceId, phone],
+      )
     }
   }
 
-  // Email
-  if (typeof body.email_opted_out === "boolean") {
+  if (typeof body.email_opted_out === 'boolean') {
     if (!email) {
       return NextResponse.json(
-        { error: "Cannot change email opt-out: patient has no email on file." },
-        { status: 400 }
-      );
+        { error: 'Cannot change email opt-out: patient has no email on file.' },
+        { status: 400 },
+      )
     }
     if (body.email_opted_out) {
-      await recordEmailOptOut(practiceId, email, "dashboard");
+      await pool.query(
+        `INSERT INTO email_opt_outs (practice_id, email, source)
+         VALUES ($1, $2, 'dashboard')
+         ON CONFLICT (practice_id, email) DO UPDATE SET source = EXCLUDED.source`,
+        [practiceId, email],
+      )
     } else {
-      await clearEmailOptOut(practiceId, email);
+      await pool.query(
+        `DELETE FROM email_opt_outs WHERE practice_id = $1 AND email = $2`,
+        [practiceId, email],
+      )
     }
   }
 
-  // Call / DNC
-  if (typeof body.call_opted_out === "boolean") {
+  if (typeof body.call_opted_out === 'boolean') {
     if (!phone) {
       return NextResponse.json(
-        { error: "Cannot change call opt-out: patient has no phone number on file." },
-        { status: 400 }
-      );
+        { error: 'Cannot change call opt-out: patient has no phone number on file.' },
+        { status: 400 },
+      )
     }
     if (body.call_opted_out) {
-      await recordCallOptOut(practiceId, phone, "dashboard");
+      await pool.query(
+        `INSERT INTO call_opt_outs (practice_id, phone, source)
+         VALUES ($1, $2, 'dashboard')
+         ON CONFLICT (practice_id, phone) DO UPDATE SET source = EXCLUDED.source`,
+        [practiceId, phone],
+      )
     } else {
-      await clearCallOptOut(practiceId, phone);
+      await pool.query(
+        `DELETE FROM call_opt_outs WHERE practice_id = $1 AND phone = $2`,
+        [practiceId, phone],
+      )
     }
   }
 
-  const prefs = await readPrefs(practiceId, phone, email);
-  return NextResponse.json(prefs);
+  return NextResponse.json(await readPrefs(practiceId, phone, email))
 }
