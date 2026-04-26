@@ -85,3 +85,84 @@ resource "aws_ssm_parameter" "stripe_webhook_billing" {
     ignore_changes = [value]
   }
 }
+
+# -----------------------------------------------------------------------------
+# Wave 27b — SignalWire + Retell carrier-swap credentials.
+# -----------------------------------------------------------------------------
+# These replace the legacy Twilio + Vapi values. Same SSM placeholder pattern
+# as the rest of secrets.tf so terraform doesn't fight the rotated secret
+# values. Note: SignalWire project_id, space URL, from-number and the Retell
+# agent/llm IDs are not "secrets" in the strict sense (they appear in API
+# call URLs and dashboards), but we keep them in SSM-via-secrets for
+# consistency with the rest of the carrier config and so rotation has a
+# single audit surface.
+
+resource "aws_ssm_parameter" "signalwire_project_id" {
+  name        = "/${local.name_prefix}/api-keys/signalwire-project-id"
+  description = "SignalWire project ID — half of the basic-auth credential pair for the SignalWire LaML/REST API."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "signalwire_token" {
+  name        = "/${local.name_prefix}/api-keys/signalwire-token"
+  description = "SignalWire project token — secret half of basic-auth, used to call the LaML messaging endpoint."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "signalwire_space_url" {
+  name        = "/${local.name_prefix}/api-keys/signalwire-space-url"
+  description = "SignalWire space URL host (e.g. harborreceptionist-com.signalwire.com)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "signalwire_from_number" {
+  name        = "/${local.name_prefix}/api-keys/signalwire-from-number"
+  description = "Default outbound SignalWire phone number (E.164) used for SMS sends."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "retell_api_key" {
+  name        = "/${local.name_prefix}/api-keys/retell"
+  description = "Retell API key — used to register inbound calls + manage agent config from the app."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "retell_agent_id" {
+  name        = "/${local.name_prefix}/api-keys/retell-agent-id"
+  description = "Retell agent_id for the Harbor Receptionist (Wave 27a). Used by the inbound-call register handler + tool-route auth gate."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "retell_llm_id" {
+  name        = "/${local.name_prefix}/api-keys/retell-llm-id"
+  description = "Retell llm_id backing the Harbor Receptionist agent. Used by ops scripts that PATCH the LLM (e.g. tool URL refresh)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}

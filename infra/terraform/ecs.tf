@@ -60,6 +60,14 @@ locals {
     #   billing        → app/api/ehr/billing/stripe-webhook/route.ts
     { name = "STRIPE_WEBHOOK_SECRET",     valueFrom = aws_ssm_parameter.stripe_webhook_subscriptions.arn },
     { name = "STRIPE_EHR_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_billing.arn },
+    # Wave 27b — SignalWire + Retell carrier-swap credentials.
+    { name = "SIGNALWIRE_PROJECT_ID",     valueFrom = aws_ssm_parameter.signalwire_project_id.arn },
+    { name = "SIGNALWIRE_TOKEN",          valueFrom = aws_ssm_parameter.signalwire_token.arn },
+    { name = "SIGNALWIRE_SPACE_URL",      valueFrom = aws_ssm_parameter.signalwire_space_url.arn },
+    { name = "SIGNALWIRE_FROM_NUMBER",    valueFrom = aws_ssm_parameter.signalwire_from_number.arn },
+    { name = "RETELL_API_KEY",            valueFrom = aws_ssm_parameter.retell_api_key.arn },
+    { name = "RETELL_AGENT_ID",           valueFrom = aws_ssm_parameter.retell_agent_id.arn },
+    { name = "RETELL_LLM_ID",             valueFrom = aws_ssm_parameter.retell_llm_id.arn },
   ]
 }
 
