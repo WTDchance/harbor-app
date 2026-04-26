@@ -29,7 +29,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server'
-import { dispatchByAppointmentId } from '@/lib/cancellation-fill/dispatcher'
+import { dispatchByAppointmentId } from '@/lib/aws/cancellation-fill/dispatcher'
 
 export const dynamic = 'force-dynamic'
 
