@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
-import { validateInboundWebhook, signalwireConfigured, publicWebhookUrl } from '@/lib/aws/signalwire'
+import { validateInboundWebhook, signalwireConfigured, publicWebhookUrl, computeWebhookSignature } from '@/lib/aws/signalwire'
 import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
 const TWIML_HEADERS = { 'Content-Type': 'application/xml' }
@@ -38,6 +38,40 @@ export async function POST(req: NextRequest) {
   const formParams: Record<string, string> = {}
   for (const [k, v] of formData.entries()) formParams[k] = String(v)
   const sig = req.headers.get('x-twilio-signature') || req.headers.get('x-signalwire-signature')
+
+  // Wave 27o — temporary diagnostic dump while signature validation is
+  // bypassed in staging.
+  if (process.env.SIGNALWIRE_VALIDATE_INBOUND === 'false') {
+    try {
+      const allHeaders = Object.fromEntries(Array.from(req.headers.entries()))
+      const reconstructedUrl = publicWebhookUrl(req)
+      const sortedFormParams: Record<string, string> = {}
+      for (const k of Object.keys(formParams).sort()) sortedFormParams[k] = formParams[k]
+      const { buf, hmac } = computeWebhookSignature({
+        rawUrl: reconstructedUrl,
+        formParams,
+      })
+      console.log('[SW-DEBUG] inbound-sms ' + JSON.stringify({
+        rawReqUrl: req.url,
+        reconstructedUrl,
+        method: req.method,
+        headers: allHeaders,
+        sortedFormParams,
+        bufferSigned: buf,
+        ourHmacBase64: hmac,
+        candidateSignatureHeaders: {
+          'x-twilio-signature': req.headers.get('x-twilio-signature'),
+          'x-signalwire-signature': req.headers.get('x-signalwire-signature'),
+          'signature': req.headers.get('signature'),
+          'x-signature': req.headers.get('x-signature'),
+        },
+        chosenSignatureHeader: sig,
+      }))
+    } catch (e) {
+      console.log('[SW-DEBUG] inbound-sms logging failed:', (e as Error).message)
+    }
+  }
+
   const sigOk = validateInboundWebhook({
     rawUrl: publicWebhookUrl(req),
     formParams,

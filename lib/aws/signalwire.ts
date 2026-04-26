@@ -139,6 +139,24 @@ export function publicWebhookUrl(req: {
  *
  * URL must be the externally-visible URL — see publicWebhookUrl().
  */
+/**
+ * Build the buffer that gets HMAC'd and the resulting base64 HMAC, using
+ * the Twilio/SignalWire LaML signature algorithm. Exported so debug
+ * logging in the route can show exactly what we'd compare against.
+ */
+export function computeWebhookSignature(args: {
+  rawUrl: string
+  formParams: Record<string, string>
+}): { buf: string; hmac: string } {
+  const sortedKeys = Object.keys(args.formParams).sort()
+  let buf = args.rawUrl
+  for (const k of sortedKeys) {
+    buf += k + (args.formParams[k] ?? '')
+  }
+  const hmac = createHmac('sha1', TOKEN).update(buf).digest('base64')
+  return { buf, hmac }
+}
+
 export function validateInboundWebhook(args: {
   rawUrl: string
   formParams: Record<string, string>
@@ -148,13 +166,11 @@ export function validateInboundWebhook(args: {
   if (!args.signatureHeader) return false
   if (process.env.SIGNALWIRE_VALIDATE_INBOUND === 'false') return true
 
-  const sortedKeys = Object.keys(args.formParams).sort()
-  let buf = args.rawUrl
-  for (const k of sortedKeys) {
-    buf += k + (args.formParams[k] ?? '')
-  }
-  const computed = createHmac('sha1', TOKEN).update(buf).digest('base64')
-  return computed === args.signatureHeader
+  const { hmac } = computeWebhookSignature({
+    rawUrl: args.rawUrl,
+    formParams: args.formParams,
+  })
+  return hmac === args.signatureHeader
 }
 
 /**
