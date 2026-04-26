@@ -5,7 +5,6 @@
 // Warns the user 2 minutes before timeout with an option to extend.
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { createClient } from "@/lib/supabase-browser";
 
 const TIMEOUT_MS = 15 * 60 * 1000;   // 15 minutes
 const WARNING_MS = 2 * 60 * 1000;    // warn at 2 min before timeout
@@ -19,8 +18,6 @@ export default function SessionTimeout() {
   const countdownRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastActivityRef = useRef(Date.now());
 
-  const supabase = createClient();
-
   const logout = useCallback(async () => {
     // Log the timeout event before signing out
     try {
@@ -33,9 +30,10 @@ export default function SessionTimeout() {
         }),
       });
     } catch {}
-    await supabase.auth.signOut();
-    window.location.href = "/login?reason=timeout";
-  }, [supabase]);
+    // Wave 24: Cognito logout. /api/auth/logout clears harbor_id +
+    // harbor_access cookies and redirects to /login/aws.
+    window.location.href = "/api/auth/logout?reason=timeout";
+  }, []);
 
   const resetTimers = useCallback(() => {
     lastActivityRef.current = Date.now();

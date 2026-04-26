@@ -19,6 +19,7 @@ export type AiCapFamily =
   | 'note.draft.%'           // SOAP drafts (Wave 7)
   | 'patient.summary.%'      // Wave 17 — Sonnet patient briefing
   | 'assessment.interpret'   // Wave 17 — Sonnet score interpretation
+  | 'eligibility.%'          // Wave 24 — Stedi 270 (real $$$)
   | 'ai.%'                   // catch-all for future AI
 
 export type DraftRateLimit = {

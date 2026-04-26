@@ -1,120 +1,174 @@
+// app/api/insurance/verify/route.ts
+//
+// Wave 24 (AWS port). Real-time Stedi 270/271 eligibility check.
+// Called by the insurance dashboard "Verify" button.
+//
+// Auth: Cognito session via requireApiSession.
+// Practice: getEffectivePracticeId (act-as cookie aware).
+// Stedi lib: lib/aws/stedi/eligibility (mirrored in Wave 9). The
+// X12 270 assembly is preserved bit-for-bit there — we just hand
+// it the input and persist the response.
+//
+// Per-practice daily cap of 100 via checkAiRateLimit('eligibility.%')
+// — Stedi 270s cost real money per call ($0.10–$0.25 each), and
+// Lift wants to cap runaway bots / dashboard glitch loops the same
+// way we cap AI spend.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { runAndPersistEligibilityCheck } from '@/lib/stedi/eligibility'
-import { knownPayerNames, resolvePayerIdWithDb } from '@/lib/stedi/payers'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
 import { getEffectivePracticeId } from '@/lib/active-practice'
+import { runAndPersistEligibilityCheck } from '@/lib/aws/stedi/eligibility'
+import { knownPayerNames, resolvePayerIdWithDb } from '@/lib/aws/stedi/payers'
+import { checkAiRateLimit } from '@/lib/aws/ehr/draft-rate-limit'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-// Real-time eligibility check. Called from the insurance dashboard
-// ("Verify" button) and any caller passing a user session cookie.
-// Batch and intake triggers use the same underlying lib but with the
-// service-role client — see lib/stedi/eligibility.ts.
 export async function POST(req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) {
+    return NextResponse.json({ error: 'Practice not found for this user' }, { status: 404 })
+  }
+
+  // Daily cap — eligibility checks cost real money.
+  const cap = await checkAiRateLimit(practiceId, 'eligibility.%')
+  if (!cap.allowed) {
+    return NextResponse.json(
+      { error: 'daily_cap_reached', cap: cap.cap, used: cap.used },
+      { status: 429 },
+    )
+  }
+
+  const { rows: pRows } = await pool.query(
+    `SELECT id, name, npi FROM practices WHERE id = $1 LIMIT 1`,
+    [practiceId],
+  )
+  const practice = pRows[0]
+  if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
+  let body: any
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
+  }
+  const {
+    record_id,
+    patient_id,
+    patient_name,
+    patient_dob,
+    patient_phone,
+    insurance_company,
+    member_id,
+    group_number,
+    subscriber_name,
+    subscriber_dob,
+    payer_id: payerIdOverride,
+  } = body
 
-    // Resolves via the users table (or admin act-as cookie) so this works
-    // regardless of whether the logged-in email matches notification_email.
-    const practiceId = await getEffectivePracticeId(supabase, user)
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Practice not found for this user' }, { status: 404 })
-    }
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id, name, npi')
-      .eq('id', practiceId)
-      .single()
-    if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+  if (!insurance_company || !patient_name) {
+    return NextResponse.json(
+      { error: 'insurance_company and patient_name are required' },
+      { status: 400 },
+    )
+  }
 
-    const body = await req.json()
-    const {
-      record_id,            // existing insurance_records.id (optional)
-      patient_id,           // optional — lets us link the row to a patient
-      patient_name,
-      patient_dob,          // YYYY-MM-DD
-      patient_phone,
-      insurance_company,
-      member_id,
-      group_number,
-      subscriber_name,
-      subscriber_dob,
-      payer_id: payerIdOverride,
-    } = body
-
-    if (!insurance_company || !patient_name) {
+  // Fail fast on unknown payers so the dashboard surfaces a useful
+  // message instead of writing a manual_pending row.
+  if (!payerIdOverride) {
+    const resolved = await resolvePayerIdWithDb(insurance_company, null)
+    if (!resolved) {
       return NextResponse.json(
-        { error: 'insurance_company and patient_name are required' },
-        { status: 400 }
+        {
+          error: `Payer ID not found for "${insurance_company}". Provide payer_id manually or check spelling.`,
+          known_payers: knownPayerNames(),
+        },
+        { status: 400 },
       )
     }
+  }
 
-    // Fail fast on unknown payers so the dashboard can surface a helpful error
-    // instead of writing a "manual_pending" row for something the user typo'd.
-    // Uses DB-backed lookup so we match against the full Stedi payer directory.
-    if (!payerIdOverride && !(await resolvePayerIdWithDb(supabase, insurance_company))) {
-      return NextResponse.json({
-        error: `Payer ID not found for "${insurance_company}". Provide payer_id manually or check spelling.`,
-        known_payers: knownPayerNames(),
-      }, { status: 400 })
-    }
-
-    // Upsert insurance_records. If the caller passed an existing record_id we
-    // reuse it (so the dashboard's "Verify again" button doesn't fragment history).
-    let insuranceRecordId = record_id as string | undefined
-    if (!insuranceRecordId) {
-      const { data: newRecord, error: insertError } = await supabase
-        .from('insurance_records')
-        .insert({
-          practice_id: practice.id,
-          patient_id: patient_id || null,
+  // Upsert insurance_records — reuse caller-supplied record_id when
+  // provided (so "Verify again" doesn't fragment history).
+  let insuranceRecordId: string | undefined = record_id
+  if (!insuranceRecordId) {
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO insurance_records
+            (practice_id, patient_id, patient_name, patient_dob,
+             patient_phone, insurance_company, member_id, group_number,
+             subscriber_name, subscriber_dob)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          RETURNING id`,
+        [
+          practice.id,
+          patient_id || null,
           patient_name,
-          patient_dob: patient_dob || null,
-          patient_phone: patient_phone || null,
+          patient_dob || null,
+          patient_phone || null,
           insurance_company,
-          member_id: member_id || null,
-          group_number: group_number || null,
-          subscriber_name: subscriber_name || patient_name,
-          subscriber_dob: subscriber_dob || patient_dob || null,
-        })
-        .select('id')
-        .single()
-
-      if (insertError || !newRecord) {
-        console.error('[verify] failed to insert insurance_records', insertError)
-        return NextResponse.json({ error: 'Failed to save insurance record' }, { status: 500 })
-      }
-      insuranceRecordId = newRecord.id
+          member_id || null,
+          group_number || null,
+          subscriber_name || patient_name,
+          subscriber_dob || patient_dob || null,
+        ],
+      )
+      insuranceRecordId = rows[0].id
+    } catch (err) {
+      console.error('[verify] failed to insert insurance_records', err)
+      return NextResponse.json(
+        { error: 'Failed to save insurance record' },
+        { status: 500 },
+      )
     }
+  }
 
-    const result = await runAndPersistEligibilityCheck(supabase, {
-      insuranceRecordId: insuranceRecordId!,
-      practice: {
-        id: practice.id,
-        name: practice.name ?? null,
-        npi: practice.npi ?? null,
-      },
-      patient: {
-        name: patient_name,
-        dob: patient_dob || null,
-        phone: patient_phone || null,
-      },
-      insurance: {
-        company: insurance_company,
-        memberId: member_id || null,
-        groupNumber: group_number || null,
-        payerIdOverride: payerIdOverride || null,
-      },
-      subscriber: {
-        name: subscriber_name || null,
-        dob: subscriber_dob || null,
-      },
-      triggerSource: 'manual',
-    })
+  const result = await runAndPersistEligibilityCheck({
+    insuranceRecordId: insuranceRecordId!,
+    practice: {
+      id: practice.id,
+      name: practice.name ?? null,
+      npi: practice.npi ?? null,
+    },
+    patient: {
+      name: patient_name,
+      dob: patient_dob || null,
+      phone: patient_phone || null,
+    },
+    insurance: {
+      company: insurance_company,
+      memberId: member_id || null,
+      groupNumber: group_number || null,
+      payerIdOverride: payerIdOverride || null,
+    },
+    subscriber: {
+      name: subscriber_name || null,
+      dob: subscriber_dob || null,
+    },
+    triggerSource: 'manual',
+  })
 
-    // Map back to the legacy response shape the dashboard UI consumes today.
-    const httpStatus = result.status === 'error' ? 422 : 200
-    return NextResponse.json({
+  // Audit on every check (the rate-limit lib counts these rows).
+  await auditEhrAccess({
+    ctx,
+    action: 'note.update',
+    resourceType: 'eligibility_check',
+    resourceId: result.eligibilityCheckId ?? insuranceRecordId,
+    details: {
+      kind: 'eligibility.manual',
+      family: 'eligibility',
+      insurance_record_id: insuranceRecordId,
+      payer_company: insurance_company,
+      result_status: result.status,
+      cap_used: cap.used + 1,
+    },
+  })
+
+  const httpStatus = result.status === 'error' ? 422 : 200
+  return NextResponse.json(
+    {
       record_id: result.insuranceRecordId,
       status: result.status,
       insurance_company,
@@ -133,12 +187,7 @@ export async function POST(req: NextRequest) {
       coverage_end_date: result.coverageEndDate,
       error_message: result.errorMessage,
       eligibility_check_id: result.eligibilityCheckId,
-    }, { status: httpStatus })
-  } catch (err) {
-    console.error('[verify] unexpected error', err)
-    return NextResponse.json(
-      { error: 'Internal server error during eligibility check' },
-      { status: 500 }
-    )
-  }
+    },
+    { status: httpStatus },
+  )
 }

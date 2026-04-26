@@ -1,119 +1,84 @@
+// app/api/support/[id]/route.ts
+//
+// Wave 24 (AWS port). Support ticket detail GET + PATCH. Cognito +
+// pool. Practice-scoped; admins see all tickets across practices.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
 
-// GET /api/support/[id] — get a single ticket
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const supabase = await createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || '').toLowerCase()
 
-    const { data: user } = await supabaseAdmin
-      .from('users')
-      .select('practice_id, role')
-      .eq('id', session.user.id)
-      .single()
-
-    if (!user?.practice_id) {
-      return NextResponse.json({ error: 'No practice found' }, { status: 404 })
-    }
-
-    let query = supabaseAdmin
-      .from('support_tickets')
-      .select('*')
-      .eq('id', params.id)
-      .single()
-
-    // Non-admin users can only see their own practice's tickets
-    if (user.role !== 'admin') {
-      query = query.eq('practice_id', user.practice_id)
-    }
-
-    const { data: ticket, error } = await query
-
-    if (error || !ticket) {
-      return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
-    }
-
-    return NextResponse.json({ ticket })
-  } catch (err) {
-    console.error('Support GET [id] error:', err)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
-  }
+function isAdmin(email: string): boolean {
+  return !!ADMIN_EMAIL && email.toLowerCase() === ADMIN_EMAIL
 }
 
-// PATCH /api/support/[id] — update a ticket (status, dev_notes, resolution, assigned_to)
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
+
+  const args: any[] = [id]
+  let where = `id = $1`
+  if (!isAdmin(ctx.session.email)) {
+    if (!ctx.practiceId) return NextResponse.json({ error: 'No practice found' }, { status: 404 })
+    args.push(ctx.practiceId)
+    where += ` AND practice_id = $${args.length}`
+  }
+
+  const { rows } = await pool.query(
+    `SELECT * FROM support_tickets WHERE ${where} LIMIT 1`,
+    args,
+  )
+  if (rows.length === 0) return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+  return NextResponse.json({ ticket: rows[0] })
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
+
+  const admin = isAdmin(ctx.session.email)
+  if (!admin && !ctx.practiceId) {
+    return NextResponse.json({ error: 'No practice found' }, { status: 404 })
+  }
+
+  const body = await req.json().catch(() => ({}))
+  const allowed = new Set(['status', 'priority', 'dev_notes', 'resolution', 'assigned_to'])
+
+  const sets: string[] = []
+  const args: any[] = [id]
+  for (const [k, v] of Object.entries(body)) {
+    if (!allowed.has(k)) continue
+    // Non-admin can only update status (to close their own tickets).
+    if (!admin && k !== 'status') continue
+    args.push(v)
+    sets.push(`${k} = $${args.length}`)
+  }
+  if (sets.length === 0) return NextResponse.json({ error: 'No updatable fields' }, { status: 400 })
+
+  if (body.status === 'resolved' || body.status === 'closed') {
+    sets.push('resolved_at = NOW()')
+  }
+  sets.push('updated_at = NOW()')
+
+  let where = `id = $1`
+  if (!admin) {
+    args.push(ctx.practiceId)
+    where += ` AND practice_id = $${args.length}`
+  }
+
   try {
-    const supabase = await createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
-
-    const { data: user } = await supabaseAdmin
-      .from('users')
-      .select('practice_id, role')
-      .eq('id', session.user.id)
-      .single()
-
-    if (!user?.practice_id) {
-      return NextResponse.json({ error: 'No practice found' }, { status: 404 })
-    }
-
-    const body = await request.json()
-    const allowedFields: Record<string, boolean> = {
-      status: true,
-      priority: true,
-      dev_notes: true,
-      resolution: true,
-      assigned_to: true,
-    }
-
-    // Practice users can only update status (to close their own tickets)
-    // Admin users can update all fields
-    const updates: Record<string, any> = {}
-    for (const [key, value] of Object.entries(body)) {
-      if (allowedFields[key]) {
-        if (user.role !== 'admin' && key !== 'status') continue
-        updates[key] = value
-      }
-    }
-
-    if (updates.status === 'resolved' || updates.status === 'closed') {
-      updates.resolved_at = new Date().toISOString()
-    }
-    updates.updated_at = new Date().toISOString()
-
-    let query = supabaseAdmin
-      .from('support_tickets')
-      .update(updates)
-      .eq('id', params.id)
-
-    // Non-admin can only update their own practice's tickets
-    if (user.role !== 'admin') {
-      query = query.eq('practice_id', user.practice_id)
-    }
-
-    const { data: ticket, error } = await query.select().single()
-
-    if (error) {
-      console.error('Error updating support ticket:', error)
-      return NextResponse.json({ error: 'Failed to update ticket' }, { status: 500 })
-    }
-
-    return NextResponse.json({ ticket })
+    const { rows } = await pool.query(
+      `UPDATE support_tickets SET ${sets.join(', ')}
+        WHERE ${where}
+        RETURNING *`,
+      args,
+    )
+    if (rows.length === 0) return NextResponse.json({ error: 'Ticket not found' }, { status: 404 })
+    return NextResponse.json({ ticket: rows[0] })
   } catch (err) {
-    console.error('Support PATCH error:', err)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
+    return NextResponse.json({ error: (err as Error).message }, { status: 500 })
   }
 }
