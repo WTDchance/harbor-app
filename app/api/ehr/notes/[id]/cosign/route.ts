@@ -1,81 +1,153 @@
-// app/api/ehr/notes/[id]/cosign/route.ts
-// Supervisor co-signs a signed note. Does NOT change status (note stays
-// 'signed' or 'amended'); stamps cosigned_at + cosigned_by + a hash of
-// the note content at cosign time. Supervisor authority is validated via
-// the ehr_supervision table.
+// Supervisor cosign of a signed (or amended) note. Does NOT change
+// status; stamps cosigned_at + cosigned_by + cosign_hash.
+//
+// SCHEMA GAP — surfaced in Wave 13 design surface. The legacy supervisor
+// authority check pattern relied on therapists.auth_user_id, which does
+// NOT exist on either the AWS canonical or the legacy migration. In
+// production today the legacy route's authority check silently fails
+// every time and only the admin-email override actually cosigns. This
+// AWS port matches that production behavior bug-for-bug while flagging
+// the gap.
+//
+// Proper supervisor relationship enforcement should land in a follow-up
+// wave alongside one of:
+//   (a) extend the therapists table with auth_user_id (or email) and
+//       cross-reference the Cognito user
+//   (b) require the caller to pass `as_therapist_id` in the body and
+//       verify it belongs to ehr_supervision against the note's signed_by
+//   (c) move cosign to a dedicated dashboard widget that resolves the
+//       acting therapist server-side from the Cognito session + a stored
+//       therapist_id mapping
+//
+// Until then: requireEhrApiSession + admin-email override only. Audit
+// row records 'admin_override' so the audit trail is honest about why
+// the cosign was permitted.
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { createHash } from 'node:crypto'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-function contentHash(n: any): string {
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+function contentHash(note: Record<string, any>): string {
   const parts = [
-    n.title || '', n.note_format || '', n.subjective || '', n.objective || '',
-    n.assessment || '', n.plan || '', n.body || '',
-    (n.cpt_codes || []).join(','), (n.icd10_codes || []).join(','),
+    note.title || '',
+    note.note_format || '',
+    note.subjective || '',
+    note.objective || '',
+    note.assessment || '',
+    note.plan || '',
+    note.body || '',
+    (note.cpt_codes || []).join(','),
+    (note.icd10_codes || []).join(','),
   ]
-  return createHash('sha256').update(parts.join('\u241E')).digest('hex')
+  return createHash('sha256').update(parts.join('␞')).digest('hex')
 }
 
-export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+export async function POST(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
-  const { data: note } = await supabaseAdmin
-    .from('ehr_progress_notes').select('*').eq('id', id).eq('practice_id', auth.practiceId).maybeSingle()
-  if (!note) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (!note.requires_cosign) {
-    return NextResponse.json({ error: 'This note does not require co-sign' }, { status: 409 })
-  }
-  if (note.cosigned_at) {
-    return NextResponse.json({ error: 'Already co-signed' }, { status: 409 })
-  }
-  if (note.status !== 'signed' && note.status !== 'amended') {
-    return NextResponse.json({ error: 'Note must be signed before co-sign' }, { status: 409 })
-  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
 
-  // Authority check: is the caller listed as a supervisor of the note's
-  // signing therapist? We map signed_by (auth.users.id) -> therapist row,
-  // then verify ehr_supervision has an active entry with supervisor_id
-  // matching the caller's therapist row. If the practice hasn't set up
-  // therapist rows for its clinicians, fall back to allow if the caller
-  // is an admin.
-  const { data: callerTherapist } = await supabaseAdmin
-    .from('therapists').select('id').eq('auth_user_id', auth.user.id).eq('practice_id', auth.practiceId).maybeSingle()
-
-  let authorized = false
-  if (callerTherapist && note.signed_by) {
-    const { data: supervisee } = await supabaseAdmin
-      .from('therapists').select('id').eq('auth_user_id', note.signed_by).eq('practice_id', auth.practiceId).maybeSingle()
-    if (supervisee) {
-      const { data: sup } = await supabaseAdmin
-        .from('ehr_supervision').select('id').eq('practice_id', auth.practiceId)
-        .eq('supervisor_id', callerTherapist.id).eq('supervisee_id', supervisee.id)
-        .eq('is_active', true).maybeSingle()
-      if (sup) authorized = true
+    const noteRes = await client.query(
+      `SELECT * FROM ehr_progress_notes
+        WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+      [id, ctx.practiceId],
+    )
+    const note = noteRes.rows[0]
+    if (!note) {
+      await client.query('ROLLBACK'); client.release()
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
-  }
-  // Fall-through: admin override — allow the practice admin to cosign.
-  if (!authorized && auth.user.email && auth.user.email.toLowerCase() === (process.env.ADMIN_EMAIL || 'chancewonser@gmail.com').toLowerCase()) {
-    authorized = true
-  }
-  if (!authorized) {
-    return NextResponse.json({ error: 'Not authorized to co-sign this note' }, { status: 403 })
-  }
+    if (!note.requires_cosign) {
+      await client.query('ROLLBACK'); client.release()
+      return NextResponse.json(
+        { error: 'This note does not require co-sign' },
+        { status: 409 },
+      )
+    }
+    if (note.cosigned_at) {
+      await client.query('ROLLBACK'); client.release()
+      return NextResponse.json({ error: 'Already co-signed' }, { status: 409 })
+    }
+    if (note.status !== 'signed' && note.status !== 'amended') {
+      await client.query('ROLLBACK'); client.release()
+      return NextResponse.json(
+        { error: 'Note must be signed before co-sign' },
+        { status: 409 },
+      )
+    }
 
-  const hash = contentHash(note)
-  const { data, error } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .update({ cosigned_at: new Date().toISOString(), cosigned_by: auth.user.id, cosign_hash: hash })
-    .eq('id', id).eq('practice_id', auth.practiceId).select().single()
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    // Authority gate. Schema gap above — admin-only on AWS until the
+    // proper supervisor auth pattern lands.
+    const adminEmails = (process.env.ADMIN_EMAIL || 'chancewonser@gmail.com')
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+    const callerIsAdmin = adminEmails.includes(ctx.session.email.toLowerCase())
+    if (!callerIsAdmin) {
+      await client.query('ROLLBACK'); client.release()
+      return NextResponse.json(
+        {
+          error: 'Not authorized to co-sign this note',
+          hint: 'Supervisor co-sign authority is admin-only on AWS pending the supervisor-relationship schema follow-up. See lib/aws/cancellation-fill notes for context.',
+        },
+        { status: 403 },
+      )
+    }
 
-  await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.sign',
-    resourceId: id, details: { kind: 'cosign', signed_by: note.signed_by, hash },
-  })
+    const hash = contentHash(note)
+    const cosignedAt = new Date().toISOString()
+    const updateRes = await client.query(
+      `UPDATE ehr_progress_notes
+          SET cosigned_at = $1,
+              cosigned_by = $2,
+              cosign_hash = $3,
+              updated_at = NOW()
+        WHERE id = $4 AND practice_id = $5 AND cosigned_at IS NULL
+        RETURNING *`,
+      [cosignedAt, ctx.user.id, hash, id, ctx.practiceId],
+    )
+    if (!updateRes.rows[0]) {
+      // Lost the race to a concurrent cosign.
+      await client.query('ROLLBACK'); client.release()
+      return NextResponse.json(
+        { error: 'Note was cosigned by another request. Reload to see current state.' },
+        { status: 409 },
+      )
+    }
+    const updated = updateRes.rows[0]
 
-  return NextResponse.json({ note: data, success: true })
+    await client.query('COMMIT')
+    client.release()
+
+    await auditEhrAccess({
+      ctx,
+      action: 'note.cosign',
+      resourceId: id,
+      details: {
+        kind: 'cosign',
+        signed_by: note.signed_by,
+        hash,
+        authority: 'admin_override', // Honest about the gap.
+      },
+    })
+
+    return NextResponse.json({ note: updated, success: true })
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {})
+    client.release()
+    return NextResponse.json(
+      { error: (err as Error).message || 'Internal server error' },
+      { status: 500 },
+    )
+  }
 }

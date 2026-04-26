@@ -1,31 +1,33 @@
-// app/api/ehr/notes/[id]/amend/route.ts
-// Harbor EHR — create an amendment to a signed note.
+// Create an amendment to a signed (or amended) note.
 //
-// Starts a fresh DRAFT row that copies the signed note's content and
-// links back via amendment_of. The therapist edits the amendment and
-// signs it normally (sign route sets status='amended' for amendments).
-// The original note stays signed and immutable.
+// The original note stays SIGNED + immutable. This route copies its
+// content into a fresh DRAFT row with amendment_of pointing at the
+// original. The therapist edits the draft and signs it via the regular
+// /api/ehr/notes/[id]/sign route, which detects the amendment_of
+// pointer and signs into status='amended' instead of 'signed'.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
-  const { data: original } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .select('*')
-    .eq('id', id)
-    .eq('practice_id', auth.practiceId)
-    .maybeSingle()
-
+  const origRes = await pool.query(
+    `SELECT * FROM ehr_progress_notes
+      WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [id, ctx.practiceId],
+  )
+  const original = origRes.rows[0]
   if (!original) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (original.status !== 'signed' && original.status !== 'amended') {
     return NextResponse.json(
@@ -34,36 +36,36 @@ export async function POST(
     )
   }
 
-  // Copy content into a fresh draft linked back to the original.
-  const { data: amendment, error } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .insert({
-      practice_id: auth.practiceId,
-      patient_id: original.patient_id,
-      appointment_id: original.appointment_id,
-      therapist_id: original.therapist_id,
-      title: `Amendment to: ${original.title}`,
-      note_format: original.note_format,
-      subjective: original.subjective,
-      objective: original.objective,
-      assessment: original.assessment,
-      plan: original.plan,
-      body: original.body,
-      cpt_codes: original.cpt_codes,
-      icd10_codes: original.icd10_codes,
-      status: 'draft',
-      amendment_of: original.id,
-      created_by: auth.user.id,
-    })
-    .select()
-    .single()
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  // Single-row insert — no transaction needed (no multi-table side effects).
+  const ins = await pool.query(
+    `INSERT INTO ehr_progress_notes (
+       practice_id, patient_id, appointment_id, therapist_id,
+       title, note_format,
+       subjective, objective, assessment, plan, body,
+       cpt_codes, icd10_codes,
+       status, amendment_of
+     ) VALUES (
+       $1, $2, $3, $4,
+       $5, $6,
+       $7, $8, $9, $10, $11,
+       $12::text[], $13::text[],
+       'draft', $14
+     )
+     RETURNING *`,
+    [
+      ctx.practiceId, original.patient_id, original.appointment_id, original.therapist_id,
+      `Amendment to: ${original.title}`, original.note_format,
+      original.subjective, original.objective, original.assessment,
+      original.plan, original.body,
+      original.cpt_codes ?? [], original.icd10_codes ?? [],
+      original.id,
+    ],
+  )
+  const amendment = ins.rows[0]
 
   await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
-    action: 'note.amend',
+    ctx,
+    action: 'note.amend.create',
     resourceId: amendment.id,
     details: { amendment_of: original.id, title: amendment.title },
   })

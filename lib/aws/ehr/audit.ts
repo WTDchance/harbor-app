@@ -17,6 +17,7 @@ export type EhrAuditAction =
   | 'note.sign'
   | 'note.cosign'
   | 'note.amend'
+  | 'note.amend.create'
   | 'note.draft_from_brief'
   | 'note.draft_from_call'
   | 'treatment_plan.view'

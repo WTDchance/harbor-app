@@ -1,16 +1,29 @@
-// app/api/ehr/notes/[id]/sign/route.ts
-// Harbor EHR — sign a progress note. Once signed, the note is locked.
+// Sign a progress note. Once signed, the note is immutable (subsequent
+// PATCHes 409). Amendments sign into status='amended' so the lineage
+// stays visible; first-time signatures sign into status='signed'.
+//
+// Hash algorithm: SHA-256 of the canonical content fields joined with
+// the U+241E ('SYMBOL FOR RECORD SEPARATOR') control character. Lifted
+// VERBATIM from the legacy implementation — any future change has to
+// match what historical signed notes already hashed against.
+//
+// AUTO-CHARGE deferred: legacy calls createChargesForSignedNote on
+// success when the practice has billing enabled. That helper is
+// Supabase-coupled. On AWS, therapists create charges manually via
+// /api/ehr/billing/charges POST (already ported). TODO(phase-4b):
+// port createChargesForSignedNote to lib/aws/ehr/billing.
 
-import { NextRequest, NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
 import { createHash } from 'node:crypto'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
-import { createChargesForSignedNote } from '@/lib/ehr/billing'
-import { normalize as normalizePrefs } from '@/lib/ehr/preferences'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 function contentHash(note: Record<string, any>): string {
-  // Hash the fields that make up the clinical content, in a stable order.
+  // Stable field order — match legacy bit-for-bit.
   const parts = [
     note.title || '',
     note.note_format || '',
@@ -22,84 +35,108 @@ function contentHash(note: Record<string, any>): string {
     (note.cpt_codes || []).join(','),
     (note.icd10_codes || []).join(','),
   ]
-  return createHash('sha256').update(parts.join('\u241E')).digest('hex')
+  return createHash('sha256').update(parts.join('␞')).digest('hex')
 }
 
 export async function POST(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await requireEhrAuth()
-  if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
-  const { data: note } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .select('*')
-    .eq('id', id)
-    .eq('practice_id', auth.practiceId)
-    .maybeSingle()
-
-  if (!note) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (note.status !== 'draft') {
-    return NextResponse.json(
-      { error: `Cannot sign a note in status "${note.status}".` },
-      { status: 409 },
-    )
-  }
-
-  // Basic content check — a signed note should have actual content.
-  const hasStructured = note.subjective || note.objective || note.assessment || note.plan
-  const hasBody = typeof note.body === 'string' && note.body.trim().length > 0
-  if (!hasStructured && !hasBody) {
-    return NextResponse.json(
-      { error: 'Cannot sign an empty note. Add content in at least one section.' },
-      { status: 400 },
-    )
-  }
-
-  const hash = contentHash(note)
-  // Amendments sign into status='amended' so the lineage stays visible.
-  // First-time signatures sign into status='signed'.
-  const nextStatus = note.amendment_of ? 'amended' : 'signed'
-  const { data, error } = await supabaseAdmin
-    .from('ehr_progress_notes')
-    .update({
-      status: nextStatus,
-      signed_at: new Date().toISOString(),
-      signed_by: auth.user.id,
-      signature_hash: hash,
-    })
-    .eq('id', id)
-    .eq('practice_id', auth.practiceId)
-    .select()
-    .single()
-
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-
-  await auditEhrAccess({
-    user: auth.user,
-    practiceId: auth.practiceId,
-    action: 'note.sign',
-    resourceId: id,
-    details: { status: nextStatus, amendment_of: note.amendment_of ?? null, hash },
-  })
-
-  // Auto-create charges when billing feature is enabled for the practice
+  // Optimistic-lock pattern: load + UPDATE WHERE status='draft' inside a
+  // transaction so two concurrent sign requests don't both write a hash.
+  const client = await pool.connect()
   try {
-    const { data: prefRow } = await supabaseAdmin
-      .from('practices').select('ui_preferences').eq('id', auth.practiceId).maybeSingle()
-    const prefs = normalizePrefs(prefRow?.ui_preferences)
-    if (prefs.features.billing) {
-      await createChargesForSignedNote({
-        practiceId: auth.practiceId,
-        note: data, // the just-signed row
-        billingFeatureEnabled: true,
-      })
+    await client.query('BEGIN')
+
+    const noteRes = await client.query(
+      `SELECT * FROM ehr_progress_notes
+        WHERE id = $1 AND practice_id = $2
+        LIMIT 1`,
+      [id, ctx.practiceId],
+    )
+    const note = noteRes.rows[0]
+    if (!note) {
+      await client.query('ROLLBACK')
+      client.release()
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
+    if (note.status !== 'draft') {
+      await client.query('ROLLBACK')
+      client.release()
+      return NextResponse.json(
+        { error: `Cannot sign a note in status "${note.status}".` },
+        { status: 409 },
+      )
+    }
+
+    const hasStructured = note.subjective || note.objective || note.assessment || note.plan
+    const hasBody = typeof note.body === 'string' && note.body.trim().length > 0
+    if (!hasStructured && !hasBody) {
+      await client.query('ROLLBACK')
+      client.release()
+      return NextResponse.json(
+        { error: 'Cannot sign an empty note. Add content in at least one section.' },
+        { status: 400 },
+      )
+    }
+
+    const hash = contentHash(note)
+    const nextStatus = note.amendment_of ? 'amended' : 'signed'
+    const signedAt = new Date().toISOString()
+
+    const updateRes = await client.query(
+      `UPDATE ehr_progress_notes
+          SET status = $1,
+              signed_at = $2,
+              signed_by = $3,
+              signature_hash = $4,
+              updated_at = NOW()
+        WHERE id = $5 AND practice_id = $6 AND status = 'draft'
+        RETURNING *`,
+      [nextStatus, signedAt, ctx.user.id, hash, id, ctx.practiceId],
+    )
+    if (!updateRes.rows[0]) {
+      // Lost the race to a concurrent sign — surface the current state.
+      await client.query('ROLLBACK')
+      client.release()
+      return NextResponse.json(
+        { error: 'Note was signed by another request. Reload to see the current state.' },
+        { status: 409 },
+      )
+    }
+    const updated = updateRes.rows[0]
+
+    await client.query('COMMIT')
+    client.release()
+
+    await auditEhrAccess({
+      ctx,
+      action: 'note.sign',
+      resourceId: id,
+      details: {
+        status: nextStatus,
+        amendment_of: note.amendment_of ?? null,
+        hash,
+      },
+    })
+
+    // TODO(phase-4b): auto-create charges for the signed note when the
+    // practice has billing enabled. Held back because lib/ehr/billing
+    // (createChargesForSignedNote) is Supabase-coupled. Therapists can
+    // create charges manually via /api/ehr/billing/charges POST in the
+    // meantime.
+
+    return NextResponse.json({ note: updated, success: true })
   } catch (err) {
-    console.error('[notes/sign] failed to auto-create charges', err)
-    // never block the sign response on billing failure
+    await client.query('ROLLBACK').catch(() => {})
+    client.release()
+    return NextResponse.json(
+      { error: (err as Error).message || 'Internal server error' },
+      { status: 500 },
+    )
   }
-  return NextResponse.json({ note: data, success: true })
 }
