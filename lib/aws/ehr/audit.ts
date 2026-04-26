@@ -53,6 +53,7 @@ export type EhrAuditAction =
   | 'portal.scheduling.create'
   | 'portal.homework.update'
   | 'portal.assessment.complete'
+  | 'billing.payment.create'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

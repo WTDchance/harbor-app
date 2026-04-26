@@ -1,21 +1,22 @@
-// app/api/cron/weekly-eligibility-email/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+// Weekly "your week ahead" eligibility summary for therapists.
+//
+// Bearer CRON_SECRET. Sends one email per active practice via SES (lib/email
+// is already SES-backed via Wave 5). Lists the next 7 days of scheduled
+// appointments with each patient's latest insurance eligibility status.
+//
+// AWS canonical schema notes:
+//   appointments.scheduled_for replaces scheduled_at.
+//   practices.owner_email replaces notification_email.
+//   patients.billing_mode column may not exist — defensive skip if missing.
+
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
 import { sendEmail, EMAIL_SUPPORT } from '@/lib/email'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 import { assertCronAuthorized } from '@/lib/cron-auth'
 
-/**
- * Weekly "your week ahead" eligibility summary for therapists.
- *
- * Scheduled by an external cron (cron-job.org) to fire Sunday ~8 AM Pacific
- * (15:00 UTC in PDT, 16:00 UTC in PST). Each active practice gets one email
- * listing the next 7 days of scheduled appointments with each patient's
- * latest insurance eligibility status and any flags.
- *
- * Auth: Authorization: Bearer <CRON_SECRET>
- *
- * Response: { ok, practices_considered, emails_sent, errors, durationMs }
- */
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 const LOOKAHEAD_DAYS = 7
 const PRACTICE_TZ_FALLBACK = 'America/Los_Angeles'
@@ -41,17 +42,16 @@ interface PatientRow {
 
 export async function POST(req: NextRequest) {
   const started = Date.now()
+  const unauthorized = assertCronAuthorized(req)
+  if (unauthorized) return unauthorized
+
   try {
-    const unauthorized = assertCronAuthorized(req)
-    if (unauthorized) return unauthorized
-
-    const { data: practices, error: pErr } = await supabaseAdmin
-      .from('practices')
-      .select('id, name, provider_name, notification_email, timezone, status')
-      .eq('status', 'active')
-      .not('notification_email', 'is', null)
-
-    if (pErr) throw pErr
+    // AWS canonical: practices.owner_email + provisioning_state='active'.
+    const { rows: practices } = await pool.query(
+      `SELECT id, name, owner_email, timezone, provisioning_state
+         FROM practices
+        WHERE provisioning_state = 'active' AND owner_email IS NOT NULL`,
+    )
 
     const nowIso = new Date().toISOString()
     const horizonIso = new Date(Date.now() + LOOKAHEAD_DAYS * 86_400_000).toISOString()
@@ -59,21 +59,21 @@ export async function POST(req: NextRequest) {
     let emailsSent = 0
     const errors: Array<{ practice_id: string; reason: string }> = []
 
-    for (const practice of practices || []) {
+    for (const practice of practices) {
       try {
         const rows = await buildRowsForPractice(practice.id, nowIso, horizonIso)
-        if (rows.length === 0) continue // no upcoming appointments — skip email
+        if (rows.length === 0) continue
 
         const tz = practice.timezone || PRACTICE_TZ_FALLBACK
         const { subject, html } = renderWeeklyEmail({
           practiceName: practice.name || 'your practice',
-          providerName: practice.provider_name || null,
+          providerName: null, // AWS canonical practices doesn't carry provider_name
           tz,
           rows,
         })
 
         const ok = await sendEmail({
-          to: practice.notification_email!,
+          to: practice.owner_email,
           subject,
           html,
           from: EMAIL_SUPPORT,
@@ -87,9 +87,19 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    auditSystemEvent({
+      action: 'cron.weekly-eligibility-email.run',
+      details: {
+        practices_considered: practices.length,
+        emails_sent: emailsSent,
+        error_count: errors.length,
+        duration_ms: Date.now() - started,
+      },
+    }).catch(() => {})
+
     return NextResponse.json({
       ok: true,
-      practices_considered: practices?.length || 0,
+      practices_considered: practices.length,
       emails_sent: emailsSent,
       errors: errors.length,
       errorDetail: errors.slice(0, 10),
@@ -99,93 +109,102 @@ export async function POST(req: NextRequest) {
     console.error('[weekly-eligibility-email]', err)
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'internal error' },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }
 
-// ---------------------------------------------------------------------------
-
 async function buildRowsForPractice(
   practiceId: string,
   nowIso: string,
-  horizonIso: string
+  horizonIso: string,
 ): Promise<PatientRow[]> {
-  const { data: appts } = await supabaseAdmin
-    .from('appointments')
-    .select('id, patient_id, scheduled_at')
-    .eq('practice_id', practiceId)
-    .eq('status', 'scheduled')
-    .gte('scheduled_at', nowIso)
-    .lte('scheduled_at', horizonIso)
-    .order('scheduled_at', { ascending: true })
-
-  if (!appts || appts.length === 0) return []
+  const { rows: appts } = await pool.query(
+    `SELECT id, patient_id, scheduled_for
+       FROM appointments
+      WHERE practice_id = $1 AND status = 'scheduled'
+        AND scheduled_for >= $2 AND scheduled_for <= $3
+      ORDER BY scheduled_for ASC`,
+    [practiceId, nowIso, horizonIso],
+  )
+  if (appts.length === 0) return []
 
   const patientIds = Array.from(new Set(appts.map(a => a.patient_id).filter(Boolean))) as string[]
   if (patientIds.length === 0) return []
 
-  const { data: patients } = await supabaseAdmin
-    .from('patients')
-    .select('id, first_name, last_name, billing_mode')
-    .in('id', patientIds)
-
-  // Drop self-pay / sliding-scale patients from the weekly eligibility email —
-  // this digest is about carrier coverage, and cash-pay patients don't belong here.
-  // Pending + insurance patients stay in so the therapist can still see who needs verification.
+  // Patients with optional billing_mode filter.
   const patientById = new Map<string, { name: string }>()
-  for (const p of patients || []) {
-    const mode = (p.billing_mode as string) || 'pending'
-    if (mode === 'self_pay' || mode === 'sliding_scale') continue
-    patientById.set(p.id, {
-      name: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Patient',
-    })
+  try {
+    const { rows: patients } = await pool.query(
+      `SELECT id, first_name, last_name, billing_mode
+         FROM patients WHERE id = ANY($1::uuid[])`,
+      [patientIds],
+    )
+    for (const p of patients) {
+      const mode = p.billing_mode || 'pending'
+      if (mode === 'self_pay' || mode === 'sliding_scale') continue
+      patientById.set(p.id, {
+        name: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Patient',
+      })
+    }
+  } catch {
+    // billing_mode column may not exist — fall back to no-filter
+    const { rows: patients } = await pool.query(
+      `SELECT id, first_name, last_name FROM patients WHERE id = ANY($1::uuid[])`,
+      [patientIds],
+    )
+    for (const p of patients) {
+      patientById.set(p.id, {
+        name: [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Patient',
+      })
+    }
   }
 
-  // Latest insurance_records row per patient, plus its latest eligibility_check.
-  const { data: insRows } = await supabaseAdmin
-    .from('insurance_records')
-    .select('id, patient_id, last_verified_at, last_verification_status, updated_at')
-    .eq('practice_id', practiceId)
-    .in('patient_id', patientIds)
-    .order('updated_at', { ascending: false })
+  const { rows: insRows } = await pool.query(
+    `SELECT id, patient_id, last_verified_at, last_verification_status, updated_at
+       FROM insurance_records
+      WHERE practice_id = $1 AND patient_id = ANY($2::uuid[])
+      ORDER BY updated_at DESC`,
+    [practiceId, patientIds],
+  ).catch(() => ({ rows: [] as any[] }))
 
-  // Keep only the most-recent record per patient.
   const irByPatient = new Map<string, { id: string; last_verified_at: string | null }>()
-  for (const r of insRows || []) {
+  for (const r of insRows) {
     if (r.patient_id && !irByPatient.has(r.patient_id)) {
       irByPatient.set(r.patient_id, { id: r.id, last_verified_at: r.last_verified_at })
     }
   }
 
-  // Latest eligibility_check row per insurance_record (one extra query, one row each).
   const recordIds = Array.from(irByPatient.values()).map(v => v.id)
   const checkByRecord = new Map<string, any>()
   if (recordIds.length > 0) {
-    const { data: checks } = await supabaseAdmin
-      .from('eligibility_checks')
-      .select('insurance_record_id, status, is_active, copay_amount, deductible_total, deductible_met, session_limit, prior_auth_required, coverage_end_date, plan_name, checked_at')
-      .in('insurance_record_id', recordIds)
-      .order('checked_at', { ascending: false })
-    for (const c of checks || []) {
+    const { rows: checks } = await pool.query(
+      `SELECT insurance_record_id, status, is_active, copay_amount,
+              deductible_total, deductible_met, session_limit,
+              prior_auth_required, coverage_end_date, plan_name, checked_at
+         FROM eligibility_checks
+        WHERE insurance_record_id = ANY($1::uuid[])
+        ORDER BY checked_at DESC`,
+      [recordIds],
+    ).catch(() => ({ rows: [] as any[] }))
+    for (const c of checks) {
       if (!checkByRecord.has(c.insurance_record_id)) {
         checkByRecord.set(c.insurance_record_id, c)
       }
     }
   }
 
-  const rows: PatientRow[] = []
+  const out: PatientRow[] = []
   for (const a of appts) {
     if (!a.patient_id) continue
     const patient = patientById.get(a.patient_id)
     if (!patient) continue
-
     const ir = irByPatient.get(a.patient_id)
     const check = ir ? checkByRecord.get(ir.id) : null
 
     const row: PatientRow = {
       appointmentId: a.id,
-      appointmentAt: a.scheduled_at,
+      appointmentAt: new Date(a.scheduled_for).toISOString(),
       patientId: a.patient_id,
       patientName: patient.name,
       eligStatus: (check?.status as EligStatus) || 'unknown',
@@ -200,9 +219,9 @@ async function buildRowsForPractice(
       flags: [],
     }
     row.flags = computeFlags(row)
-    rows.push(row)
+    out.push(row)
   }
-  return rows
+  return out
 }
 
 function computeFlags(r: PatientRow): string[] {
@@ -226,10 +245,6 @@ function computeFlags(r: PatientRow): string[] {
   return flags
 }
 
-// ---------------------------------------------------------------------------
-// Email rendering
-// ---------------------------------------------------------------------------
-
 function renderWeeklyEmail(opts: {
   practiceName: string
   providerName: string | null
@@ -251,7 +266,6 @@ function renderWeeklyEmail(opts: {
     hour: 'numeric', minute: '2-digit', timeZone: opts.tz,
   })
 
-  // Group rows by local day.
   const byDay = new Map<string, PatientRow[]>()
   for (const r of opts.rows) {
     const key = dayFmt.format(new Date(r.appointmentAt))
@@ -259,7 +273,7 @@ function renderWeeklyEmail(opts: {
     byDay.get(key)!.push(r)
   }
 
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://harborreceptionist.com'
   const greeting = opts.providerName ? `Hi ${opts.providerName},` : 'Hi there,'
 
   const dayBlocks = Array.from(byDay.entries()).map(([day, rows]) => {
@@ -267,11 +281,8 @@ function renderWeeklyEmail(opts: {
     return `
       <div style="margin-bottom: 24px;">
         <div style="font-weight: 600; color: #0d9488; font-size: 14px; margin-bottom: 8px; border-bottom: 1px solid #e5e7eb; padding-bottom: 6px;">${escapeHtml(day)}</div>
-        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
-          ${rowsHtml}
-        </table>
-      </div>
-    `
+        <table style="width: 100%; border-collapse: collapse; font-size: 14px;">${rowsHtml}</table>
+      </div>`
   }).join('')
 
   const html = `<!DOCTYPE html>
@@ -285,15 +296,12 @@ function renderWeeklyEmail(opts: {
     <div style="padding: 28px 32px; font-size: 15px; line-height: 1.6;">
       <p style="margin: 0 0 16px;">${escapeHtml(greeting)}</p>
       <p style="margin: 0 0 20px;">Here's your schedule for the next 7 days along with each patient's insurance status.${attentionCount > 0 ? ` <strong>${attentionCount} appointment${attentionCount === 1 ? '' : 's'} need${attentionCount === 1 ? 's' : ''} attention</strong> before the session.` : ' Everything looks verified and ready.'}</p>
-
       <div style="display: flex; gap: 8px; margin-bottom: 24px; flex-wrap: wrap;">
         ${summaryChip('#0d9488', `${total} total`)}
         ${summaryChip('#059669', `${total - attentionCount} verified`)}
         ${attentionCount > 0 ? summaryChip('#dc2626', `${attentionCount} need attention`) : ''}
       </div>
-
       ${dayBlocks}
-
       <div style="margin-top: 28px; padding-top: 20px; border-top: 1px solid #e5e7eb;">
         <a href="${appUrl}/dashboard/insurance" style="display: inline-block; background: #0d9488; color: white; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">Open insurance dashboard →</a>
       </div>
@@ -303,7 +311,6 @@ function renderWeeklyEmail(opts: {
     </div>
   </div>
 </body></html>`
-
   return { subject, html }
 }
 
@@ -331,18 +338,17 @@ function renderRow(r: PatientRow, timeFmt: Intl.DateTimeFormat): string {
         <div>Copay: ${copay}</div>
         <div style="color: #6b7280; font-size: 12px;">Ded: ${deductible}</div>
       </td>
-    </tr>
-  `
+    </tr>`
 }
 
 function statusChip(status: EligStatus): string {
   const map: Record<EligStatus, { label: string; bg: string; fg: string }> = {
-    active:         { label: 'Active',        bg: '#d1fae5', fg: '#065f46' },
-    inactive:       { label: 'Inactive',      bg: '#fee2e2', fg: '#991b1b' },
-    error:          { label: 'Error',         bg: '#fee2e2', fg: '#991b1b' },
-    missing_data:   { label: 'Needs info',    bg: '#fef3c7', fg: '#92400e' },
-    manual_pending: { label: 'Manual',        bg: '#fef3c7', fg: '#92400e' },
-    unknown:        { label: 'Unverified',    bg: '#e5e7eb', fg: '#374151' },
+    active:         { label: 'Active',     bg: '#d1fae5', fg: '#065f46' },
+    inactive:       { label: 'Inactive',   bg: '#fee2e2', fg: '#991b1b' },
+    error:          { label: 'Error',      bg: '#fee2e2', fg: '#991b1b' },
+    missing_data:   { label: 'Needs info', bg: '#fef3c7', fg: '#92400e' },
+    manual_pending: { label: 'Manual',     bg: '#fef3c7', fg: '#92400e' },
+    unknown:        { label: 'Unverified', bg: '#e5e7eb', fg: '#374151' },
   }
   const s = map[status] || map.unknown
   return `<span style="display: inline-block; padding: 3px 10px; border-radius: 999px; background: ${s.bg}; color: ${s.fg}; font-size: 12px; font-weight: 600;">${s.label}</span>`
@@ -358,5 +364,4 @@ function escapeHtml(s: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
 }

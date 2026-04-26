@@ -1,126 +1,123 @@
-/**
- * Harbor data retention cron — HIPAA §164.530(j)
- *
- * Enforces the 90-day retention policy published in our privacy policy.
- * Runs daily (Railway cron). Each run:
- *   1. Deletes call_logs rows older than 90 days (transcripts + summaries).
- *   2. Deletes sms_conversations with last_message_at older than 90 days.
- *   3. Deletes audit_logs older than 365 days (keep 1 year for compliance).
- *   4. Logs a `system.data_retention_run` event with counts.
- *
- * Related FK behaviour:
- *   - harbor_events.call_log_id  → ON DELETE SET NULL  (events kept, link cleared)
- *   - intake_packets.call_log_id → ON DELETE SET NULL  (packets kept, link cleared)
- *   - patient_arrivals.call_log_id → ON DELETE CASCADE (arrivals removed with call)
- *   - outcome_assessments.call_log_id → ON DELETE CASCADE (assessments removed)
- *
- * Protected by x-cron-secret header (same as reconciler).
- */
+// Harbor data retention cron — HIPAA §164.530(j).
+//
+// Enforces the 90-day call/sms retention + 365-day audit-log retention.
+// Bearer CRON_SECRET. Idempotent per-day via audit_logs lookup so a misfire
+// doesn't double-delete.
+//
+// AWS canonical schema notes:
+//   call_logs.created_at → started_at filter equivalent.
+//   sms_conversations table may not exist on every cluster — try/catch,
+//   skip with zero-count if missing.
 
-import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabase';
-import { logEvent } from '@/lib/events';
-import { assertCronAuthorized } from '@/lib/cron-auth';
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
+import { assertCronAuthorized } from '@/lib/cron-auth'
 
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-const CALL_LOG_RETENTION_DAYS = 90;
-const SMS_RETENTION_DAYS = 90;
-const AUDIT_LOG_RETENTION_DAYS = 365;
+const CALL_LOG_RETENTION_DAYS = 90
+const SMS_RETENTION_DAYS = 90
+const AUDIT_LOG_RETENTION_DAYS = 365
 
 export async function GET(req: NextRequest) {
-  const unauthorized = assertCronAuthorized(req);
-  if (unauthorized) return unauthorized;
+  const unauthorized = assertCronAuthorized(req)
+  if (unauthorized) return unauthorized
 
-  const results: Record<string, number> = {};
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10)
+  const results: Record<string, number> = {}
 
+  // Idempotency: only run once per UTC day. The marker is the audit_logs row
+  // we'll write at the end of a successful run.
   try {
-    // Gate: only run once per day — check if today's event already exists
-    const { data: existing } = await supabaseAdmin
-      .from('harbor_events')
-      .select('id')
-      .eq('event_type', 'system.data_retention_run')
-      .gte('created_at', `${today}T00:00:00Z`)
-      .limit(1);
-
-    if (existing && existing.length > 0) {
-      return NextResponse.json({ ok: true, skipped: true, reason: 'Already ran today' });
+    const { rows: prior } = await pool.query(
+      `SELECT 1 FROM audit_logs
+        WHERE action = 'cron.data-retention.run'
+          AND timestamp >= $1::timestamptz
+        LIMIT 1`,
+      [`${today}T00:00:00Z`],
+    )
+    if (prior[0]) {
+      return NextResponse.json({ ok: true, skipped: true, reason: 'Already ran today' })
     }
+  } catch {
+    // audit_logs unreachable — proceed defensively rather than block.
+  }
 
-    // 1. Delete call_logs older than 90 days
-    const callCutoff = new Date();
-    callCutoff.setDate(callCutoff.getDate() - CALL_LOG_RETENTION_DAYS);
-    const { data: deletedCalls, error: callErr } = await supabaseAdmin
-      .from('call_logs')
-      .delete()
-      .lt('created_at', callCutoff.toISOString())
-      .select('id');
+  // 1. call_logs older than 90d. AWS canonical: started_at as the timeline.
+  const callCutoff = new Date()
+  callCutoff.setDate(callCutoff.getDate() - CALL_LOG_RETENTION_DAYS)
+  try {
+    const { rows: deleted } = await pool.query(
+      `DELETE FROM call_logs
+        WHERE COALESCE(started_at, created_at) < $1
+        RETURNING id`,
+      [callCutoff.toISOString()],
+    )
+    results.call_logs_deleted = deleted.length
+  } catch (err) {
+    console.error('[data-retention] call_logs delete error:', (err as Error).message)
+    results.call_logs_error = 1
+  }
 
-    if (callErr) {
-      console.error('[data-retention] call_logs delete error:', callErr.message);
-      results.call_logs_error = 1;
+  // 2. sms_conversations older than 90d (table may not exist).
+  const smsCutoff = new Date()
+  smsCutoff.setDate(smsCutoff.getDate() - SMS_RETENTION_DAYS)
+  try {
+    const { rows: deleted } = await pool.query(
+      `DELETE FROM sms_conversations
+        WHERE last_message_at < $1
+        RETURNING id`,
+      [smsCutoff.toISOString()],
+    )
+    results.sms_conversations_deleted = deleted.length
+  } catch (err) {
+    const m = (err as Error).message
+    if (/relation .* does not exist/i.test(m)) {
+      results.sms_conversations_skipped = 1
     } else {
-      results.call_logs_deleted = deletedCalls?.length ?? 0;
+      console.error('[data-retention] sms_conversations delete error:', m)
+      results.sms_conversations_error = 1
     }
+  }
 
-    // 2. Delete sms_conversations older than 90 days
-    const smsCutoff = new Date();
-    smsCutoff.setDate(smsCutoff.getDate() - SMS_RETENTION_DAYS);
-    const { data: deletedSms, error: smsErr } = await supabaseAdmin
-      .from('sms_conversations')
-      .delete()
-      .lt('last_message_at', smsCutoff.toISOString())
-      .select('id');
+  // 3. audit_logs older than 365d.
+  const auditCutoff = new Date()
+  auditCutoff.setDate(auditCutoff.getDate() - AUDIT_LOG_RETENTION_DAYS)
+  try {
+    const { rows: deleted } = await pool.query(
+      `DELETE FROM audit_logs
+        WHERE timestamp < $1
+        RETURNING id`,
+      [auditCutoff.toISOString()],
+    )
+    results.audit_logs_deleted = deleted.length
+  } catch (err) {
+    console.error('[data-retention] audit_logs delete error:', (err as Error).message)
+    results.audit_logs_error = 1
+  }
 
-    if (smsErr) {
-      console.error('[data-retention] sms_conversations delete error:', smsErr.message);
-      results.sms_conversations_error = 1;
-    } else {
-      results.sms_conversations_deleted = deletedSms?.length ?? 0;
-    }
-
-    // 3. Delete audit_logs older than 365 days
-    const auditCutoff = new Date();
-    auditCutoff.setDate(auditCutoff.getDate() - AUDIT_LOG_RETENTION_DAYS);
-    const { data: deletedAudit, error: auditErr } = await supabaseAdmin
-      .from('audit_logs')
-      .delete()
-      .lt('timestamp', auditCutoff.toISOString())
-      .select('id');
-
-    if (auditErr) {
-      console.error('[data-retention] audit_logs delete error:', auditErr.message);
-      results.audit_logs_error = 1;
-    } else {
-      results.audit_logs_deleted = deletedAudit?.length ?? 0;
-    }
-
-    // 4. Log the retention run as a system event (no practice scope)
-    await logEvent({
-      practiceId: '00000000-0000-0000-0000-000000000000', // system-level event
-      eventType: 'system.data_retention_run',
-      severity: 'info',
-      source: 'cron',
-      payload: results,
-      dedupeKey: `data-retention-${new Date().toISOString().slice(0, 10)}`,
-    });
-
-    return NextResponse.json({
-      ok: true,
+  // 4. Mark the run.
+  auditSystemEvent({
+    action: 'cron.data-retention.run',
+    details: {
       retention_days: {
         call_logs: CALL_LOG_RETENTION_DAYS,
         sms_conversations: SMS_RETENTION_DAYS,
         audit_logs: AUDIT_LOG_RETENTION_DAYS,
       },
       deleted: results,
-    });
-  } catch (err: any) {
-    console.error('[data-retention] Unexpected error:', err);
-    return NextResponse.json(
-      { error: 'Data retention run failed', detail: err.message },
-      { status: 500 }
-    );
-  }
+    },
+  }).catch(() => {})
+
+  return NextResponse.json({
+    ok: true,
+    retention_days: {
+      call_logs: CALL_LOG_RETENTION_DAYS,
+      sms_conversations: SMS_RETENTION_DAYS,
+      audit_logs: AUDIT_LOG_RETENTION_DAYS,
+    },
+    deleted: results,
+  })
 }

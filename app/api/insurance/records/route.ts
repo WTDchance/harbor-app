@@ -1,156 +1,91 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
+// Insurance records list — read path on AWS.
+//
+// GET enriches each insurance_records row with its most recent
+// eligibility_check via a single batched join. POST/PATCH/DELETE are
+// 501-stubbed pending phase-4b (write paths overlap with the carrier-
+// agnostic eligibility flow + Stedi).
 
-// GET /api/insurance/records â list all insurance records for the practice
-export async function GET(req: NextRequest) {
+import { NextResponse } from 'next/server'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export async function GET() {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ records: [] })
+
+  // Try to load both tables. If insurance_records or eligibility_checks
+  // doesn't exist on this RDS yet, return empty + setup_needed flag (mirrors
+  // the legacy 42P01 fallback shape).
+  let records: any[] = []
+  let setupNeeded = false
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    const r = await pool.query(
+      `SELECT * FROM insurance_records
+        WHERE practice_id = $1
+        ORDER BY created_at DESC`,
+      [ctx.practiceId],
+    )
+    records = r.rows
+  } catch {
+    return NextResponse.json({ records: [], setup_needed: true })
+  }
 
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
+  if (records.length === 0) return NextResponse.json({ records: [] })
 
-    if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-
-    const { data: records, error } = await supabase
-      .from('insurance_records')
-      .select(`
-        *,
-        eligibility_checks (
-          id,
-          status,
-          is_active,
-          mental_health_covered,
-          copay_amount,
-          deductible_total,
-          deductible_met,
-          checked_at,
-          error_message
-        )
-      `)
-      .eq('practice_id', practice.id)
-      .order('created_at', { ascending: false })
-
-    if (error) {
-      // Table may not exist yet â return empty gracefully
-      if (error.code === '42P01') {
-        return NextResponse.json({ records: [], setup_needed: true })
+  // Latest eligibility_check per record, joined manually.
+  const ids = records.map(r => r.id)
+  let checksByRecord = new Map<string, any>()
+  try {
+    const { rows: checks } = await pool.query(
+      `SELECT insurance_record_id, id, status, is_active, mental_health_covered,
+              copay_amount, deductible_total, deductible_met, checked_at,
+              error_message
+         FROM eligibility_checks
+        WHERE insurance_record_id = ANY($1::uuid[])
+        ORDER BY checked_at DESC`,
+      [ids],
+    )
+    for (const c of checks) {
+      if (!checksByRecord.has(c.insurance_record_id)) {
+        checksByRecord.set(c.insurance_record_id, c)
       }
-      return NextResponse.json({ error: error.message }, { status: 500 })
     }
-
-    // Attach most recent eligibility check to each record
-    const enriched = (records || []).map(r => {
-      const checks = r.eligibility_checks || []
-      const latest = checks.sort((a: any, b: any) =>
-        new Date(b.checked_at).getTime() - new Date(a.checked_at).getTime()
-      )[0] || null
-      return { ...r, eligibility_checks: undefined, latest_check: latest }
-    })
-
-    return NextResponse.json({ records: enriched })
-  } catch (error) {
-    console.error('Insurance records GET error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  } catch {
+    setupNeeded = true
   }
+
+  const enriched = records.map(r => ({
+    ...r,
+    latest_check: checksByRecord.get(r.id) ?? null,
+  }))
+  return NextResponse.json({
+    records: enriched,
+    ...(setupNeeded ? { setup_needed: true } : {}),
+  })
 }
 
-// POST /api/insurance/records â create a new insurance record
-export async function POST(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-
-    const body = await req.json()
-    const { patient_name, patient_dob, patient_phone, insurance_company, member_id, group_number, subscriber_name, subscriber_dob, relationship } = body
-
-    if (!patient_name || !insurance_company || !member_id) {
-      return NextResponse.json({ error: 'patient_name, insurance_company, and member_id are required' }, { status: 400 })
-    }
-
-    const { data: record, error } = await supabase
-      .from('insurance_records')
-      .insert({
-        practice_id: practice.id,
-        patient_name,
-        patient_dob: patient_dob || null,
-        patient_phone: patient_phone || null,
-        insurance_company,
-        member_id,
-        group_number: group_number || null,
-        subscriber_name: subscriber_name || patient_name,
-        subscriber_dob: subscriber_dob || patient_dob || null,
-        relationship_to_subscriber: relationship || 'self',
-      })
-      .select()
-      .single()
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ record })
-  } catch (error) {
-    console.error('Insurance records POST error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+// TODO(phase-4b): port POST (create insurance record), PATCH (update fields),
+// DELETE (?id=). All single-row writes, no external side effects — held back
+// to keep this Wave 9 commit tightly read-shaped per the brief.
+export async function POST() {
+  return NextResponse.json(
+    { error: 'insurance_record_create_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }
-
-// PATCH /api/insurance/records â update an insurance record
-export async function PATCH(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const body = await req.json()
-    const { id, ...updates } = body
-
-    if (!id) return NextResponse.json({ error: 'Record ID required' }, { status: 400 })
-
-    const { data: record, error } = await supabase
-      .from('insurance_records')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select()
-      .single()
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ record })
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+export async function PATCH() {
+  return NextResponse.json(
+    { error: 'insurance_record_update_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }
-
-// DELETE /api/insurance/records â delete an insurance record
-export async function DELETE(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const { searchParams } = new URL(req.url)
-    const id = searchParams.get('id')
-    if (!id) return NextResponse.json({ error: 'Record ID required' }, { status: 400 })
-
-    const { error } = await supabase
-      .from('insurance_records')
-      .delete()
-      .eq('id', id)
-
-    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
+export async function DELETE() {
+  return NextResponse.json(
+    { error: 'insurance_record_delete_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }
