@@ -1,105 +1,84 @@
+// app/api/messages/bulk-sms/route.ts
+//
+// Wave 27d (AWS port). Bulk SMS over SignalWire. Cookie auth +
+// pool-only patient resolution (no Twilio, no Supabase). Recipients
+// are pulled from upcoming or by-date appointments per the existing
+// dashboard contract; sends fire serially through lib/aws/signalwire.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { sendSMS, formatPhoneNumber } from '@/lib/twilio'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { getEffectivePracticeId } from '@/lib/active-practice'
+import { sendSMS } from '@/lib/aws/signalwire'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
+
+function formatTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{\s*(\w+)\s*\}\}/g, (_m, key: string) => vars[key] ?? '')
+}
 
 export async function POST(req: NextRequest) {
-  try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
 
-    if (!user) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+  const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
+  if (!practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id, name')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-    }
-
-    const { message_template, recipient_type, date } = await req.json()
-
-    if (!message_template?.trim()) {
-      return NextResponse.json({ error: 'Message template required' }, { status: 400 })
-    }
-
-    // Build patient query based on recipient type
-    let query = supabase
-      .from('appointments')
-      .select('patient_name, patient_phone, appointment_date, appointment_time')
-      .eq('practice_id', practice.id)
-      .not('patient_phone', 'is', null)
-      .neq('patient_phone', '')
-      .neq('status', 'cancelled')
-
-    if (recipient_type === 'by_date' && date) {
-      query = query.eq('appointment_date', date)
-    } else if (recipient_type === 'upcoming') {
-      const today = new Date().toISOString().split('T')[0]
-      const nextWeek = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      query = query.gte('appointment_date', today).lte('appointment_date', nextWeek)
-    }
-
-    const { data: appointments, error } = await query
-
-    if (error) {
-      console.error('Failed to fetch appointments:', error)
-      return NextResponse.json({ error: 'Failed to fetch patients' }, { status: 500 })
-    }
-
-    if (!appointments || appointments.length === 0) {
-      return NextResponse.json({ sent: 0, failed: 0, total: 0 })
-    }
-
-    // Deduplicate by phone number
-    const seen = new Set<string>()
-    const recipients = appointments.filter(a => {
-      if (!a.patient_phone || seen.has(a.patient_phone)) return false
-      seen.add(a.patient_phone)
-      return true
-    })
-
-    // Send personalized messages
-    let sent = 0
-    let failed = 0
-    const errors: string[] = []
-
-    for (const r of recipients) {
-      try {
-        const msg = message_template
-          .replace(/\{\{patient_name\}\}/g, r.patient_name || 'Patient')
-          .replace(/\{\{practice_name\}\}/g, practice.name || 'our practice')
-          .replace(/\{\{appointment_date\}\}/g, r.appointment_date || '')
-          .replace(/\{\{appointment_time\}\}/g, r.appointment_time || '')
-
-        await sendSMS(formatPhoneNumber(r.patient_phone), msg)
-        sent++
-      } catch (e) {
-        failed++
-        errors.push(r.patient_name || 'Unknown patient')
-      }
-    }
-
-    // Log the bulk send (best effort)
-    try {
-      await supabase.from('bulk_message_logs').insert({
-        practice_id: practice.id,
-        message_template,
-        recipient_type,
-        date_filter: date || null,
-        sent_count: sent,
-        failed_count: failed,
-        sent_by: user.email,
-      })
-    } catch (_) {}
-
-    return NextResponse.json({ sent, failed, total: recipients.length, errors: errors.slice(0, 5) })
-  } catch (error) {
-    console.error('Bulk SMS error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  const body = await req.json().catch(() => ({}))
+  const { message_template, recipient_type, date } = body
+  if (!message_template || typeof message_template !== 'string') {
+    return NextResponse.json({ error: 'Message template required' }, { status: 400 })
   }
+
+  // Pull recipients from appointments — AWS canonical scheduled_for.
+  let where = `practice_id = $1 AND patient_phone IS NOT NULL AND patient_phone <> '' AND status <> 'cancelled'`
+  const params: any[] = [practiceId]
+  if (recipient_type === 'by_date' && typeof date === 'string') {
+    params.push(date)
+    where += ` AND scheduled_for::date = $${params.length}`
+  } else if (recipient_type === 'upcoming') {
+    params.push(new Date().toISOString())
+    where += ` AND scheduled_for >= $${params.length}`
+    params.push(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString())
+    where += ` AND scheduled_for <= $${params.length}`
+  }
+
+  const { rows: appts } = await pool.query(
+    `SELECT patient_name, patient_phone, scheduled_for FROM appointments WHERE ${where}`,
+    params,
+  )
+  if (appts.length === 0) {
+    return NextResponse.json({ sent: 0, failed: 0, total: 0 })
+  }
+
+  // Dedupe by phone, retain first appointment for substitution context
+  const byPhone = new Map<string, { name: string; when: string }>()
+  for (const a of appts) {
+    if (!byPhone.has(a.patient_phone)) {
+      byPhone.set(a.patient_phone, {
+        name: a.patient_name || '',
+        when: a.scheduled_for ? new Date(a.scheduled_for).toLocaleString() : '',
+      })
+    }
+  }
+
+  let sent = 0
+  let failed = 0
+  for (const [phone, ctxVars] of byPhone) {
+    const messageBody = formatTemplate(message_template, {
+      patient_name: ctxVars.name,
+      appointment_time: ctxVars.when,
+    })
+    const result = await sendSMS({ to: phone, body: messageBody, practiceId })
+    if (result.ok) sent++
+    else failed++
+  }
+
+  await auditSystemEvent({
+    action: 'signalwire.sms.bulk_send',
+    severity: 'info',
+    practiceId,
+    details: { recipient_type, total: byPhone.size, sent, failed },
+  })
+
+  return NextResponse.json({ sent, failed, total: byPhone.size })
 }

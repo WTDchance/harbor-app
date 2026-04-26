@@ -1,129 +1,59 @@
-// Internal API to send outbound SMS messages
-// Used for appointment reminders, confirmations, etc.
+// app/api/sms/send/route.ts
+//
+// Wave 27d (AWS port). Outbound SMS via SignalWire. Cookie auth
+// (Cognito session) so internal jobs/admin actions can call it.
+// Replaces the legacy Twilio-backed handler.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { sendSMS } from '@/lib/twilio'
-import { logCommunication } from '@/lib/patientCommunications'
-import type { TwilioSendSMSRequest } from '@/types'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { sendSMS } from '@/lib/aws/signalwire'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
-/**
- * POST /api/sms/send
- * Internal endpoint to send SMS messages
- * Called from scheduled jobs, admin actions, etc.
- *
- * Request body:
- * {
- *   "to": "+15551234567",
- *   "body": "Hello, this is your appointment reminder...",
- *   "practiceId": "uuid"
- * }
- */
 export async function POST(request: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  let body: { to?: string; body?: string; practiceId?: string }
   try {
-    const body: TwilioSendSMSRequest = await request.json()
-    const { to, body: messageBody, practiceId } = body
-
-    if (!to || !messageBody || !practiceId) {
-      return NextResponse.json(
-        { error: 'Missing required fields: to, body, practiceId' },
-        { status: 400 }
-      )
-    }
-
-    // Verify practice exists (optional security check)
-    const { data: practice, error: practiceError } = await supabaseAdmin
-      .from('practices')
-      .select('id, phone_number')
-      .eq('id', practiceId)
-      .single()
-
-    if (!practice || practiceError) {
-      console.warn('⚠️ Practice not found:', practiceId)
-      return NextResponse.json(
-        { error: 'Practice not found' },
-        { status: 404 }
-      )
-    }
-
-    // Send SMS via Twilio
-    const messageSid = await sendSMS(to, messageBody)
-
-    if (!messageSid) {
-      return NextResponse.json(
-        { error: 'Failed to send SMS' },
-        { status: 500 }
-      )
-    }
-
-    // Log the outbound message to conversation
-    const { data: conversation } = await supabaseAdmin
-      .from('sms_conversations')
-      .select('*')
-      .eq('practice_id', practiceId)
-      .eq('patient_phone', to)
-      .single()
-
-    if (conversation) {
-      const updatedMessages = [
-        ...(conversation.messages_json || []),
-        {
-          direction: 'outbound',
-          content: messageBody,
-          timestamp: new Date().toISOString(),
-          message_sid: messageSid,
-        },
-      ]
-
-      await supabaseAdmin
-        .from('sms_conversations')
-        .update({
-          messages_json: updatedMessages,
-          last_message_at: new Date().toISOString(),
-        })
-        .eq('id', conversation.id)
-    } else {
-      // Create new conversation if doesn't exist
-      await supabaseAdmin
-        .from('sms_conversations')
-        .insert({
-          practice_id: practiceId,
-          patient_phone: to,
-          messages_json: [
-            {
-              direction: 'outbound',
-              content: messageBody,
-              timestamp: new Date().toISOString(),
-              message_sid: messageSid,
-            },
-          ],
-          created_at: new Date().toISOString(),
-        })
-    }
-
-    // Tier 2B: Log outbound SMS to patient_communications
-    logCommunication({
-      practiceId,
-      patientPhone: to,
-      channel: 'sms',
-      direction: 'outbound',
-      contentSummary: messageBody.slice(0, 500),
-      metadata: { message_sid: messageSid },
-    })
-
-    console.log(`✓ SMS sent to ${to}: ${messageSid}`)
-
-    return NextResponse.json({
-      success: true,
-      messageSid: messageSid,
-    })
-  } catch (error) {
-    console.error('❌ Error sending SMS:', error)
+    body = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
+  }
+  const { to, body: messageBody, practiceId } = body
+  if (!to || !messageBody || !practiceId) {
     return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
+      { error: 'Missing required fields: to, body, practiceId' },
+      { status: 400 },
     )
   }
-}
 
-// Note: sendAppointmentReminders helper has been moved to lib/reminders.ts
+  // Verify practice exists + caller is allowed (admin or owner)
+  const { rows } = await pool.query(
+    `SELECT id, name, owner_email FROM practices WHERE id = $1 LIMIT 1`,
+    [practiceId],
+  )
+  if (rows.length === 0) {
+    return NextResponse.json({ error: 'practice_not_found' }, { status: 404 })
+  }
+  const adminEmail = (process.env.ADMIN_EMAIL || '').toLowerCase()
+  const isAdmin = !!adminEmail && ctx.session.email.toLowerCase() === adminEmail
+  const isOwner = rows[0].owner_email?.toLowerCase() === ctx.session.email.toLowerCase()
+  if (!isAdmin && !isOwner) {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 })
+  }
+
+  const result = await sendSMS({ to, body: messageBody, practiceId })
+  await auditSystemEvent({
+    action: result.ok ? 'signalwire.sms.sent' : 'signalwire.sms.failed',
+    severity: result.ok ? 'info' : 'warn',
+    practiceId,
+    details: result.ok
+      ? { to, length: messageBody.length, sid: result.sid }
+      : { to, length: messageBody.length, reason: result.reason },
+  })
+  if (!result.ok) {
+    return NextResponse.json({ error: result.reason }, { status: 502 })
+  }
+  return NextResponse.json({ ok: true, sid: result.sid })
+}

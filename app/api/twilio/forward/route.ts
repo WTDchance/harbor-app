@@ -1,97 +1,34 @@
+// app/api/twilio/forward/route.ts
+//
+// Wave 27d — Carrier swap. Inbound voice routing has moved to
+// SignalWire + Retell. SignalWire's voice webhook now lives at
+// /api/signalwire/inbound-voice. Twilio numbers that still point
+// here will get a Hangup TwiML so we don't silently dead-end.
+//
+// This file is kept (rather than deleted) so any stale Twilio
+// dashboard config that still POSTs here surfaces a graceful failure
+// rather than a 404, and so Lift's audit trail shows the deprecation
+// rather than missing routes.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
-// TwiML content type
-const TWIML_CONTENT_TYPE = 'application/xml'
+const TWIML_HEADERS = { 'Content-Type': 'application/xml' }
 
-export async function GET(req: NextRequest) {
-  try {
-    // Get practice_id from query parameters
-    const { searchParams } = new URL(req.url)
-    const practiceId = searchParams.get('practice_id')
-
-    if (!practiceId) {
-      console.warn('[Twilio Forward] Missing practice_id parameter')
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+const DEPRECATED_TWIML = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Say voice="alice">This number is not available. Please try again later.</Say>
+  <Say voice="alice">This number has moved. Please update your call routing to the new endpoint and try again.</Say>
   <Hangup/>
 </Response>`
-      return new NextResponse(twiml, {
-        status: 200,
-        headers: { 'Content-Type': TWIML_CONTENT_TYPE },
-      })
-    }
 
-    // Look up the practice's forwarding number
-    const { data: practice, error: practiceError } = await supabaseAdmin
-      .from('practices')
-      .select('call_forwarding_number, forwarding_enabled')
-      .eq('id', practiceId)
-      .single()
-
-    if (practiceError || !practice) {
-      console.error('[Twilio Forward] Practice lookup error:', practiceError)
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">This number is not available. Please try again later.</Say>
-  <Hangup/>
-</Response>`
-      return new NextResponse(twiml, {
-        status: 200,
-        headers: { 'Content-Type': TWIML_CONTENT_TYPE },
-      })
-    }
-
-    // Check if forwarding is enabled and has a number
-    if (!practice.forwarding_enabled || !practice.call_forwarding_number) {
-      console.warn('[Twilio Forward] Forwarding disabled or no number configured', {
-        practiceId,
-        forwarding_enabled: practice.forwarding_enabled,
-      })
-      const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">This number is not available. Please try again later.</Say>
-  <Hangup/>
-</Response>`
-      return new NextResponse(twiml, {
-        status: 200,
-        headers: { 'Content-Type': TWIML_CONTENT_TYPE },
-      })
-    }
-
-    // Build TwiML response to dial the forwarding number
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Dial>${practice.call_forwarding_number}</Dial>
-</Response>`
-
-    console.log('[Twilio Forward] Forwarding call', {
-      practiceId,
-      forwardingNumber: practice.call_forwarding_number,
-    })
-
-    return new NextResponse(twiml, {
-      status: 200,
-      headers: { 'Content-Type': TWIML_CONTENT_TYPE },
-    })
-  } catch (error) {
-    console.error('[Twilio Forward] Error:', error)
-
-    // Return safe fallback TwiML on error
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice">We're experiencing technical difficulties. Please try again later.</Say>
-  <Hangup/>
-</Response>`
-    return new NextResponse(twiml, {
-      status: 500,
-      headers: { 'Content-Type': TWIML_CONTENT_TYPE },
-    })
-  }
+async function handle(req: NextRequest, method: string) {
+  await auditSystemEvent({
+    action: 'twilio.forward.deprecated_hit',
+    severity: 'warn',
+    details: { method, ua: req.headers.get('user-agent') ?? null },
+  })
+  return new NextResponse(DEPRECATED_TWIML, { status: 200, headers: TWIML_HEADERS })
 }
 
-export async function POST(req: NextRequest) {
-  // Twilio can also POST to this endpoint (webhook), so handle it the same way
-  return GET(req)
-  }
+export async function GET(req: NextRequest) { return handle(req, 'GET') }
+export async function POST(req: NextRequest) { return handle(req, 'POST') }
