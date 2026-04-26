@@ -1,48 +1,108 @@
 // app/api/ehr/patients/[id]/export/route.ts
-// Patient record export — HIPAA right-of-access. Returns everything we
-// have on one patient in a single JSON blob. Format=html renders a
-// printable HTML document the patient can save as PDF from the browser.
+//
+// Wave 17 (AWS port). Patient record export — HIPAA right-of-access.
+// Returns everything we have on one patient as JSON or printable HTML.
+//
+// Read-only. Cognito + RDS pool. Practice-scoped. Audited as
+// patient.export with table-by-table row counts so the PHI volume of
+// every export is visible in audit_logs (Lift may be asked to produce
+// these counts during a HIPAA review).
+//
+// HTML body lifted verbatim from the legacy renderHtml() so clinicians
+// see a byte-identical document during cutover.
+//
+// Schema mappings:
+//   - appointments.scheduled_for replaces appointment_date+appointment_time
+//   - patients.insurance_provider replaces insurance
+//   - patients.presenting_concerns (TEXT[]) replaces reason_for_seeking
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id: patientId } = await params
+
   const { searchParams } = new URL(req.url)
   const format = searchParams.get('format') || 'json'
 
-  const { data: patient } = await supabaseAdmin
-    .from('patients').select('*').eq('id', patientId).eq('practice_id', auth.practiceId).maybeSingle()
-  if (!patient) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
+  const { rows: pRows } = await pool.query(
+    `SELECT * FROM patients
+      WHERE id = $1 AND practice_id = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [patientId, ctx.practiceId],
+  )
+  const patient = pRows[0]
+  if (!patient) {
+    return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
+  }
 
   const [appts, notes, plans, safety, assessments, consents, calls] = await Promise.all([
-    supabaseAdmin.from('appointments').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('appointment_date', { ascending: false }),
-    supabaseAdmin.from('ehr_progress_notes').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('created_at', { ascending: false }),
-    supabaseAdmin.from('ehr_treatment_plans').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('created_at', { ascending: false }),
-    supabaseAdmin.from('ehr_safety_plans').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('created_at', { ascending: false }),
-    supabaseAdmin.from('patient_assessments').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('completed_at', { ascending: false }),
-    supabaseAdmin.from('ehr_consents').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('created_at', { ascending: false }),
-    supabaseAdmin.from('call_logs').select('id, created_at, duration_seconds, call_type, summary').eq('practice_id', auth.practiceId).eq('patient_id', patientId).order('created_at', { ascending: false }),
+    pool.query(
+      `SELECT * FROM appointments
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY scheduled_for DESC NULLS LAST`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT * FROM ehr_progress_notes
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT * FROM ehr_treatment_plans
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT * FROM ehr_safety_plans
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT * FROM patient_assessments
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY completed_at DESC NULLS LAST`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT * FROM ehr_consents
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT id, created_at, duration_seconds, call_type, summary
+         FROM call_logs
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC`,
+      [ctx.practiceId, patientId],
+    ),
   ])
 
   const record = {
     exported_at: new Date().toISOString(),
-    practice_id: auth.practiceId,
+    practice_id: ctx.practiceId,
     patient,
-    appointments: appts.data ?? [],
-    progress_notes: notes.data ?? [],
-    treatment_plans: plans.data ?? [],
-    safety_plans: safety.data ?? [],
-    assessments: assessments.data ?? [],
-    consents: consents.data ?? [],
-    calls: calls.data ?? [],
+    appointments: appts.rows,
+    progress_notes: notes.rows,
+    treatment_plans: plans.rows,
+    safety_plans: safety.rows,
+    assessments: assessments.rows,
+    consents: consents.rows,
+    calls: calls.rows,
   }
 
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.view',
+    ctx,
+    action: 'patient.export',
+    resourceType: 'patient',
     resourceId: patientId,
     details: {
       kind: 'full_record_export',
@@ -83,6 +143,9 @@ function esc(s: any): string {
 function renderHtml(r: any): string {
   const p = r.patient
   const name = [p.first_name, p.last_name].filter(Boolean).join(' ')
+  const presenting = Array.isArray(p.presenting_concerns) && p.presenting_concerns.length
+    ? p.presenting_concerns.join('; ')
+    : ''
   return `<!doctype html>
 <html><head><meta charset="utf-8">
 <title>Patient record — ${esc(name)}</title>
@@ -110,8 +173,8 @@ function renderHtml(r: any): string {
   <div>Phone</div><div>${esc(p.phone ?? '')}</div>
   <div>Email</div><div>${esc(p.email ?? '')}</div>
   <div>Date of birth</div><div>${esc(p.date_of_birth ?? '')}</div>
-  <div>Insurance</div><div>${esc(p.insurance ?? '')}</div>
-  <div>Reason for seeking care</div><div>${esc(p.reason_for_seeking ?? '')}</div>
+  <div>Insurance</div><div>${esc(p.insurance_provider ?? '')}</div>
+  <div>Reason for seeking care</div><div>${esc(presenting)}</div>
 </div>
 
 <h2>Treatment Plans (${r.treatment_plans.length})</h2>
@@ -119,8 +182,8 @@ ${r.treatment_plans.map((tp: any) => `
   <div class="note">
     <div><span class="title">${esc(tp.title)}</span><span class="status">${esc(tp.status)}</span></div>
     ${tp.presenting_problem ? `<div><strong>Presenting problem:</strong> <pre>${esc(tp.presenting_problem)}</pre></div>` : ''}
-    ${(tp.diagnoses && tp.diagnoses.length) ? `<div><strong>Diagnoses:</strong> ${esc(tp.diagnoses.join(', '))}</div>` : ''}
-    ${(tp.goals && tp.goals.length) ? `<div><strong>Goals:</strong><ul>${tp.goals.map((g: any) => `<li>${esc(g.text)}</li>`).join('')}</ul></div>` : ''}
+    ${(Array.isArray(tp.diagnoses) && tp.diagnoses.length) ? `<div><strong>Diagnoses:</strong> ${esc(tp.diagnoses.join(', '))}</div>` : ''}
+    ${(Array.isArray(tp.goals) && tp.goals.length) ? `<div><strong>Goals:</strong><ul>${tp.goals.map((g: any) => `<li>${esc(g.text ?? g)}</li>`).join('')}</ul></div>` : ''}
     <div class="meta">Start ${esc(tp.start_date ?? '')} · Review ${esc(tp.review_date ?? '')}</div>
   </div>
 `).join('')}
@@ -129,9 +192,10 @@ ${r.treatment_plans.map((tp: any) => `
 ${r.safety_plans.map((sp: any) => `
   <div class="note">
     <div class="title">Stanley-Brown safety plan <span class="status">${esc(sp.status)}</span></div>
-    ${(sp.warning_signs && sp.warning_signs.length) ? `<div><strong>Warning signs:</strong> ${esc(sp.warning_signs.join('; '))}</div>` : ''}
-    ${(sp.internal_coping && sp.internal_coping.length) ? `<div><strong>Coping strategies:</strong> ${esc(sp.internal_coping.join('; '))}</div>` : ''}
-    ${(sp.reasons_for_living && sp.reasons_for_living.length) ? `<div><strong>Reasons for living:</strong> ${esc(sp.reasons_for_living.join('; '))}</div>` : ''}
+    ${(Array.isArray(sp.warning_signs) && sp.warning_signs.length) ? `<div><strong>Warning signs:</strong> ${esc(sp.warning_signs.join('; '))}</div>` : ''}
+    ${(Array.isArray(sp.coping_strategies) && sp.coping_strategies.length) ? `<div><strong>Coping strategies:</strong> ${esc(sp.coping_strategies.join('; '))}</div>` : ''}
+    ${(Array.isArray(sp.internal_coping) && sp.internal_coping.length) ? `<div><strong>Coping strategies:</strong> ${esc(sp.internal_coping.join('; '))}</div>` : ''}
+    ${(Array.isArray(sp.reasons_for_living) && sp.reasons_for_living.length) ? `<div><strong>Reasons for living:</strong> ${esc(sp.reasons_for_living.join('; '))}</div>` : ''}
     ${sp.means_restriction ? `<div><strong>Means restriction:</strong> ${esc(sp.means_restriction)}</div>` : ''}
   </div>
 `).join('')}
@@ -139,15 +203,18 @@ ${r.safety_plans.map((sp: any) => `
 <h2>Progress Notes (${r.progress_notes.length})</h2>
 ${r.progress_notes.map((n: any) => `
   <div class="note">
-    <div><span class="title">${esc(n.title)}</span><span class="status">${esc(n.status)} · ${esc(n.note_format)}</span></div>
+    <div><span class="title">${esc(n.title)}</span><span class="status">${esc(n.status)} · ${esc(n.format ?? n.note_format ?? '')}</span></div>
     <div class="meta">${esc(new Date(n.created_at).toLocaleString())}${n.signed_at ? ` · Signed ${esc(new Date(n.signed_at).toLocaleString())}` : ''}</div>
     ${n.subjective ? `<h3>Subjective</h3><pre>${esc(n.subjective)}</pre>` : ''}
     ${n.objective  ? `<h3>Objective</h3><pre>${esc(n.objective)}</pre>` : ''}
     ${n.assessment ? `<h3>Assessment</h3><pre>${esc(n.assessment)}</pre>` : ''}
-    ${n.plan       ? `<h3>Plan</h3><pre>${esc(n.plan)}</pre>` : ''}
-    ${n.body       ? `<h3>Note</h3><pre>${esc(n.body)}</pre>` : ''}
-    ${(n.cpt_codes && n.cpt_codes.length) ? `<div class="meta">CPT: ${esc(n.cpt_codes.join(', '))}</div>` : ''}
-    ${(n.icd10_codes && n.icd10_codes.length) ? `<div class="meta">ICD-10: ${esc(n.icd10_codes.join(', '))}</div>` : ''}
+    ${(n.plan ?? n.plan_text) ? `<h3>Plan</h3><pre>${esc(n.plan ?? n.plan_text)}</pre>` : ''}
+    ${n.body ? `<h3>Note</h3><pre>${esc(n.body)}</pre>` : ''}
+    ${n.content ? `<h3>Note</h3><pre>${esc(n.content)}</pre>` : ''}
+    ${(Array.isArray(n.cpt_codes) && n.cpt_codes.length) ? `<div class="meta">CPT: ${esc(n.cpt_codes.join(', '))}</div>` : ''}
+    ${n.cpt_code ? `<div class="meta">CPT: ${esc(n.cpt_code)}</div>` : ''}
+    ${(Array.isArray(n.icd10_codes) && n.icd10_codes.length) ? `<div class="meta">ICD-10: ${esc(n.icd10_codes.join(', '))}</div>` : ''}
+    ${(Array.isArray(n.icd_codes) && n.icd_codes.length) ? `<div class="meta">ICD-10: ${esc(n.icd_codes.join(', '))}</div>` : ''}
   </div>
 `).join('')}
 
@@ -157,12 +224,13 @@ ${r.assessments.map((a: any) => `
     <div><span class="title">${esc(a.assessment_type)}: ${esc(a.score)}</span><span class="status">${esc(a.severity ?? '')}</span></div>
     <div class="meta">${esc(a.completed_at ? new Date(a.completed_at).toLocaleDateString() : new Date(a.created_at).toLocaleDateString())}</div>
     ${a.notes ? `<pre>${esc(a.notes)}</pre>` : ''}
+    ${a.interpretation ? `<pre><em>Interpretation:</em> ${esc(a.interpretation)}</pre>` : ''}
   </div>
 `).join('')}
 
 <h2>Appointments (${r.appointments.length})</h2>
 <ul>${r.appointments.map((ap: any) => `
-  <li>${esc(ap.appointment_date ?? '')} ${esc((ap.appointment_time ?? '').slice(0,5))} · ${esc(ap.appointment_type ?? '')} · <em>${esc(ap.status)}</em></li>
+  <li>${esc(ap.scheduled_for ? new Date(ap.scheduled_for).toLocaleString() : '')} · ${esc(ap.appointment_type ?? '')} · <em>${esc(ap.status)}</em></li>
 `).join('')}</ul>
 
 <h2>Consents (${r.consents.length})</h2>

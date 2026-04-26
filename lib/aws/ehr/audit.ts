@@ -77,6 +77,12 @@ export type EhrAuditAction =
   | 'message.thread.upsert'
   | 'message.send'
   | 'message.read'
+  | 'note.draft.candidates.list'
+  | 'patient.summary.generate'
+  | 'patient.summary.view'
+  | 'patient.continuity_summary.view'
+  | 'patient.export'
+  | 'assessment.interpret'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

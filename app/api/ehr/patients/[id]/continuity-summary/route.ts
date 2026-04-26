@@ -1,48 +1,101 @@
 // app/api/ehr/patients/[id]/continuity-summary/route.ts
-// One-page referral summary the therapist can send to a PCP, psychiatrist,
-// or successor provider. Narrower than the full export — intended to
-// communicate the essential clinical picture without dumping every note.
+//
+// Wave 17 (AWS port). One-page referral summary the therapist can send
+// to a PCP, psychiatrist, or successor provider. Narrower than the full
+// export — intended to communicate the essential clinical picture
+// without dumping every note.
+//
+// HTML render only (no Claude call). Cognito + RDS pool. Practice-scoped.
+//
+// Schema mappings vs. legacy:
+//   - appointments.scheduled_for replaces appointment_date+appointment_time
+//   - patients.presenting_concerns (TEXT[]) replaces reason_for_seeking
+//   - patients.insurance_provider replaces insurance
+//
+// HTML body lifted verbatim from lib/ehr/continuity-summary.tsx for UI
+// parity — clinicians compare side-by-side during cutover.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
-export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id: patientId } = await params
 
-  const { data: patient } = await supabaseAdmin
-    .from('patients').select('*').eq('id', patientId).eq('practice_id', auth.practiceId).maybeSingle()
-  if (!patient) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
+  const { rows: pRows } = await pool.query(
+    `SELECT * FROM patients
+      WHERE id = $1 AND practice_id = $2 AND deleted_at IS NULL
+      LIMIT 1`,
+    [patientId, ctx.practiceId],
+  )
+  const patient = pRows[0]
+  if (!patient) {
+    return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
+  }
 
-  const [practice, plan, latestAssess, latestNote, safety, recentAppts] = await Promise.all([
-    supabaseAdmin.from('practices').select('name, phone_number, location').eq('id', auth.practiceId).maybeSingle(),
-    supabaseAdmin.from('ehr_treatment_plans').select('*').eq('practice_id', auth.practiceId).eq('patient_id', patientId).eq('status', 'active').maybeSingle(),
-    supabaseAdmin.from('patient_assessments').select('assessment_type, score, severity, completed_at')
-      .eq('practice_id', auth.practiceId).eq('patient_id', patientId).eq('status', 'completed')
-      .order('completed_at', { ascending: false }).limit(5),
-    supabaseAdmin.from('ehr_progress_notes').select('title, assessment, plan, created_at, signed_at')
-      .eq('practice_id', auth.practiceId).eq('patient_id', patientId).in('status', ['signed', 'amended'])
-      .order('created_at', { ascending: false }).limit(1).maybeSingle(),
-    supabaseAdmin.from('ehr_safety_plans').select('status').eq('practice_id', auth.practiceId).eq('patient_id', patientId).eq('status', 'active').maybeSingle(),
-    supabaseAdmin.from('appointments').select('appointment_date, appointment_type, status')
-      .eq('practice_id', auth.practiceId).eq('patient_id', patientId)
-      .order('appointment_date', { ascending: false }).limit(5),
+  const [practiceRes, planRes, assessRes, noteRes, safetyRes, apptRes] = await Promise.all([
+    pool.query(
+      `SELECT name, phone_number, location FROM practices WHERE id = $1 LIMIT 1`,
+      [ctx.practiceId],
+    ),
+    pool.query(
+      `SELECT id, title, presenting_problem, diagnoses, frequency, start_date, goals, status
+         FROM ehr_treatment_plans
+        WHERE practice_id = $1 AND patient_id = $2 AND status = 'active'
+        ORDER BY created_at DESC LIMIT 1`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT assessment_type, score, severity, completed_at
+         FROM patient_assessments
+        WHERE practice_id = $1 AND patient_id = $2 AND status = 'completed'
+        ORDER BY completed_at DESC NULLS LAST
+        LIMIT 5`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT title, assessment, plan, created_at, signed_at
+         FROM ehr_progress_notes
+        WHERE practice_id = $1 AND patient_id = $2
+          AND status IN ('signed','amended')
+        ORDER BY created_at DESC LIMIT 1`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT status FROM ehr_safety_plans
+        WHERE practice_id = $1 AND patient_id = $2 AND status = 'active'
+        ORDER BY created_at DESC LIMIT 1`,
+      [ctx.practiceId, patientId],
+    ),
+    pool.query(
+      `SELECT scheduled_for, appointment_type, status
+         FROM appointments
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY scheduled_for DESC NULLS LAST
+        LIMIT 5`,
+      [ctx.practiceId, patientId],
+    ),
   ])
 
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.view',
+    ctx,
+    action: 'patient.continuity_summary.view',
+    resourceType: 'patient',
     resourceId: patientId,
     details: { kind: 'continuity_summary_export' },
   })
 
   const html = render({
-    patient, practice: practice.data, plan: plan.data,
-    assessments: latestAssess.data || [],
-    latestNote: latestNote.data,
-    hasActiveSafetyPlan: !!safety.data,
-    appointments: recentAppts.data || [],
+    patient,
+    practice: practiceRes.rows[0] ?? null,
+    plan: planRes.rows[0] ?? null,
+    assessments: assessRes.rows,
+    latestNote: noteRes.rows[0] ?? null,
+    hasActiveSafetyPlan: safetyRes.rows.length > 0,
+    appointments: apptRes.rows,
   })
 
   return new NextResponse(html, {
@@ -62,6 +115,9 @@ function render(d: any): string {
   const plan = d.plan
   const name = [p.first_name, p.last_name].filter(Boolean).join(' ')
   const today = new Date().toLocaleDateString()
+  const presentingFromArray = Array.isArray(p.presenting_concerns) && p.presenting_concerns.length
+    ? p.presenting_concerns.join('; ')
+    : ''
 
   return `<!doctype html>
 <html><head><meta charset="utf-8">
@@ -89,21 +145,21 @@ function render(d: any): string {
   <div>Phone</div><div>${esc(p.phone ?? '')}</div>
   <div>Email</div><div>${esc(p.email ?? '')}</div>
   <div>Date of birth</div><div>${esc(p.date_of_birth ?? '')}</div>
-  <div>Insurance</div><div>${esc(p.insurance ?? '')}</div>
+  <div>Insurance</div><div>${esc(p.insurance_provider ?? '')}</div>
 </div>
 
 <h2>Reason for treatment</h2>
-<p>${esc(p.reason_for_seeking ?? plan?.presenting_problem ?? 'Not specified.')}</p>
+<p>${esc(presentingFromArray || plan?.presenting_problem || 'Not specified.')}</p>
 
 ${plan ? `
 <h2>Active treatment plan</h2>
 <div class="kv">
   <div>Plan title</div><div>${esc(plan.title ?? '')}</div>
-  ${plan.diagnoses?.length ? `<div>Working diagnoses</div><div>${esc(plan.diagnoses.join(', '))}</div>` : ''}
+  ${Array.isArray(plan.diagnoses) && plan.diagnoses.length ? `<div>Working diagnoses</div><div>${esc(plan.diagnoses.join(', '))}</div>` : ''}
   ${plan.frequency ? `<div>Frequency</div><div>${esc(plan.frequency)}</div>` : ''}
   ${plan.start_date ? `<div>Start date</div><div>${esc(plan.start_date)}</div>` : ''}
 </div>
-${plan.goals?.length ? `<p><strong>Goals:</strong></p><ul>${plan.goals.map((g: any) => `<li>${esc(g.text)}</li>`).join('')}</ul>` : ''}
+${Array.isArray(plan.goals) && plan.goals.length ? `<p><strong>Goals:</strong></p><ul>${plan.goals.map((g: any) => `<li>${esc(g.text ?? g)}</li>`).join('')}</ul>` : ''}
 ` : '<h2>Active treatment plan</h2><p>No active plan on file.</p>'}
 
 ${d.hasActiveSafetyPlan ? `<h2>Safety planning</h2><p><span class="flag">Active Stanley-Brown safety plan on file.</span> Available on request.</p>` : ''}
@@ -124,7 +180,7 @@ ${d.latestNote.plan ? `<p><strong>Plan:</strong> ${esc(d.latestNote.plan)}</p>` 
 ${d.appointments?.length ? `
 <h2>Recent appointments</h2>
 <ul>
-  ${d.appointments.map((ap: any) => `<li>${esc(ap.appointment_date)} — ${esc(ap.appointment_type ?? '')} (${esc(ap.status)})</li>`).join('')}
+  ${d.appointments.map((ap: any) => `<li>${esc(ap.scheduled_for ? new Date(ap.scheduled_for).toLocaleString() : '')} — ${esc(ap.appointment_type ?? '')} (${esc(ap.status)})</li>`).join('')}
 </ul>` : ''}
 
 <div class="footer">

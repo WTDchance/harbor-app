@@ -1,15 +1,29 @@
 // app/api/ehr/patients/[id]/summary/route.ts
-// Sonnet writes a 3-5 sentence snapshot of the patient from everything
-// we know: intake reason, recent calls, latest assessments, last signed
-// note's assessment + plan, recent mood trend.
 //
-// Cached on patients.ai_summary. Therapist clicks "Regenerate" to refresh.
+// Wave 17 (AWS port). Sonnet writes a 3-5 sentence snapshot of the
+// patient from intake reason + recent calls + assessment trajectory +
+// last signed note + recent mood + open homework + upcoming appointment
+// + active safety plan + recent crisis alerts.
+//
+// Cached on patients.ai_summary so therapist's repeat profile visits
+// don't burn the Anthropic API. "Regenerate" button calls POST again.
+//
+// SYSTEM PROMPT lifted bit-for-bit from lib/ehr/patient-summary.ts.
+// Per-practice daily cap of 100 (shared with other AI side-effects via
+// lib/aws/ehr/draft-rate-limit checkAiRateLimit('patient.summary.%')).
+//
+// Schema mappings:
+//   - appointments.scheduled_for replaces appointment_date+appointment_time
+//     and the upcoming-appointment block uses scheduled_for + interval
+//   - patients.presenting_concerns (TEXT[]) replaces reason_for_seeking
+//   - crisis_alerts.created_at (was triggered_at on legacy)
 
 import Anthropic from '@anthropic-ai/sdk'
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
-import { auditEhrAccess } from '@/lib/ehr/audit'
+import { pool } from '@/lib/aws/db'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { checkAiRateLimit } from '@/lib/aws/ehr/draft-rate-limit'
 
 const SYSTEM_PROMPT = `You are briefing a licensed therapist before they walk into a session. Write a 3-5 sentence snapshot of the patient using ONLY the data provided. Do not invent history, quotes, or clinical observations that weren't in the source material.
 
@@ -27,80 +41,167 @@ Hard rules:
 - If the record is nearly empty (new intake, no sessions yet), say so plainly — do not fabricate a clinical picture.`
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
   const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) return NextResponse.json({ error: 'Anthropic API not configured' }, { status: 500 })
-
-  // Load a tight slice of context.
-  const [patient, calls, assessments, lastNote, mood, hwOpen, upcomingAppt, safety, recentCrisis] = await Promise.all([
-    supabaseAdmin.from('patients').select('first_name, last_name, date_of_birth, reason_for_seeking, insurance, referral_source').eq('id', id).eq('practice_id', auth.practiceId).maybeSingle(),
-    supabaseAdmin.from('call_logs').select('summary, created_at, call_type').eq('practice_id', auth.practiceId).eq('patient_id', id).order('created_at', { ascending: false }).limit(3),
-    supabaseAdmin.from('patient_assessments').select('assessment_type, score, severity, completed_at, alerts_triggered').eq('practice_id', auth.practiceId).eq('patient_id', id).eq('status', 'completed').order('completed_at', { ascending: true }).limit(10),
-    supabaseAdmin.from('ehr_progress_notes').select('title, assessment, plan, created_at').eq('practice_id', auth.practiceId).eq('patient_id', id).in('status', ['signed','amended']).order('created_at', { ascending: false }).limit(1).maybeSingle(),
-    supabaseAdmin.from('ehr_mood_logs').select('mood, anxiety, note, logged_at').eq('practice_id', auth.practiceId).eq('patient_id', id).order('logged_at', { ascending: false }).limit(5),
-    supabaseAdmin.from('ehr_homework').select('title, due_date').eq('practice_id', auth.practiceId).eq('patient_id', id).eq('status', 'assigned').limit(3),
-    supabaseAdmin.from('appointments').select('appointment_date, appointment_time, appointment_type').eq('practice_id', auth.practiceId).eq('patient_id', id).in('status', ['scheduled','confirmed']).gte('appointment_date', new Date().toISOString().slice(0, 10)).order('appointment_date', { ascending: true }).limit(1).maybeSingle(),
-    supabaseAdmin.from('ehr_safety_plans').select('status').eq('practice_id', auth.practiceId).eq('patient_id', id).eq('status', 'active').maybeSingle(),
-    supabaseAdmin.from('crisis_alerts').select('id, created_at').eq('practice_id', auth.practiceId).eq('patient_id', id).gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()).limit(3),
-  ])
-
-  if (!patient.data) return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
-
-  const p = patient.data
-  const blocks: string[] = []
-  blocks.push(`Patient: ${[p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown'}${p.date_of_birth ? ` (DOB ${p.date_of_birth})` : ''}`)
-  if (p.reason_for_seeking) blocks.push(`Reason for seeking care: ${p.reason_for_seeking}`)
-  if (p.referral_source) blocks.push(`Referral source: ${p.referral_source}`)
-  if (p.insurance) blocks.push(`Insurance: ${p.insurance}`)
-
-  if (safety.data) blocks.push(`SAFETY: An active Stanley-Brown safety plan is on file. Treat as ongoing risk context.`)
-  if (recentCrisis.data && recentCrisis.data.length > 0) {
-    blocks.push(`CRISIS: ${recentCrisis.data.length} crisis alert(s) logged in the last 7 days.`)
+  if (!apiKey) {
+    return NextResponse.json({ error: 'Anthropic API not configured' }, { status: 500 })
   }
 
-  if (assessments.data && assessments.data.length > 0) {
+  // Per-practice daily cap. patient.summary.% is its own family so a
+  // therapist binge-generating SOAP drafts doesn't lock summary
+  // regeneration (and vice versa).
+  const cap = await checkAiRateLimit(ctx.practiceId!, 'patient.summary.%')
+  if (!cap.allowed) {
+    return NextResponse.json(
+      { error: 'daily_cap_reached', cap: cap.cap, used: cap.used },
+      { status: 429 },
+    )
+  }
+
+  const sevenDaysAgoIso = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
+  const todayIso = new Date().toISOString()
+
+  const [patient, calls, assessments, lastNote, mood, hwOpen, upcomingAppt, safety, recentCrisis] = await Promise.all([
+    pool.query(
+      `SELECT first_name, last_name, date_of_birth, presenting_concerns,
+              insurance_provider, referral_source
+         FROM patients
+        WHERE id = $1 AND practice_id = $2 AND deleted_at IS NULL
+        LIMIT 1`,
+      [id, ctx.practiceId],
+    ),
+    pool.query(
+      `SELECT summary, created_at, call_type FROM call_logs
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY created_at DESC LIMIT 3`,
+      [ctx.practiceId, id],
+    ),
+    pool.query(
+      `SELECT assessment_type, score, severity, completed_at, alerts_triggered
+         FROM patient_assessments
+        WHERE practice_id = $1 AND patient_id = $2 AND status = 'completed'
+        ORDER BY completed_at ASC NULLS LAST
+        LIMIT 10`,
+      [ctx.practiceId, id],
+    ),
+    pool.query(
+      `SELECT title, assessment, plan, created_at FROM ehr_progress_notes
+        WHERE practice_id = $1 AND patient_id = $2
+          AND status IN ('signed','amended')
+        ORDER BY created_at DESC LIMIT 1`,
+      [ctx.practiceId, id],
+    ),
+    pool.query(
+      `SELECT mood, anxiety, note, logged_at FROM ehr_mood_logs
+        WHERE practice_id = $1 AND patient_id = $2
+        ORDER BY logged_at DESC LIMIT 5`,
+      [ctx.practiceId, id],
+    ),
+    pool.query(
+      `SELECT title, due_date FROM ehr_homework
+        WHERE practice_id = $1 AND patient_id = $2 AND status = 'assigned'
+        LIMIT 3`,
+      [ctx.practiceId, id],
+    ),
+    pool.query(
+      `SELECT scheduled_for, appointment_type FROM appointments
+        WHERE practice_id = $1 AND patient_id = $2
+          AND status IN ('scheduled','confirmed')
+          AND scheduled_for >= $3
+        ORDER BY scheduled_for ASC LIMIT 1`,
+      [ctx.practiceId, id, todayIso],
+    ),
+    pool.query(
+      `SELECT status FROM ehr_safety_plans
+        WHERE practice_id = $1 AND patient_id = $2 AND status = 'active'
+        LIMIT 1`,
+      [ctx.practiceId, id],
+    ),
+    pool.query(
+      `SELECT id, created_at FROM crisis_alerts
+        WHERE practice_id = $1 AND patient_id = $2 AND created_at >= $3
+        LIMIT 3`,
+      [ctx.practiceId, id, sevenDaysAgoIso],
+    ),
+  ])
+
+  if (patient.rowCount === 0) {
+    return NextResponse.json({ error: 'Patient not found' }, { status: 404 })
+  }
+  const p = patient.rows[0]
+
+  const blocks: string[] = []
+  const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ') || 'Unknown'
+  blocks.push(`Patient: ${fullName}${p.date_of_birth ? ` (DOB ${p.date_of_birth})` : ''}`)
+  const presenting = Array.isArray(p.presenting_concerns) && p.presenting_concerns.length
+    ? p.presenting_concerns.join('; ')
+    : ''
+  if (presenting) blocks.push(`Reason for seeking care: ${presenting}`)
+  if (p.referral_source) blocks.push(`Referral source: ${p.referral_source}`)
+  if (p.insurance_provider) blocks.push(`Insurance: ${p.insurance_provider}`)
+
+  if (safety.rowCount && safety.rowCount > 0) {
+    blocks.push(`SAFETY: An active Stanley-Brown safety plan is on file. Treat as ongoing risk context.`)
+  }
+  if (recentCrisis.rowCount && recentCrisis.rowCount > 0) {
+    blocks.push(`CRISIS: ${recentCrisis.rowCount} crisis alert(s) logged in the last 7 days.`)
+  }
+
+  if (assessments.rows.length > 0) {
     const byType = new Map<string, Array<{ score: number; date: string; alerts: any }>>()
-    for (const a of assessments.data) {
+    for (const a of assessments.rows) {
       const key = a.assessment_type
       if (!byType.has(key)) byType.set(key, [])
-      byType.get(key)!.push({ score: a.score, date: a.completed_at ? new Date(a.completed_at).toLocaleDateString() : '', alerts: a.alerts_triggered })
+      byType.get(key)!.push({
+        score: a.score,
+        date: a.completed_at ? new Date(a.completed_at).toLocaleDateString() : '',
+        alerts: a.alerts_triggered,
+      })
     }
     blocks.push('\nAssessment trajectory:')
     for (const [type, rows] of byType) {
-      const first = rows[0]; const last = rows[rows.length - 1]
-      const delta = rows.length > 1 ? ` (baseline ${first.score} → latest ${last.score}, Δ${last.score - first.score >= 0 ? '+' : ''}${last.score - first.score})` : ` (${last.score})`
+      const first = rows[0]
+      const last = rows[rows.length - 1]
+      const delta = rows.length > 1
+        ? ` (baseline ${first.score} → latest ${last.score}, Δ${last.score - first.score >= 0 ? '+' : ''}${last.score - first.score})`
+        : ` (${last.score})`
       const hasAlerts = rows.some((r) => Array.isArray(r.alerts) && r.alerts.length > 0)
       blocks.push(`  - ${type}${delta}${hasAlerts ? ' · ALERT present' : ''}`)
     }
   }
 
-  if (mood.data && mood.data.length > 0) {
-    const avg = mood.data.reduce((s, m) => s + m.mood, 0) / mood.data.length
-    const latest = mood.data[0]
+  if (mood.rows.length > 0) {
+    const avg = mood.rows.reduce((s, m: any) => s + (m.mood ?? 0), 0) / mood.rows.length
+    const latest = mood.rows[0]
     blocks.push(`\nRecent mood check-ins: avg ${avg.toFixed(1)}/10 (latest ${latest.mood}). ${latest.note ? `Last note: "${latest.note}"` : ''}`)
   }
 
-  if (calls.data && calls.data.length > 0) {
+  if (calls.rows.length > 0) {
     blocks.push(`\nRecent call contacts:`)
-    for (const c of calls.data.slice(0, 2)) {
-      if (c.summary) blocks.push(`  - [${c.call_type ?? 'call'}, ${new Date(c.created_at).toLocaleDateString()}] ${c.summary.slice(0, 220)}`)
+    for (const c of calls.rows.slice(0, 2)) {
+      if (c.summary) {
+        blocks.push(`  - [${c.call_type ?? 'call'}, ${new Date(c.created_at).toLocaleDateString()}] ${String(c.summary).slice(0, 220)}`)
+      }
     }
   }
 
-  if (lastNote.data) {
-    blocks.push(`\nMost recent signed note · ${new Date(lastNote.data.created_at).toLocaleDateString()}:`)
-    if (lastNote.data.assessment) blocks.push(`  Assessment: ${lastNote.data.assessment.slice(0, 300)}`)
-    if (lastNote.data.plan) blocks.push(`  Plan: ${lastNote.data.plan.slice(0, 300)}`)
+  if (lastNote.rowCount && lastNote.rows[0]) {
+    const n = lastNote.rows[0]
+    blocks.push(`\nMost recent signed note · ${new Date(n.created_at).toLocaleDateString()}:`)
+    if (n.assessment) blocks.push(`  Assessment: ${String(n.assessment).slice(0, 300)}`)
+    if (n.plan) blocks.push(`  Plan: ${String(n.plan).slice(0, 300)}`)
   }
 
-  if (hwOpen.data && hwOpen.data.length > 0) {
-    blocks.push(`\nOpen homework: ${hwOpen.data.map((h) => h.title).join('; ')}`)
+  if (hwOpen.rows.length > 0) {
+    blocks.push(`\nOpen homework: ${hwOpen.rows.map((h: any) => h.title).join('; ')}`)
   }
 
-  if (upcomingAppt.data) {
-    blocks.push(`\nUpcoming appointment: ${upcomingAppt.data.appointment_date} at ${upcomingAppt.data.appointment_time} (${upcomingAppt.data.appointment_type})`)
+  if (upcomingAppt.rowCount && upcomingAppt.rows[0]) {
+    const ap = upcomingAppt.rows[0]
+    blocks.push(`\nUpcoming appointment: ${new Date(ap.scheduled_for).toLocaleString()} (${ap.appointment_type ?? ''})`)
   }
 
   const client = new Anthropic({ apiKey })
@@ -118,33 +219,64 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     .join('')
     .trim()
 
-  await supabaseAdmin
-    .from('patients')
-    .update({
-      ai_summary: text,
-      ai_summary_generated_at: new Date().toISOString(),
-      ai_summary_model: 'claude-sonnet-4-6',
-    })
-    .eq('id', id)
-    .eq('practice_id', auth.practiceId)
+  // Persist to patients.ai_summary cache. Defensive: column added by
+  // Wave 17 schema bump. Wrap in try/catch so RDS DBs that haven't been
+  // migrated yet still return the AI text — they just won't cache it.
+  try {
+    await pool.query(
+      `UPDATE patients
+          SET ai_summary = $1,
+              ai_summary_generated_at = NOW(),
+              ai_summary_model = $2
+        WHERE id = $3 AND practice_id = $4`,
+      [text, 'claude-sonnet-4-6', id, ctx.practiceId],
+    )
+  } catch (err) {
+    console.error('[patient-summary] cache write failed:', (err as Error).message)
+  }
 
   await auditEhrAccess({
-    user: auth.user, practiceId: auth.practiceId, action: 'note.view',
-    resourceId: id, details: { kind: 'ai_patient_summary' },
+    ctx,
+    action: 'patient.summary.generate',
+    resourceType: 'patient',
+    resourceId: id,
+    details: { kind: 'ai_patient_summary', model: 'claude-sonnet-4-6', cap_used: cap.used + 1 },
   })
 
   return NextResponse.json({ summary: text, generated_at: new Date().toISOString() })
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
-  const { data } = await supabaseAdmin
-    .from('patients').select('ai_summary, ai_summary_generated_at, ai_summary_model').eq('id', id).eq('practice_id', auth.practiceId).maybeSingle()
-  if (!data) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({
-    summary: data.ai_summary,
-    generated_at: data.ai_summary_generated_at,
-    model: data.ai_summary_model,
-  })
+
+  try {
+    const { rows } = await pool.query(
+      `SELECT ai_summary, ai_summary_generated_at, ai_summary_model
+         FROM patients
+        WHERE id = $1 AND practice_id = $2 AND deleted_at IS NULL
+        LIMIT 1`,
+      [id, ctx.practiceId],
+    )
+    if (rows.length === 0) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+    await auditEhrAccess({
+      ctx,
+      action: 'patient.summary.view',
+      resourceType: 'patient',
+      resourceId: id,
+    })
+    return NextResponse.json({
+      summary: rows[0].ai_summary,
+      generated_at: rows[0].ai_summary_generated_at,
+      model: rows[0].ai_summary_model,
+    })
+  } catch (err) {
+    // Cache columns may not exist yet — return empty summary so the UI
+    // can offer Regenerate without erroring.
+    console.error('[patient-summary] cache read failed:', (err as Error).message)
+    return NextResponse.json({ summary: null, generated_at: null, model: null })
+  }
 }

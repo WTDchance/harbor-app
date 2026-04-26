@@ -153,6 +153,11 @@ CREATE TABLE IF NOT EXISTS patients (
     sms_consent_granted_at      TIMESTAMPTZ,
     hipaa_consent_granted_at    TIMESTAMPTZ,
 
+    -- AI summary (Sonnet patient-card cache; Wave 17)
+    ai_summary                  TEXT,
+    ai_summary_generated_at     TIMESTAMPTZ,
+    ai_summary_model            TEXT,
+
     -- Audit
     created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -321,6 +326,16 @@ CREATE TABLE IF NOT EXISTS patient_assessments (
     severity        TEXT,
     administered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     administered_by UUID REFERENCES users(id),
+
+    -- Item-level responses + Sonnet interpretation (Wave 17)
+    responses_json              JSONB,
+    alerts_triggered            JSONB,
+    interpretation              TEXT,
+    interpretation_generated_at TIMESTAMPTZ,
+    completed_at                TIMESTAMPTZ,
+    status                      TEXT NOT NULL DEFAULT 'completed'
+        CHECK (status IN ('pending','completed','skipped')),
+    notes                       TEXT,
 
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
