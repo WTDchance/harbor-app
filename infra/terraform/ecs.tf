@@ -50,7 +50,11 @@ locals {
   ]
 
   app_secrets = [
-    { name = "PGPASSWORD", valueFrom = aws_ssm_parameter.rds_password.arn },
+    { name = "PGPASSWORD",        valueFrom = aws_ssm_parameter.rds_password.arn },
+    # Runtime API keys (see secrets.tf for the placeholder/ignore_changes pattern).
+    { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.anthropic_api_key.arn },
+    { name = "STEDI_API_KEY",     valueFrom = aws_ssm_parameter.stedi_api_key.arn },
+    { name = "OPENAI_API_KEY",    valueFrom = aws_ssm_parameter.openai_api_key.arn },
   ]
 }
 
