@@ -6,7 +6,6 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import OnboardingChecklist from "@/components/OnboardingChecklist";
 function stripMd(s: string): string {
   if (!s) return s;
   return s.replace(/\*\*/g, '').replace(/\*/g, '').replace(/^- /gm, '').trim();
@@ -244,7 +243,6 @@ export default function DashboardHome() {
       </div>
 
       <div className="max-w-6xl mx-auto px-6 py-6 space-y-6">
-          <OnboardingChecklist />
         {/* Stats grid */}
         <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
           {[
