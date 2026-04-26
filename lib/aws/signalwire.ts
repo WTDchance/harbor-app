@@ -112,9 +112,32 @@ export async function sendSMS(args: {
 }
 
 /**
+ * Reconstruct the externally-visible URL from a Next request behind
+ * ALB+ECS. SignalWire signs based on the URL it POSTed to (e.g.
+ * https://lab.harboroffice.ai/api/signalwire/inbound-voice), but
+ * inside the Fargate container req.url reports the internal bind
+ * address (http://...:3000/...). Without reconstruction every
+ * signed request fails verification.
+ */
+export function publicWebhookUrl(req: {
+  url: string
+  headers: { get(name: string): string | null }
+}): string {
+  const u = new URL(req.url)
+  const proto = req.headers.get('x-forwarded-proto') || u.protocol.replace(':', '')
+  // x-forwarded-host preferred (set by ALB); fall back to Host header.
+  const host = req.headers.get('x-forwarded-host')
+    || req.headers.get('host')
+    || u.host
+  return `${proto}://${host}${u.pathname}${u.search}`
+}
+
+/**
  * Twilio/SignalWire LaML signature: HMAC-SHA1 over the absolute URL
  * concatenated with the sorted form-data key/value pairs, base64.
  * SignalWire's docs explicitly mirror the Twilio algorithm.
+ *
+ * URL must be the externally-visible URL — see publicWebhookUrl().
  */
 export function validateInboundWebhook(args: {
   rawUrl: string

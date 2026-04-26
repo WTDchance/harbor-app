@@ -9,7 +9,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
-import { validateInboundWebhook, signalwireConfigured } from '@/lib/aws/signalwire'
+import { validateInboundWebhook, signalwireConfigured, publicWebhookUrl } from '@/lib/aws/signalwire'
 import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
 const TWIML_HEADERS = { 'Content-Type': 'application/xml' }
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   for (const [k, v] of formData.entries()) formParams[k] = String(v)
   const sig = req.headers.get('x-twilio-signature') || req.headers.get('x-signalwire-signature')
   const sigOk = validateInboundWebhook({
-    rawUrl: req.url,
+    rawUrl: publicWebhookUrl(req),
     formParams,
     signatureHeader: sig,
   })

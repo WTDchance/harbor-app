@@ -21,5 +21,6 @@ export async function POST(req: NextRequest) {
       error_code: params.ErrorCode || null,
     },
   })
-  return new NextResponse('', { status: 204 })
+  // 204 + body throws on Next 14's strict Response constructor; 200 with no body is equivalent for SignalWire callbacks.
+  return new NextResponse(null, { status: 200 })
 }
