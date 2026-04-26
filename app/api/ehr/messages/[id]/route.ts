@@ -1,27 +1,72 @@
-// app/api/ehr/messages/[id]/route.ts — therapist reads a thread + marks read.
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { requireEhrAuth, isAuthError } from '@/lib/ehr/auth'
+// Therapist-side thread read. Loads thread + messages and marks any
+// patient-sent messages as read.
+//
+// PATCH and DELETE are not implemented in legacy; AWS port returns 501
+// stubs so the routes respond cleanly to those verbs.
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const auth = await requireEhrAuth(); if (isAuthError(auth)) return auth
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
   const { id } = await params
-  const { data: thread } = await supabaseAdmin
-    .from('ehr_message_threads').select('*').eq('id', id).eq('practice_id', auth.practiceId).maybeSingle()
+
+  const threadRes = await pool.query(
+    `SELECT * FROM ehr_message_threads
+      WHERE id = $1 AND practice_id = $2
+      LIMIT 1`,
+    [id, ctx.practiceId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const thread = threadRes.rows[0]
   if (!thread) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { data: messages } = await supabaseAdmin
-    .from('ehr_messages').select('id, sender_type, body, created_at, read_at')
-    .eq('thread_id', id).order('created_at', { ascending: true })
+  const msgRes = await pool.query(
+    `SELECT id, sender_type, body, created_at, read_at
+       FROM ehr_messages
+      WHERE thread_id = $1
+      ORDER BY created_at ASC`,
+    [id],
+  )
 
-  // Mark patient messages as read by practice
+  // Mark patient messages as read by practice (best-effort, fire-and-forget).
   if (thread.unread_by_practice_count > 0) {
-    await supabaseAdmin.from('ehr_message_threads')
-      .update({ unread_by_practice_count: 0 }).eq('id', id)
-    await supabaseAdmin.from('ehr_messages')
-      .update({ read_at: new Date().toISOString() })
-      .eq('thread_id', id).eq('sender_type', 'patient').is('read_at', null)
+    pool.query(
+      `UPDATE ehr_message_threads
+          SET unread_by_practice_count = 0
+        WHERE id = $1`,
+      [id],
+    ).catch(() => {})
+    pool.query(
+      `UPDATE ehr_messages
+          SET read_at = NOW()
+        WHERE thread_id = $1 AND sender_type = 'patient' AND read_at IS NULL`,
+      [id],
+    ).catch(() => {})
   }
 
-  return NextResponse.json({ thread, messages: messages ?? [] })
+  return NextResponse.json({ thread, messages: msgRes.rows })
+}
+
+// TODO(phase-4b): port PATCH (thread state changes — archive, etc.) and
+// DELETE (thread / message removal) once those flows have a designed UX.
+// Legacy never implemented these verbs.
+export async function PATCH() {
+  return NextResponse.json(
+    { error: 'message_thread_patch_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
+}
+export async function DELETE() {
+  return NextResponse.json(
+    { error: 'message_thread_delete_not_implemented_on_aws_yet' },
+    { status: 501 },
+  )
 }

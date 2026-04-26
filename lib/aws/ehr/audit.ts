@@ -73,6 +73,10 @@ export type EhrAuditAction =
   | 'billing.superbill.generate'
   | 'billing.portal.session'
   | 'provision.checkout_completed'
+  | 'consent.sign'
+  | 'message.thread.upsert'
+  | 'message.send'
+  | 'message.read'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
@@ -123,6 +127,8 @@ export type PortalAuditAction =
   | 'portal.scheduling.create'
   | 'portal.homework.update'
   | 'portal.assessment.complete'
+  | 'portal.message.send'
+  | 'portal.consent.sign'
 
 /**
  * Audit a portal patient action. Mirrors auditEhrAccess() but takes a
