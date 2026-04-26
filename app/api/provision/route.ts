@@ -1,183 +1,148 @@
-// Multi-therapist provisioning
-// POST /api/provision — create a new practice + Vapi assistant + (optionally) Twilio number
-// Used when onboarding a new therapist to Harbor
+// app/api/provision/route.ts
+//
+// Wave 19 (AWS port). Multi-therapist provisioning. Creates a new
+// practices row directly (admin tooling — used to seed practices that
+// don't go through the public /api/signup checkout flow).
+//
+// Carrier provisioning (Vapi assistant + Twilio number) is CARVED OUT
+// here. The legacy version did the Vapi assistant create + cleanup-on-
+// failure inline; that lives in Bucket 1 (Retell + SignalWire
+// migration). For now we just write the practices row in
+// 'pending_payment' state so a follow-up Bucket 1 step can attach the
+// carrier identifiers.
+//
+// Auth: requireAdminSession() — Cognito session must match
+// ADMIN_EMAIL allowlist. (Legacy had no auth here — that was a
+// preexisting bug we close on the AWS port.)
+//
+// Audit captures admin email + new practice_id + payload hash.
 
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import { buildSystemPrompt } from '@/lib/systemPrompt'
-
-const VAPI_API_KEY = process.env.VAPI_API_KEY
-const VAPI_BASE_URL = 'https://api.vapi.ai'
-
-// ElevenLabs Bella voice — default for all Harbor assistants
-const DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL'
+import { pool } from '@/lib/aws/db'
+import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { hashAdminPayload } from '@/lib/aws/admin/payload-hash'
 
 interface ProvisionRequest {
-  // Practice / therapist info
   therapist_name: string
   practice_name: string
-  notification_email: string
-  phone_number?: string // Existing Twilio number (optional)
-  therapist_phone?: string // Phone number for crisis alerts
-
-  // Ellie persona customization
-  ai_name?: string         // Default: "Ellie"
+  notification_email?: string  // legacy alias
+  owner_email?: string
+  phone_number?: string
+  therapist_phone?: string
+  ai_name?: string
   specialties?: string[]
-  hours?: string
+  hours_json?: Record<string, unknown>
   location?: string
   telehealth?: boolean
-  insurance_accepted?: string[]
-  system_prompt_notes?: string // Any extra instructions for this therapist's Ellie
+  accepted_insurance?: string[]
+  greeting?: string
+  timezone?: string
+  provider_name?: string
 }
 
-export async function POST(request: NextRequest) {
+export async function POST(req: NextRequest) {
+  const ctx = await requireAdminSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  let body: ProvisionRequest
   try {
-    const body: ProvisionRequest = await request.json()
-
-    const {
-      therapist_name,
-      practice_name,
-      notification_email,
-      phone_number,
-      ai_name,
-    } = body
-
-    if (!therapist_name || !practice_name || !notification_email) {
-      return NextResponse.json(
-        { error: 'Missing required fields: therapist_name, practice_name, notification_email' },
-        { status: 400 }
-      )
-    }
-
-    const systemPrompt = buildSystemPrompt(body)
-    const elliesName = ai_name || 'Ellie'
-
-    // 1. Create Vapi assistant for this therapist
-    console.log(`🤖 Creating Vapi assistant for ${practice_name}...`)
-    const vapiRes = await fetch(`${VAPI_BASE_URL}/assistant`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${VAPI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        name: `${elliesName} — ${practice_name}`,
-        model: {
-          provider: 'anthropic',
-          model: 'claude-haiku-4-5-20251001',
-          systemPrompt,
-          temperature: 0.7,
-        },
-        voice: {
-          provider: 'elevenlabs',
-          voiceId: DEFAULT_VOICE_ID,
-          model: 'eleven_turbo_v2_5',
-          stability: 0.5,
-          similarityBoost: 0.75,
-        },
-        firstMessage: `Hi, thank you for calling ${practice_name}! This is ${elliesName}. How can I help you today?`,
-        endCallMessage: `Thank you for calling ${practice_name}. Have a wonderful day!`,
-        silenceTimeoutSeconds: 30,
-        maxDurationSeconds: 600,
-        backgroundSound: 'off',
-        backchannelingEnabled: false,
-        tools: [
-          {
-            type: 'function',
-            function: {
-              name: 'submitIntakeScreening',
-              description: 'Submit intake screening scores after collecting PHQ-2 and GAD-2 responses',
-              parameters: {
-                type: 'object',
-                properties: {
-                  phq2_score: { type: 'number', description: 'PHQ-2 score (depression), 0-6' },
-                  gad2_score: { type: 'number', description: 'GAD-2 score (anxiety), 0-6' },
-                  phq2_flag: { type: 'boolean', description: 'Whether PHQ-2 score >= 3 (elevated depression)' },
-                  gad2_flag: { type: 'boolean', description: 'Whether GAD-2 score >= 3 (elevated anxiety)' },
-                  patient_phone: { type: 'string', description: 'Patient phone number for record linking' },
-                },
-                required: ['phq2_score', 'gad2_score'],
-              },
-            },
-          },
-        ],
-      }),
-    })
-
-    if (!vapiRes.ok) {
-      const err = await vapiRes.text()
-      console.error('Vapi assistant creation failed:', err)
-      return NextResponse.json({ error: 'Failed to create Vapi assistant', details: err }, { status: 500 })
-    }
-
-    const vapiAssistant = await vapiRes.json()
-    const vapiAssistantId = vapiAssistant.id
-    console.log(`✓ Vapi assistant created: ${vapiAssistantId}`)
-
-    // 2. Create the practice in Supabase
-    const { data: practice, error: practiceError } = await supabaseAdmin
-      .from('practices')
-      .insert({
-        name: practice_name,
-        therapist_name,
-        notification_email,
-        phone_number: phone_number || null,
-        therapist_phone: body.therapist_phone || null,
-        ai_name: elliesName,
-        vapi_assistant_id: vapiAssistantId,
-        specialties: body.specialties || [],
-        hours: body.hours || null,
-        location: body.location || null,
-        telehealth: body.telehealth ?? true,
-        emotional_support_enabled: true,
-        insurance_accepted: body.insurance_accepted || [],
-        system_prompt: systemPrompt,
-        created_at: new Date().toISOString(),
-      })
-      .select()
-      .single()
-
-    if (practiceError) {
-      console.error('Error creating practice in DB:', practiceError)
-      // Attempt to clean up the Vapi assistant we just created
-      await fetch(`${VAPI_BASE_URL}/assistant/${vapiAssistantId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${VAPI_API_KEY}` },
-      })
-      return NextResponse.json({ error: 'Failed to create practice record' }, { status: 500 })
-    }
-
-    console.log(`✓ Practice created: ${practice.id} (${practice_name})`)
-
-    return NextResponse.json({
-      success: true,
-      practice: {
-        id: practice.id,
-        name: practice.name,
-        therapist_name: practice.therapist_name,
-        vapi_assistant_id: vapiAssistantId,
-        phone_number: practice.phone_number,
-      },
-      next_steps: [
-        phone_number
-          ? `Configure Twilio number ${phone_number} to forward to Vapi assistant ${vapiAssistantId}`
-          : 'Purchase a Twilio number and configure it to forward to the Vapi assistant',
-        `Set your Vapi webhook URL to: ${process.env.NEXT_PUBLIC_APP_URL}/api/vapi/webhook?practice_id=${practice.id}`,
-        `Therapist will receive post-call summaries at: ${notification_email}`,
-      ],
-    }, { status: 201 })
-
-  } catch (error) {
-    console.error('Provision error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    body = (await req.json()) as ProvisionRequest
+  } catch {
+    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
   }
+
+  const ownerEmail = (body.owner_email || body.notification_email || '').toLowerCase().trim()
+  const { therapist_name, practice_name, ai_name, phone_number } = body
+
+  if (!therapist_name || !practice_name || !ownerEmail) {
+    return NextResponse.json(
+      {
+        error:
+          'Missing required fields: therapist_name, practice_name, owner_email (or notification_email)',
+      },
+      { status: 400 },
+    )
+  }
+
+  const aiName = ai_name || 'Ellie'
+
+  const insertRes = await pool.query(
+    `INSERT INTO practices (
+        name, ai_name, owner_email, billing_email, phone, location,
+        provider_name, specialties, hours, timezone, greeting,
+        provisioning_state, accepted_insurance
+     ) VALUES (
+        $1, $2, $3, $3, $4, $5,
+        $6, $7::text[], $8::jsonb, $9, $10,
+        'pending_payment', $11::text[]
+     ) RETURNING id, name, ai_name, phone, owner_email, provisioning_state`,
+    [
+      practice_name,
+      aiName,
+      ownerEmail,
+      phone_number || null,
+      body.location || null,
+      body.provider_name || therapist_name,
+      Array.isArray(body.specialties) ? body.specialties : [],
+      JSON.stringify(body.hours_json || {}),
+      body.timezone || 'America/Los_Angeles',
+      body.greeting || `Hi, thank you for calling ${practice_name}! This is ${aiName}. How can I help you today?`,
+      Array.isArray(body.accepted_insurance) ? body.accepted_insurance : [],
+    ],
+  )
+
+  const practice = insertRes.rows[0]
+
+  await auditEhrAccess({
+    ctx,
+    action: 'provision.created',
+    resourceType: 'practice',
+    resourceId: practice.id,
+    details: {
+      admin_email: ctx.session.email,
+      target_practice_id: practice.id,
+      payload_hash: hashAdminPayload(body),
+      mode: 'admin_provision',
+      carrier_pending: true,
+    },
+  })
+
+  return NextResponse.json(
+    {
+      success: true,
+      practice,
+      next_steps: [
+        'Carrier provisioning (Vapi assistant + phone number) is on the Bucket 1 carrier-swap track. ' +
+          'Use the Retell/SignalWire admin tooling once that lands to attach carrier identifiers ' +
+          'and flip provisioning_state from pending_payment → active.',
+        phone_number
+          ? `Existing number ${phone_number} stored on the practice row; carrier link still pending.`
+          : 'No phone number provided; carrier-side number purchase will happen during Bucket 1 wiring.',
+      ],
+    },
+    { status: 201 },
+  )
 }
 
 export async function GET() {
   return NextResponse.json({
     endpoint: 'POST /api/provision',
-    description: 'Provision a new therapist — creates Vapi assistant + practice record',
-    required_fields: ['therapist_name', 'practice_name', 'notification_email'],
-    optional_fields: ['phone_number', 'ai_name', 'specialties', 'hours', 'location', 'telehealth', 'insurance_accepted', 'system_prompt_notes'],
+    description:
+      'Admin-only: provision a new practice row. Carrier provisioning is deferred to Bucket 1 (Retell + SignalWire migration).',
+    required_fields: ['therapist_name', 'practice_name', 'owner_email'],
+    optional_fields: [
+      'phone_number',
+      'ai_name',
+      'specialties',
+      'hours_json',
+      'location',
+      'telehealth',
+      'accepted_insurance',
+      'greeting',
+      'timezone',
+      'provider_name',
+    ],
+    auth: 'Cognito admin session (requireAdminSession)',
   })
 }

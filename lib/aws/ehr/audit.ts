@@ -91,6 +91,11 @@ export type EhrAuditAction =
   | 'admin.act_as.set'
   | 'admin.act_as.clear'
   | 'admin.patient.delete'
+  | 'provision.signup_received'
+  | 'provision.created'
+  | 'provision.linked_carrier'
+  | 'patients.export'
+  | 'patients.verify_identity'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

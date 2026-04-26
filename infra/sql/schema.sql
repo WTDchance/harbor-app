@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS practices (
     calendar_enabled         BOOLEAN NOT NULL DEFAULT FALSE,
     forward_calls_enabled    BOOLEAN NOT NULL DEFAULT FALSE,
 
+    -- Signup + billing extensions (Wave 19)
+    subscription_status      TEXT,
+    billing_email            CITEXT,
+    comped                   BOOLEAN NOT NULL DEFAULT FALSE,
+    ai_name                  TEXT NOT NULL DEFAULT 'Ellie',
+    provider_name            TEXT,
+    city                     TEXT,
+    state                    TEXT,
+    selected_phone_number    TEXT,
+    stripe_checkout_session_id TEXT,
+
     -- Timestamps
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW(),

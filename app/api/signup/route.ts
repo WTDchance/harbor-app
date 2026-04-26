@@ -1,50 +1,81 @@
-// POST /api/signup
-// Creates auth user + practice row in `pending_payment` state, then creates a
-// Stripe Checkout Session and returns its URL. All Twilio / Vapi provisioning
-// happens in the Stripe webhook once `checkout.session.completed` fires.
+// app/api/signup/route.ts
 //
-// This is the "card upfront, charge now" flow â no trial period.
+// Wave 19 (AWS port). Therapist signup. Creates a Cognito user +
+// practices row in pending_payment state, then mints a Stripe
+// Checkout session and returns its URL. Carrier provisioning
+// (Twilio + Vapi) does NOT happen here — Bucket 1 (Retell + SignalWire
+// migration) owns that. The Stripe webhook (Wave 15) advances
+// provisioning_state from 'pending_payment' → 'provisioning' →
+// 'active'.
+//
+// Card-upfront, charge-now flow. No trial.
+//
+// Auth model:
+//   1. Validate body (practice_name, provider_name, email, password).
+//   2. Cognito AdminCreateUser (force-confirm email + set permanent
+//      password so signup → first dashboard hit doesn't bounce through
+//      a confirmation email).
+//   3. INSERT practices in pending_payment state.
+//   4. INSERT users (cognito_sub → practice_id, role='owner').
+//   5. Stripe customer.create + checkout.sessions.create.
+//   6. Return checkout URL.
+//
+// Audit captures provision.signup_received with email + payload hash
+// and provision.created with practice_id once rows are written.
+
 import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+import {
+  CognitoIdentityProviderClient,
+  AdminCreateUserCommand,
+  AdminSetUserPasswordCommand,
+  AdminGetUserCommand,
+  AdminDeleteUserCommand,
+} from '@aws-sdk/client-cognito-identity-provider'
+import { pool } from '@/lib/aws/db'
 import { stripe } from '@/lib/stripe'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
+import { hashAdminPayload } from '@/lib/aws/admin/payload-hash'
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
 const FOUNDING_CAP = Number(process.env.FOUNDING_MEMBER_CAP || '20')
 const STRIPE_PRICE_ID_FOUNDING = process.env.STRIPE_PRICE_ID_FOUNDING || ''
-const STRIPE_PRICE_ID_REGULAR = process.env.STRIPE_PRICE_ID_REGULAR || process.env.STRIPE_PRICE_ID || ''
+const STRIPE_PRICE_ID_REGULAR =
+  process.env.STRIPE_PRICE_ID_REGULAR || process.env.STRIPE_PRICE_ID || ''
+
+const COGNITO_REGION = process.env.COGNITO_REGION || 'us-east-1'
+const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || ''
 
 // Comp code: free forever, locked to a single email server-side.
-// Provisioned in Stripe via /api/admin/create-mom-promo (one-time).
 const MOM_PROMO_CODE = 'MOM-FREE'
 const MOM_LOCKED_EMAIL = 'dr.tracewonser@gmail.com'
 
 async function countFoundingMembers(): Promise<number> {
-  const { count } = await supabaseAdmin
-    .from('practices')
-    .select('id', { count: 'exact', head: true })
-    .eq('founding_member', true)
-    .in('status', ['active', 'trial'])
-  return count || 0
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM practices
+        WHERE founding_member = TRUE
+          AND provisioning_state IN ('active','provisioning')`,
+    )
+    return rows[0]?.c ?? 0
+  } catch {
+    return 0
+  }
 }
 
 async function signupsEnabled(): Promise<boolean> {
   try {
-    const { data } = await supabaseAdmin
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'signups_enabled')
-      .maybeSingle()
-    if (!data) return true // default open if setting missing
-    const v = data.value
+    const { rows } = await pool.query(
+      `SELECT value FROM app_settings WHERE key = 'signups_enabled' LIMIT 1`,
+    )
+    if (rows.length === 0) return true
+    const v = rows[0].value
     return v === true || v === 'true' || v === 1
-  } catch (e) {
-    console.error('[signup] failed to read signups_enabled, defaulting to enabled:', e)
+  } catch (err) {
+    console.error('[signup] failed to read signups_enabled:', (err as Error).message)
     return true
   }
 }
 
-// Resolves a Stripe promotion code object by its human-readable code.
-// Returns null if not found, expired, inactive, or fully redeemed.
 async function resolveActivePromotionCode(code: string) {
   if (!stripe) return null
   const list = await stripe.promotionCodes.list({ code, limit: 1, active: true })
@@ -60,17 +91,22 @@ export async function POST(req: NextRequest) {
     if (!stripe) {
       return NextResponse.json(
         { error: 'Billing is not configured. Please contact support.' },
-        { status: 500 }
+        { status: 500 },
       )
     }
     if (!STRIPE_PRICE_ID_FOUNDING && !STRIPE_PRICE_ID_REGULAR) {
       return NextResponse.json(
         { error: 'Stripe price IDs not configured on the server.' },
-        { status: 500 }
+        { status: 500 },
+      )
+    }
+    if (!COGNITO_USER_POOL_ID) {
+      return NextResponse.json(
+        { error: 'COGNITO_USER_POOL_ID not configured' },
+        { status: 500 },
       )
     }
 
-    // --- 0. Kill switch check ---
     if (!(await signupsEnabled())) {
       return NextResponse.json(
         {
@@ -78,7 +114,7 @@ export async function POST(req: NextRequest) {
             'We are temporarily not accepting new signups while we finish onboarding our founding practices. Please check back soon or email hello@harborreceptionist.com to get on the waitlist.',
           code: 'signups_paused',
         },
-        { status: 503 }
+        { status: 503 },
       )
     }
 
@@ -88,7 +124,6 @@ export async function POST(req: NextRequest) {
       first_name,
       last_name,
       provider_name,
-      phone,
       city,
       state,
       email,
@@ -96,19 +131,16 @@ export async function POST(req: NextRequest) {
       ai_name,
       greeting,
       timezone,
-      telehealth,
-      accepting_new_patients,
       specialties,
-      insurance_accepted,
       hours_json,
       tos_accepted,
       baa_acknowledged,
       sms_consent,
       promo_code,
       selected_phone_number,
+      accepted_insurance,
     } = body
 
-    // --- Basic validation ---
     if (!practice_name || !provider_name || !email || !password) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
     }
@@ -118,40 +150,43 @@ export async function POST(req: NextRequest) {
     if (!tos_accepted || !baa_acknowledged) {
       return NextResponse.json(
         { error: 'You must accept the Terms of Service and acknowledge the BAA to continue.' },
-        { status: 400 }
+        { status: 400 },
       )
     }
 
     const normalizedEmail = String(email).trim().toLowerCase()
     const normalizedPromo = typeof promo_code === 'string' ? promo_code.trim().toUpperCase() : ''
 
-    // --- Promo code validation (server-side, before any DB writes) ---
-    // Currently the only supported code is MOM-FREE, which is locked to a
-    // specific email. Any other non-empty code is rejected here so we don't
-    // create dangling auth users / practice rows for an invalid promo.
+    await auditSystemEvent({
+      action: 'provision.signup_received',
+      severity: 'info',
+      details: {
+        email: normalizedEmail,
+        practice_name,
+        founding_eligible: true,
+        promo: normalizedPromo || null,
+        payload_hash: hashAdminPayload({ ...body, password: undefined }),
+      },
+    })
+
+    // --- Promo code validation ---
     let resolvedPromo: Awaited<ReturnType<typeof resolveActivePromotionCode>> = null
     let isCompedSignup = false
     if (normalizedPromo) {
       if (normalizedPromo !== MOM_PROMO_CODE) {
-        return NextResponse.json(
-          { error: 'That promo code is not valid.' },
-          { status: 400 }
-        )
+        return NextResponse.json({ error: 'That promo code is not valid.' }, { status: 400 })
       }
       if (normalizedEmail !== MOM_LOCKED_EMAIL) {
         return NextResponse.json(
           { error: 'This promo code is not valid for that email address.' },
-          { status: 400 }
+          { status: 400 },
         )
       }
       resolvedPromo = await resolveActivePromotionCode(MOM_PROMO_CODE)
       if (!resolvedPromo) {
         return NextResponse.json(
-          {
-            error:
-              'This promo code has already been used or is no longer available. Contact support if you think this is a mistake.',
-          },
-          { status: 400 }
+          { error: 'This promo code has already been used or is no longer available.' },
+          { status: 400 },
         )
       }
       isCompedSignup = true
@@ -161,20 +196,17 @@ export async function POST(req: NextRequest) {
     const ellieGreeting =
       greeting ||
       `Thank you for calling ${practice_name}. This is ${aiName}, the AI receptionist for ${provider_name}. How can I help you today?`
-    const location = [city, state].filter(Boolean).join(', ') || null
-    const finalHoursJson = hours_json || {
-      monday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
-      tuesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
-      wednesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
-      thursday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
-      friday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
-      saturday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
-      sunday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
-    }
+    const finalHoursJson =
+      hours_json || {
+        monday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+        tuesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+        wednesday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+        thursday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+        friday: { enabled: true, openTime: '09:00', closeTime: '17:00' },
+        saturday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
+        sunday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
+      }
 
-    // --- 1. Founding member check ---
-    // Comped signups don't burn a founding spot â we still set founding_member
-    // false so the 20-spot landing-page counter stays accurate for paying users.
     const foundingUsed = await countFoundingMembers()
     const isFounding = !isCompedSignup && foundingUsed < FOUNDING_CAP
     const priceId =
@@ -183,99 +215,139 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'No price configured for this tier.' }, { status: 500 })
     }
 
-    // --- 2. Create auth user ---
-    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
-      email: normalizedEmail,
-      password,
-      email_confirm: true,
-    })
-    if (authError || !authData.user) {
-      const msg = authError?.message || 'Failed to create account'
-      if (
-        msg.toLowerCase().includes('already been registered') ||
-        msg.toLowerCase().includes('already registered')
-      ) {
-        return NextResponse.json(
-          { error: 'An account with this email already exists. Try signing in.' },
-          { status: 400 }
-        )
-      }
-      return NextResponse.json({ error: msg }, { status: 500 })
-    }
-    const userId = authData.user.id
+    // --- Cognito user creation ---
+    const cog = new CognitoIdentityProviderClient({ region: COGNITO_REGION })
 
-    // --- 3. Create practice row (pending_payment) ---
-    const { data: practice, error: practiceError } = await supabaseAdmin
-      .from('practices')
-      .insert({
-        name: practice_name,
-        ai_name: aiName,
-        phone_number: null, // assigned by webhook after Twilio purchase
-        location,
-        specialties: specialties || [],
-        telehealth: telehealth !== false,
-        accepting_new_patients: accepting_new_patients !== false,
-        hours_json: finalHoursJson,
-        timezone: timezone || 'America/Los_Angeles',
-        greeting: ellieGreeting,
-        auth_user_id: userId,
-        notification_email: normalizedEmail,
-        billing_email: normalizedEmail,
-        status: 'pending_payment',
-        subscription_status: isCompedSignup ? 'comped' : 'unpaid',
-        founding_member: isFounding,
-        comped: isCompedSignup,
-        reminders_enabled: true,
-        intake_enabled: true,
-        emotional_support_enabled: true,
-        insurance_accepted: insurance_accepted || [],
-        provider_name,
-        city: city || null,
-        state: state || null,
-        selected_phone_number: selected_phone_number || null,
-        specialty:
-          specialties && specialties[0]
-            ? specialties[0].toLowerCase().replace(/\s+/g, '_')
-            : 'general',
-      })
-      .select()
-      .single()
-
-    if (practiceError || !practice) {
-      console.error('Practice creation failed:', practiceError)
-      await supabaseAdmin.auth.admin.deleteUser(userId)
+    // Check existing
+    try {
+      await cog.send(
+        new AdminGetUserCommand({ UserPoolId: COGNITO_USER_POOL_ID, Username: normalizedEmail }),
+      )
       return NextResponse.json(
-        { error: practiceError?.message || 'Failed to create practice' },
-        { status: 500 }
+        { error: 'An account with this email already exists. Try signing in.' },
+        { status: 400 },
+      )
+    } catch {
+      // expected — UserNotFoundException
+    }
+
+    let cognitoSub = ''
+    try {
+      const created = await cog.send(
+        new AdminCreateUserCommand({
+          UserPoolId: COGNITO_USER_POOL_ID,
+          Username: normalizedEmail,
+          UserAttributes: [
+            { Name: 'email', Value: normalizedEmail },
+            { Name: 'email_verified', Value: 'true' },
+          ],
+          MessageAction: 'SUPPRESS', // don't send Cognito's invite email
+        }),
+      )
+      cognitoSub = created.User?.Attributes?.find((a) => a.Name === 'sub')?.Value ?? ''
+      if (!cognitoSub) throw new Error('Cognito returned no sub')
+      // Set the password permanent so login works without FORCE_CHANGE flow
+      await cog.send(
+        new AdminSetUserPasswordCommand({
+          UserPoolId: COGNITO_USER_POOL_ID,
+          Username: normalizedEmail,
+          Password: password,
+          Permanent: true,
+        }),
+      )
+    } catch (err) {
+      return NextResponse.json(
+        { error: 'Failed to create account: ' + (err as Error).message },
+        { status: 500 },
       )
     }
 
-    // --- 4. Link auth user to practice ---
-    const { error: userError } = await supabaseAdmin.from('users').insert({
-      id: userId,
-      email: normalizedEmail,
-      first_name: first_name || '',
-      last_name: last_name || '',
-      practice_id: practice.id,
-      role: 'owner',
-    })
-    if (userError) {
-      console.error('User record creation failed (non-fatal):', userError)
+    // --- Insert practice + user transactionally ---
+    const client = await pool.connect()
+    let practiceId = ''
+    try {
+      await client.query('BEGIN')
+      const pIns = await client.query(
+        `INSERT INTO practices (
+            name, ai_name, owner_email, billing_email, location, phone,
+            specialties, hours, timezone, greeting, provisioning_state,
+            subscription_status, founding_member, comped,
+            accepted_insurance, provider_name, city, state, selected_phone_number
+         ) VALUES (
+            $1, $2, $3, $3, $4, NULL,
+            $5::text[], $6::jsonb, $7, $8, 'pending_payment',
+            $9, $10, $11,
+            $12::text[], $13, $14, $15, $16
+         ) RETURNING id`,
+        [
+          practice_name,
+          aiName,
+          normalizedEmail,
+          [city, state].filter(Boolean).join(', ') || null,
+          Array.isArray(specialties) ? specialties : [],
+          JSON.stringify(finalHoursJson),
+          timezone || 'America/Los_Angeles',
+          ellieGreeting,
+          isCompedSignup ? 'comped' : 'unpaid',
+          isFounding,
+          isCompedSignup,
+          Array.isArray(accepted_insurance) ? accepted_insurance : [],
+          provider_name,
+          city || null,
+          state || null,
+          selected_phone_number || null,
+        ],
+      )
+      practiceId = pIns.rows[0].id
+
+      const fullName = [first_name, last_name].filter(Boolean).join(' ').trim() || provider_name
+      await client.query(
+        `INSERT INTO users (cognito_sub, email, full_name, practice_id, role)
+         VALUES ($1, $2, $3, $4, 'owner')
+         ON CONFLICT (cognito_sub) DO NOTHING`,
+        [cognitoSub, normalizedEmail, fullName, practiceId],
+      )
+
+      await client.query('COMMIT')
+    } catch (err) {
+      await client.query('ROLLBACK')
+      // Roll back the Cognito user too so a retry doesn't 400 on duplicate.
+      try {
+        await cog.send(
+          new AdminDeleteUserCommand({
+            UserPoolId: COGNITO_USER_POOL_ID,
+            Username: normalizedEmail,
+          }),
+        )
+      } catch {
+        /* best effort */
+      }
+      return NextResponse.json(
+        { error: 'Failed to create practice: ' + (err as Error).message },
+        { status: 500 },
+      )
+    } finally {
+      client.release()
     }
 
     // --- LOCAL DEV BYPASS: skip Stripe entirely on localhost ---
     if (APP_URL.includes('localhost')) {
-      // Mark practice as active immediately
-      await supabaseAdmin
-        .from('practices')
-        .update({ status: 'active', subscription_status: 'dev_bypass' })
-        .eq('id', practice.id)
-
-      console.log(`[DEV] Signup created (Stripe bypassed): ${practice_name} (${practice.id})`)
-
+      await pool.query(
+        `UPDATE practices
+            SET provisioning_state = 'active',
+                subscription_status = 'dev_bypass'
+          WHERE id = $1`,
+        [practiceId],
+      )
+      await auditSystemEvent({
+        action: 'provision.created',
+        severity: 'info',
+        practiceId,
+        details: { mode: 'dev_bypass', email: normalizedEmail },
+      })
       return NextResponse.json({
         success: true,
-        practice_id: practice.id,
+        practice_id: practiceId,
         founding_member: isFounding,
         comped: false,
         checkout_url: `${APP_URL}/dashboard`,
@@ -283,12 +355,12 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // --- 5. Create (or reuse) Stripe customer ---
+    // --- Stripe customer + checkout ---
     const customer = await stripe.customers.create({
       email: normalizedEmail,
       name: practice_name,
       metadata: {
-        practice_id: practice.id,
+        practice_id: practiceId,
         practice_name,
         provider_name,
         founding_member: String(isFounding),
@@ -296,36 +368,30 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    await supabaseAdmin
-      .from('practices')
-      .update({ stripe_customer_id: customer.id })
-      .eq('id', practice.id)
+    await pool.query(
+      `UPDATE practices SET stripe_customer_id = $1 WHERE id = $2`,
+      [customer.id, practiceId],
+    )
 
-    // --- 6. Create Stripe Checkout Session (charge-now subscription) ---
-    // For comped signups: pre-attach the MOM-FREE promo code so the resolved
-    // amount is $0, and tell Stripe not to collect a card unless required.
-    // For everyone else: same as before (allow_promotion_codes lets users
-    // type other promo codes at the Stripe-hosted checkout).
     const sessionParams: any = {
       customer: customer.id,
       mode: 'subscription',
       payment_method_types: ['card'],
       line_items: [{ price: priceId, quantity: 1 }],
-      // No trial â card-upfront, charge-now flow
       success_url: `${APP_URL}/signup/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${APP_URL}/signup?cancelled=1&practice_id=${practice.id}`,
+      cancel_url: `${APP_URL}/signup?cancelled=1&practice_id=${practiceId}`,
       billing_address_collection: 'required',
       subscription_data: {
         metadata: {
-          practice_id: practice.id,
+          practice_id: practiceId,
           practice_name,
           founding_member: String(isFounding),
           comped: String(isCompedSignup),
         },
       },
       metadata: {
-        practice_id: practice.id,
-        auth_user_id: userId,
+        practice_id: practiceId,
+        cognito_sub: cognitoSub,
         founding_member: String(isFounding),
         comped: String(isCompedSignup),
         practice_state: state || '',
@@ -334,7 +400,6 @@ export async function POST(req: NextRequest) {
         promo_code: isCompedSignup ? MOM_PROMO_CODE : '',
       },
     }
-
     if (isCompedSignup && resolvedPromo) {
       sessionParams.discounts = [{ promotion_code: resolvedPromo.id }]
       sessionParams.payment_method_collection = 'if_required'
@@ -343,28 +408,34 @@ export async function POST(req: NextRequest) {
     }
 
     const session = await stripe.checkout.sessions.create(sessionParams)
-
-    // Persist the session id so the success page + webhook can reconcile.
-    await supabaseAdmin
-      .from('practices')
-      .update({ stripe_checkout_session_id: session.id })
-      .eq('id', practice.id)
-
-    console.log(
-      `Signup created: ${practice_name} (${practice.id}) â pending payment via ${session.id}` +
-        (isCompedSignup ? ' [COMPED via MOM-FREE]' : '')
+    await pool.query(
+      `UPDATE practices SET stripe_checkout_session_id = $1 WHERE id = $2`,
+      [session.id, practiceId],
     )
+
+    await auditSystemEvent({
+      action: 'provision.created',
+      severity: 'info',
+      practiceId,
+      details: {
+        email: normalizedEmail,
+        founding_member: isFounding,
+        comped: isCompedSignup,
+        stripe_customer_id: customer.id,
+        stripe_checkout_session_id: session.id,
+      },
+    })
 
     return NextResponse.json({
       success: true,
-      practice_id: practice.id,
+      practice_id: practiceId,
       founding_member: isFounding,
       comped: isCompedSignup,
       checkout_url: session.url,
       session_id: session.id,
     })
-  } catch (error: any) {
-    console.error('Signup error:', error)
-    return NextResponse.json({ error: error.message || 'Signup failed' }, { status: 500 })
+  } catch (err) {
+    console.error('Signup error:', err)
+    return NextResponse.json({ error: (err as Error).message || 'Signup failed' }, { status: 500 })
   }
 }

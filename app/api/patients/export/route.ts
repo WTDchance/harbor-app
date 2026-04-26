@@ -1,185 +1,275 @@
 // app/api/patients/export/route.ts
-// Harbor — Patient CSV export for EHR import
-// GET /api/patients/export?format=simplepractice|therapynotes|jane|harbor
+//
+// Wave 19 (AWS port). Practice-level patient list export as CSV in
+// one of four supported formats: simplepractice, therapynotes, jane,
+// harbor (default). The therapist downloads this from the dashboard
+// to bulk-import their roster into another EHR.
+//
+// Read-only. Cognito + RDS pool. Practice-scoped via requireApiSession.
+//
+// Schema mappings vs. legacy:
+//   Legacy queried intake_forms with denormalized patient_* fields.
+//   AWS canonical is normalized — patients holds first/last_name +
+//   email + phone + DOB + address; assessment scores come from
+//   patient_assessments.score with the latest PHQ-9 / GAD-7 picked
+//   per patient via DISTINCT ON.
+//
+// Audit captures admin/clinician email + format + row_count.
 
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin as supabase } from "@/lib/supabase";
-
-async function getAuthenticatedUser(req: NextRequest) {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer ")) {
-    return { user: null, error: "Missing or invalid authorization header" };
-  }
-  const token = authHeader.slice(7);
-  const { data: { user }, error } = await supabase.auth.getUser(token);
-  if (error || !user) return { user: null, error: "Unauthorized" };
-  return { user, error: null };
-}
+import { NextRequest, NextResponse } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 function escapeCsv(val: string | null | undefined): string {
-  if (val === null || val === undefined) return "";
-  const s = String(val);
-  if (s.includes(",") || s.includes('"') || s.includes("\n")) {
-    return `"${s.replace(/"/g, '""')}"`;
+  if (val === null || val === undefined) return ''
+  const s = String(val)
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return `"${s.replace(/"/g, '""')}"`
   }
-  return s;
+  return s
 }
 
 function row(values: (string | null | undefined)[]): string {
-  return values.map(escapeCsv).join(",");
+  return values.map(escapeCsv).join(',')
 }
 
-function splitName(fullName: string | null): { first: string; last: string } {
-  if (!fullName) return { first: "", last: "" };
-  const parts = fullName.trim().split(/\s+/);
-  if (parts.length === 1) return { first: parts[0], last: "" };
-  const last = parts.pop()!;
-  return { first: parts.join(" "), last };
+function formatDob(iso: string | Date | null): string {
+  if (!iso) return ''
+  const d = iso instanceof Date ? iso : new Date(iso)
+  if (isNaN(d.getTime())) return String(iso)
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const dd = String(d.getUTCDate()).padStart(2, '0')
+  return `${mm}/${dd}/${d.getUTCFullYear()}`
 }
 
-function formatDob(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  return `${mm}/${dd}/${d.getUTCFullYear()}`;
-}
-
-function formatDate(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${mm}/${dd}/${d.getFullYear()}`;
-}
-
-function parseAddress(addr: string | null): { street: string; city: string; state: string; zip: string } {
-  if (!addr) return { street: "", city: "", state: "", zip: "" };
-  const match = addr.match(/^(.+),\s*(.+),\s*([A-Z]{2})\s*(\d{5}(?:-\d{4})?)$/);
-  if (match) {
-    return { street: match[1].trim(), city: match[2].trim(), state: match[3].trim(), zip: match[4].trim() };
-  }
-  return { street: addr, city: "", state: "", zip: "" };
+function formatDate(iso: string | Date | null): string {
+  if (!iso) return ''
+  const d = iso instanceof Date ? iso : new Date(iso)
+  if (isNaN(d.getTime())) return ''
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${mm}/${dd}/${d.getFullYear()}`
 }
 
 export async function GET(req: NextRequest) {
-  const { user, error } = await getAuthenticatedUser(req);
-  if (!user) return NextResponse.json({ error }, { status: 401 });
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) {
+    return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+  }
 
-  const { data: userRecord } = await supabase
-    .from("practices")
-    .select("id, name")
-    .eq("user_id", user.id)
-    .single();
+  const { searchParams } = new URL(req.url)
+  const format = searchParams.get('format') ?? 'harbor'
 
-  if (!practice) return NextResponse.json({ error: "Practice not found" }, { status: 404 });
+  // Fetch all non-deleted patients for the practice.
+  const { rows: patients } = await pool.query(
+    `SELECT id, first_name, last_name, email, phone, date_of_birth,
+            address_line_1, city, state, postal_code, created_at
+       FROM patients
+      WHERE practice_id = $1 AND deleted_at IS NULL
+      ORDER BY last_name NULLS LAST, first_name NULLS LAST`,
+    [ctx.practiceId],
+  )
 
-  const { searchParams } = new URL(req.url);
-  const format = searchParams.get("format") ?? "harbor";
-
-  const { data: forms, error: formsError } = await supabase
-    .from("intake_forms")
-    .select(
-      `id, patient_name, patient_email, patient_phone, patient_dob, patient_address,
-       phq9_score, phq9_severity, gad7_score, gad7_severity, completed_at`
+  // Per-patient latest PHQ-9 + GAD-7 + intake count + last_seen.
+  const ids = patients.map((p) => p.id)
+  const assessmentsByPatient = new Map<string, { phq9?: any; gad7?: any }>()
+  if (ids.length > 0) {
+    const { rows: assessments } = await pool.query(
+      `SELECT DISTINCT ON (patient_id, assessment_type)
+              patient_id, assessment_type, score, severity, completed_at
+         FROM patient_assessments
+        WHERE practice_id = $1
+          AND patient_id = ANY($2::uuid[])
+          AND assessment_type IN ('phq9','gad7')
+          AND status = 'completed'
+        ORDER BY patient_id, assessment_type,
+                 completed_at DESC NULLS LAST, created_at DESC`,
+      [ctx.practiceId, ids],
     )
-    .eq("practice_id", practiceId)
-    .eq("status", "completed")
-    .not("completed_at", "is", null)
-    .order("completed_at", { ascending: false });
-
-  if (formsError) return NextResponse.json({ error: formsError.message }, { status: 500 });
-
-  const patientMap = new Map<string, {
-    patient_name: string | null; patient_email: string | null;
-    patient_phone: string | null; patient_dob: string | null;
-    patient_address: string | null; intake_count: number;
-    last_seen: string | null; latest_phq9_score: number | null;
-    latest_phq9_severity: string | null; latest_gad7_score: number | null;
-    latest_gad7_severity: string | null;
-  }>();
-
-  for (const form of forms ?? []) {
-    const key = form.patient_email?.toLowerCase() || form.patient_phone || form.patient_name || form.id;
-    if (!patientMap.has(key)) {
-      patientMap.set(key, {
-        patient_name: form.patient_name, patient_email: form.patient_email,
-        patient_phone: form.patient_phone, patient_dob: form.patient_dob,
-        patient_address: form.patient_address, intake_count: 0,
-        last_seen: null, latest_phq9_score: null, latest_phq9_severity: null,
-        latest_gad7_score: null, latest_gad7_severity: null,
-      });
-    }
-    const p = patientMap.get(key)!;
-    p.intake_count++;
-    if (p.last_seen === null) {
-      p.last_seen = form.completed_at;
-      p.latest_phq9_score = form.phq9_score;
-      p.latest_phq9_severity = form.phq9_severity;
-      p.latest_gad7_score = form.gad7_score;
-      p.latest_gad7_severity = form.gad7_severity;
+    for (const a of assessments) {
+      const existing = assessmentsByPatient.get(a.patient_id) ?? {}
+      if (a.assessment_type === 'phq9') existing.phq9 = a
+      if (a.assessment_type === 'gad7') existing.gad7 = a
+      assessmentsByPatient.set(a.patient_id, existing)
     }
   }
 
-  const patients = Array.from(patientMap.values());
-  const lines: string[] = [];
+  const intakeCountByPatient = new Map<string, number>()
+  const lastSeenByPatient = new Map<string, string>()
+  if (ids.length > 0) {
+    const { rows: counts } = await pool.query(
+      `SELECT patient_id, COUNT(*)::int AS c, MAX(completed_at) AS last_completed
+         FROM intake_forms
+        WHERE practice_id = $1 AND patient_id = ANY($2::uuid[])
+          AND completed_at IS NOT NULL
+        GROUP BY patient_id`,
+      [ctx.practiceId, ids],
+    )
+    for (const c of counts) {
+      intakeCountByPatient.set(c.patient_id, c.c)
+      if (c.last_completed) lastSeenByPatient.set(c.patient_id, c.last_completed)
+    }
+  }
+
+  const lines: string[] = []
 
   switch (format) {
-    case "simplepractice": {
-      lines.push(row(["First Name","Last Name","Email Address","Phone Number","Date of Birth","Street","City","State","Zip Code"]));
+    case 'simplepractice': {
+      lines.push(
+        row([
+          'First Name',
+          'Last Name',
+          'Email Address',
+          'Phone Number',
+          'Date of Birth',
+          'Street',
+          'City',
+          'State',
+          'Zip Code',
+        ]),
+      )
       for (const p of patients) {
-        const { first, last } = splitName(p.patient_name);
-        const addr = parseAddress(p.patient_address);
-        lines.push(row([first, last, p.patient_email, p.patient_phone, formatDob(p.patient_dob), addr.street, addr.city, addr.state, addr.zip]));
+        lines.push(
+          row([
+            p.first_name,
+            p.last_name,
+            p.email,
+            p.phone,
+            formatDob(p.date_of_birth),
+            p.address_line_1,
+            p.city,
+            p.state,
+            p.postal_code,
+          ]),
+        )
       }
-      break;
+      break
     }
-    case "therapynotes": {
-      lines.push(row(["First Name","Last Name","Date of Birth","Email","Phone","Address1","City","State","Zip"]));
+    case 'therapynotes': {
+      lines.push(
+        row([
+          'First Name',
+          'Last Name',
+          'Date of Birth',
+          'Email',
+          'Phone',
+          'Address1',
+          'City',
+          'State',
+          'Zip',
+        ]),
+      )
       for (const p of patients) {
-        const { first, last } = splitName(p.patient_name);
-        const addr = parseAddress(p.patient_address);
-        lines.push(row([first, last, formatDob(p.patient_dob), p.patient_email, p.patient_phone, addr.street, addr.city, addr.state, addr.zip]));
+        lines.push(
+          row([
+            p.first_name,
+            p.last_name,
+            formatDob(p.date_of_birth),
+            p.email,
+            p.phone,
+            p.address_line_1,
+            p.city,
+            p.state,
+            p.postal_code,
+          ]),
+        )
       }
-      break;
+      break
     }
-    case "jane": {
-      lines.push(row(["First Name","Last Name","Email","Mobile Phone","Date of Birth","Address Line 1","City","Province","Postal Code"]));
+    case 'jane': {
+      lines.push(
+        row([
+          'First Name',
+          'Last Name',
+          'Email',
+          'Mobile Phone',
+          'Date of Birth',
+          'Address Line 1',
+          'City',
+          'Province',
+          'Postal Code',
+        ]),
+      )
       for (const p of patients) {
-        const { first, last } = splitName(p.patient_name);
-        const addr = parseAddress(p.patient_address);
-        lines.push(row([first, last, p.patient_email, p.patient_phone, formatDob(p.patient_dob), addr.street, addr.city, addr.state, addr.zip]));
+        lines.push(
+          row([
+            p.first_name,
+            p.last_name,
+            p.email,
+            p.phone,
+            formatDob(p.date_of_birth),
+            p.address_line_1,
+            p.city,
+            p.state,
+            p.postal_code,
+          ]),
+        )
       }
-      break;
+      break
     }
     default: {
-      lines.push(row(["Full Name","First Name","Last Name","Email","Phone","Date of Birth","Address","Total Intakes","Last Seen","Latest PHQ-9 Score","Latest PHQ-9 Severity","Latest GAD-7 Score","Latest GAD-7 Severity"]));
+      lines.push(
+        row([
+          'Full Name',
+          'First Name',
+          'Last Name',
+          'Email',
+          'Phone',
+          'Date of Birth',
+          'City',
+          'State',
+          'Total Intakes',
+          'Last Seen',
+          'Latest PHQ-9 Score',
+          'Latest PHQ-9 Severity',
+          'Latest GAD-7 Score',
+          'Latest GAD-7 Severity',
+        ]),
+      )
       for (const p of patients) {
-        const { first, last } = splitName(p.patient_name);
-        lines.push(row([
-          p.patient_name, first, last,
-          p.patient_email, p.patient_phone, formatDob(p.patient_dob), p.patient_address,
-          String(p.intake_count), formatDate(p.last_seen),
-          p.latest_phq9_score !== null ? String(p.latest_phq9_score) : "",
-          p.latest_phq9_severity,
-          p.latest_gad7_score !== null ? String(p.latest_gad7_score) : "",
-          p.latest_gad7_severity,
-        ]));
+        const a = assessmentsByPatient.get(p.id)
+        const fullName = [p.first_name, p.last_name].filter(Boolean).join(' ')
+        lines.push(
+          row([
+            fullName,
+            p.first_name,
+            p.last_name,
+            p.email,
+            p.phone,
+            formatDob(p.date_of_birth),
+            p.city,
+            p.state,
+            String(intakeCountByPatient.get(p.id) ?? 0),
+            formatDate(lastSeenByPatient.get(p.id) ?? null),
+            a?.phq9?.score != null ? String(a.phq9.score) : '',
+            a?.phq9?.severity ?? '',
+            a?.gad7?.score != null ? String(a.gad7.score) : '',
+            a?.gad7?.severity ?? '',
+          ]),
+        )
       }
-      break;
+      break
     }
   }
 
-  const csv = lines.join("\r\n");
-  const filename = `harbor-patients-${format}-${new Date().toISOString().slice(0, 10)}.csv`;
+  await auditEhrAccess({
+    ctx,
+    action: 'patients.export',
+    resourceType: 'practice',
+    resourceId: ctx.practiceId,
+    details: { format, row_count: patients.length },
+  })
+
+  const csv = lines.join('\r\n')
+  const filename = `harbor-patients-${format}-${new Date().toISOString().slice(0, 10)}.csv`
 
   return new NextResponse(csv, {
     status: 200,
     headers: {
-      "Content-Type": "text/csv; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
     },
-  });
+  })
 }
