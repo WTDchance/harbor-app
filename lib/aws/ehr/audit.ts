@@ -54,6 +54,11 @@ export type EhrAuditAction =
   | 'portal.homework.update'
   | 'portal.assessment.complete'
   | 'billing.payment.create'
+  | 'intake.send'
+  | 'intake.create'
+  | 'intake.resend'
+  | 'intake.submit'
+  | 'intake.document.upload'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

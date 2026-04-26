@@ -1,275 +1,135 @@
-// FILE: app/api/intake/send/route.ts
-// FIX: Use intake_forms table (which submit route reads from) instead of intake_tokens
-// FIX: Link intake_forms to patient_id directly so intake is always tied to a patient
-// Also generates token via crypto since intake_forms.token has no default
+// Send intake form to a patient — email-only on AWS for now.
+//
+// SMS branch is intentionally stubbed pending the SignalWire/Retell carrier
+// swap Chance is wiring himself. The intake_forms row gets created either
+// way; the response shape tells the caller which channels actually fired so
+// the dashboard can render "email sent ✓ / SMS pending".
+//
+// Auth: none — designed to be called by webhook (post-call AI flow) or
+// dashboard. Practice resolution is via the explicit body.practice_id, with
+// a fallback to patient_id → patients.practice_id.
+//
+// SES sandbox: sendPatientEmail returns false when the recipient isn't a
+// verified identity. The response surfaces that as
+// reason='ses_not_verified_or_send_failed' so dashboards can show a hint.
 
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
-import twilio from 'twilio'
+import { NextResponse, type NextRequest } from 'next/server'
 import crypto from 'crypto'
+import { pool } from '@/lib/aws/db'
 import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
-import { logCommunication } from '@/lib/patientCommunications'
 
-// POST /api/intake/send
-// Called by the webhook after a new patient call, or manually from dashboard
-// Creates an intake_forms record linked to the patient and sends the link via SMS and/or email
-export async function POST(request: NextRequest) {
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => null) as any
+  if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+
+  let { practice_id, patient_id, call_log_id, patient_phone, patient_email, patient_name, delivery_method } = body
+
+  // Resolve practice_id from patient if needed.
+  if (!practice_id && patient_id) {
+    const r = await pool.query(`SELECT practice_id FROM patients WHERE id = $1 LIMIT 1`, [patient_id])
+      .catch(() => ({ rows: [] as any[] }))
+    practice_id = r.rows[0]?.practice_id ?? null
+  }
+  if (!practice_id) {
+    return NextResponse.json({ error: 'Missing practice_id and could not derive from patient' }, { status: 400 })
+  }
+  if (!patient_phone && !patient_email) {
+    return NextResponse.json({ error: 'Need at least a phone or email to send intake forms' }, { status: 400 })
+  }
+
+  const practiceRow = await pool.query(
+    `SELECT name FROM practices WHERE id = $1 LIMIT 1`, [practice_id],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = practiceRow.rows[0]
+  if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
+  // Mint token + create intake_forms row.
+  const token = crypto.randomBytes(32).toString('hex')
+  const expiresAt = new Date()
+  expiresAt.setDate(expiresAt.getDate() + 7)
+
+  let formId: string
   try {
-    const body = await request.json()
-    let {
-      practice_id,
-      patient_id,
-      call_log_id,
-      patient_phone,
-      patient_email,
-      patient_name,
-      delivery_method, // 'sms' | 'email' | 'both'
-    } = body
+    const { rows } = await pool.query(
+      `INSERT INTO intake_forms (
+         token, practice_id, patient_id, patient_name, patient_phone,
+         patient_email, status, expires_at, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, NOW())
+       RETURNING id`,
+      [token, practice_id, patient_id ?? null, patient_name ?? null,
+       patient_phone ?? null, patient_email ?? null, expiresAt.toISOString()],
+    )
+    formId = rows[0].id
+  } catch (err) {
+    console.error('[intake/send] failed to create intake_forms row:', (err as Error).message)
+    return NextResponse.json({ error: 'Failed to create intake link' }, { status: 500 })
+  }
 
-    // If practice_id not provided, look it up from patient record
-    if (!practice_id && patient_id) {
-      const { data: patientRecord } = await supabaseAdmin
-        .from('patients')
-        .select('practice_id')
-        .eq('id', patient_id)
-        .single()
-      if (patientRecord) {
-        practice_id = patientRecord.practice_id
-      }
-    }
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://lab.harboroffice.ai'
+  const intakeUrl = `${baseUrl.replace(/\/$/, '')}/intake/${token}`
+  const practiceName = practice.name || 'the practice'
+  const firstName = patient_name?.split(' ')[0] || 'there'
 
-    if (!practice_id) {
-      return NextResponse.json({ error: 'Missing practice_id and could not derive from patient' }, { status: 400 })
-    }
-    if (!patient_phone && !patient_email) {
-      return NextResponse.json(
-        { error: 'Need at least a phone or email to send intake forms' },
-        { status: 400 }
-      )
-    }
+  // Decide effective channels (never default to SMS — email-only AWS path).
+  const wantSms = (delivery_method === 'sms' || delivery_method === 'both' ||
+                   (!delivery_method && patient_phone && !patient_email)) && !!patient_phone
+  const wantEmail = (delivery_method === 'email' || delivery_method === 'both' ||
+                     (!delivery_method && patient_email)) && !!patient_email
 
-    // Get practice info for the message
-    const { data: practice } = await supabaseAdmin
-      .from('practices')
-      .select('name, ai_name')
-      .eq('id', practice_id)
-      .single()
+  let emailSent = false
+  let emailReason: string | null = null
 
-    if (!practice) {
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-    }
-
-    // Generate a secure random token
-    const token = crypto.randomBytes(32).toString('hex')
-
-    // Calculate expiry (7 days from now)
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 7)
-
-    // Create the intake form record in intake_forms table
-    // FIX: Include patient_id so the intake form is directly linked to the patient record
-    const { data: formData, error: formError } = await supabaseAdmin
-      .from('intake_forms')
-      .insert({
-        token,
-        practice_id,
-        patient_id: patient_id || null,  // Direct link to patient record
-        patient_name: patient_name || null,
-        patient_phone: patient_phone || null,
-        patient_email: patient_email || null,
-        status: 'pending',
-        expires_at: expiresAt.toISOString(),
-        created_at: new Date().toISOString(),
+  if (wantEmail && patient_email) {
+    try {
+      const { subject, html, from } = buildIntakeEmail({
+        practiceName, patientName: firstName, intakeUrl,
       })
-      .select('id, token')
-      .single()
-
-    if (formError || !formData) {
-      console.error('[Intake] Failed to create intake form:', formError)
-      return NextResponse.json({ error: 'Failed to create intake link' }, { status: 500 })
-    }
-
-    // Also create a tracking record in intake_tokens (for delivery tracking)
-    const { error: tokenError } = await supabaseAdmin
-      .from('intake_tokens')
-      .insert({
-        practice_id,
-        patient_id: patient_id || null,
-        call_log_id: call_log_id || null,
-        patient_phone: patient_phone || null,
-        patient_email: patient_email || null,
-        patient_name: patient_name || null,
-        delivery_method: delivery_method || 'sms',
-        status: 'pending',
+      const { sent, skipped } = await sendPatientEmail({
+        practiceId: practice_id, to: patient_email, subject, html,
+        from: `${practiceName} <${from}>`,
       })
-
-    if (tokenError) {
-      console.warn('[Intake] Failed to create tracking token (non-fatal):', tokenError.message)
-    }
-
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-    const intakeUrl = `${baseUrl}/intake/${token}`
-    const practiceName = practice.name || 'the practice'
-    const firstName = patient_name?.split(' ')[0] || 'there'
-
-    // Normalize delivery_method. If the caller didn't specify, send via every
-    // channel we have contact info for. Previously this defaulted to 'sms',
-    // which silently dropped email-only patients.
-    const effectiveMethod: 'sms' | 'email' | 'both' =
-      delivery_method === 'sms' || delivery_method === 'email' || delivery_method === 'both'
-        ? delivery_method
-        : patient_phone && patient_email
-          ? 'both'
-          : patient_email
-            ? 'email'
-            : 'sms'
-
-    let smsSent = false
-    let emailSent = false
-
-    // Send via SMS
-    if ((effectiveMethod === 'sms' || effectiveMethod === 'both') && patient_phone) {
-      try {
-        await sendIntakeSMS(patient_phone, firstName, practiceName, intakeUrl)
-        smsSent = true
-        console.log(`[Intake] SMS sent to ${patient_phone}`)
-      } catch (err) {
-        console.error('[Intake] SMS failed:', err)
+      emailSent = sent
+      if (!sent) {
+        emailReason = skipped === 'opted_out'
+          ? 'recipient_opted_out'
+          : 'ses_not_verified_or_send_failed'
       }
-    }
-
-    // Send via email
-    if ((effectiveMethod === 'email' || effectiveMethod === 'both') && patient_email) {
-      try {
-        await sendIntakeEmail(practice_id, patient_email, firstName, practiceName, intakeUrl)
-        emailSent = true
-        console.log(`[Intake] Email sent to ${patient_email}`)
-      } catch (err) {
-        console.error('[Intake] Email failed:', err)
-      }
-    }
-
-    // Update intake_forms with email tracking
-    if (emailSent) {
-      await supabaseAdmin
-        .from('intake_forms')
-        .update({ email_sent: true, email_sent_at: new Date().toISOString() })
-        .eq('id', formData.id)
-    }
-
-    // Update intake_tokens status
-    if (smsSent || emailSent) {
-      await supabaseAdmin
-        .from('intake_tokens')
-        .update({ status: 'sent', sent_at: new Date().toISOString() })
-        .eq('practice_id', practice_id)
-        .eq('patient_phone', patient_phone || '')
-        .is('sent_at', null)
-    }
-
-    // Mark call log as intake sent
-    if (call_log_id) {
-      await supabaseAdmin
-        .from('call_logs')
-        .update({
-          intake_sent: true,
-          intake_delivery_preference: delivery_method || 'sms',
-          intake_email: patient_email || null,
-        })
-        .eq('id', call_log_id)
-    }
-
-    // Tier 2B: Log intake delivery to patient_communications
-    if (smsSent) {
-      logCommunication({
-        practiceId: practice_id,
-        patientId: patient_id || null,
-        patientPhone: patient_phone || null,
-        channel: 'sms',
-        direction: 'outbound',
-        contentSummary: `Intake form sent via SMS to ${firstName}`,
-        metadata: { intake_form_id: formData.id, delivery_type: 'intake' },
-      })
+    } catch (err) {
+      emailReason = `error: ${(err as Error).message}`
     }
     if (emailSent) {
-      logCommunication({
-        practiceId: practice_id,
-        patientId: patient_id || null,
-        patientEmail: patient_email || null,
-        channel: 'email',
-        direction: 'outbound',
-        contentSummary: `Intake form sent via email to ${firstName}`,
-        metadata: { intake_form_id: formData.id, delivery_type: 'intake' },
-      })
+      pool.query(
+        `UPDATE intake_forms
+            SET email_sent = true, email_sent_at = NOW()
+          WHERE id = $1`, [formId],
+      ).catch(() => {}) // tracking column may not exist — non-fatal
     }
-
-    console.log(`[Intake] Delivery complete: sms=${smsSent}, email=${emailSent}, form_id=${formData.id}, patient_id=${patient_id || '(none)'}`)
-
-    return NextResponse.json({
-      success: true,
-      form_id: formData.id,
-      intake_url: intakeUrl,
-      sms_sent: smsSent,
-      email_sent: emailSent,
-    })
-  } catch (error) {
-    console.error('[Intake] Send error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
-  }
-}
-
-// -- SMS delivery via Twilio --
-async function sendIntakeSMS(
-  phone: string,
-  firstName: string,
-  practiceName: string,
-  intakeUrl: string
-) {
-  if (
-    !process.env.TWILIO_ACCOUNT_SID ||
-    !process.env.TWILIO_AUTH_TOKEN ||
-    !process.env.TWILIO_PHONE_NUMBER
-  ) {
-    throw new Error('Twilio credentials not configured')
   }
 
-  const client = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+  // SMS pending — held for SignalWire swap.
+  const smsPending = wantSms && !!patient_phone
 
-  await client.messages.create({
-    to: phone.startsWith('+') ? phone : `+1${phone.replace(/\D/g, '')}`,
-    from: process.env.TWILIO_PHONE_NUMBER,
-    body: `Harbor: Hi ${firstName}! Thanks for calling ${practiceName}. Here's a link to your new patient intake forms â just tap to get started:\n\n${intakeUrl}\n\nThe link is valid for 7 days. Reply STOP to opt out.`,
+  // Audit (system event — no Cognito user on the webhook path).
+  pool.query(
+    `INSERT INTO audit_logs (
+       user_id, user_email, practice_id, action, resource_type, resource_id, details
+     ) VALUES (NULL, NULL, $1, 'intake.send', 'intake_form', $2, $3::jsonb)`,
+    [practice_id, formId, JSON.stringify({
+      delivery_method, email_sent: emailSent, email_reason: emailReason,
+      sms_pending: smsPending, call_log_id: call_log_id ?? null,
+    })],
+  ).catch(() => {})
+
+  return NextResponse.json({
+    success: true,
+    form_id: formId,
+    intake_url: intakeUrl,
+    email_sent: emailSent,
+    email_reason: emailReason,
+    sms_sent: false,
+    sms_pending: smsPending ? 'awaiting_signalwire' : false,
   })
-}
-
-// -- Email delivery via Resend (uses shared @/lib/email helpers) --
-async function sendIntakeEmail(
-  practiceId: string,
-  email: string,
-  firstName: string,
-  practiceName: string,
-  intakeUrl: string
-) {
-  if (!process.env.RESEND_API_KEY) {
-    throw new Error('Resend API key not configured')
-  }
-
-  const { subject, html, from } = buildIntakeEmail({
-    practiceName,
-    patientName: firstName,
-    intakeUrl,
-  })
-
-  // Gated by the practice's email opt-out list.
-  const { sent, skipped } = await sendPatientEmail({
-    practiceId,
-    to: email,
-    subject,
-    html,
-    from: `${practiceName} <${from}>`,
-  })
-
-  if (!sent && skipped !== 'opted_out') {
-    throw new Error('Resend send failed (see server logs)')
-  }
 }

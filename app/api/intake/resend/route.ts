@@ -1,162 +1,87 @@
-// app/api/intake/resend/route.ts
-// Resend intake forms to a patient via SMS and/or email
-// Uses the existing token from the intake_forms record (does not create a new one)
+// Resend an existing intake form (reuses the existing token; refreshes
+// expires_at by 7 days). Email-only on AWS; SMS pending SignalWire.
 
-import { NextRequest, NextResponse } from "next/server";
-import { supabaseAdmin } from "@/lib/supabase";
-import twilio from "twilio";
-import { sendPatientEmail, buildIntakeEmail } from "@/lib/email";
+import { NextResponse, type NextRequest } from 'next/server'
+import { pool } from '@/lib/aws/db'
+import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
 
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { intake_form_id, delivery_method } = body;
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
-    if (!intake_form_id) {
-      return NextResponse.json(
-        { error: "intake_form_id is required" },
-        { status: 400 }
-      );
-    }
-
-    // Look up the intake form with its existing token
-    const { data: form, error: formError } = await supabaseAdmin
-      .from("intake_forms")
-      .select(
-        "id, token, practice_id, patient_id, patient_name, patient_phone, patient_email, status"
-      )
-      .eq("id", intake_form_id)
-      .single();
-
-    if (formError || !form) {
-      return NextResponse.json(
-        { error: "Intake form not found" },
-        { status: 404 }
-      );
-    }
-
-    if (!form.token) {
-      return NextResponse.json(
-        { error: "Intake form has no token - cannot resend" },
-        { status: 400 }
-      );
-    }
-
-    // Get practice info for the message
-    const { data: practice } = await supabaseAdmin
-      .from("practices")
-      .select("name, ai_name, provider_name")
-      .eq("id", form.practice_id)
-      .single();
-
-    if (!practice) {
-      return NextResponse.json(
-        { error: "Practice not found" },
-        { status: 404 }
-      );
-    }
-
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL || "https://harborreceptionist.com";
-    const intakeUrl = `${baseUrl}/intake/${form.token}`;
-    const practiceName = practice.name || "the practice";
-    const firstName = form.patient_name?.split(" ")[0] || "there";
-
-    let smsSent = false;
-    let emailSent = false;
-    // When delivery_method is not specified, use every channel we have
-    // contact info for. Previously this silently defaulted to "sms" and
-    // skipped the email path even when an email address was on file.
-    const method: "sms" | "email" | "both" =
-      delivery_method === "sms" ||
-      delivery_method === "email" ||
-      delivery_method === "both"
-        ? delivery_method
-        : form.patient_phone && form.patient_email
-          ? "both"
-          : form.patient_email
-            ? "email"
-            : "sms";
-
-    // Send via SMS
-    if ((method === "sms" || method === "both") && form.patient_phone) {
-      try {
-        const client = twilio(
-          process.env.TWILIO_ACCOUNT_SID!,
-          process.env.TWILIO_AUTH_TOKEN!
-        );
-        const phone = form.patient_phone.startsWith("+")
-          ? form.patient_phone
-          : `+1${form.patient_phone.replace(/\D/g, "")}`;
-
-        await client.messages.create({
-          body: `${practiceName}: Hi ${firstName}! We've resent your intake forms. Please complete them when you get a chance: ${intakeUrl} — Reply STOP to opt out.`,
-          from: process.env.TWILIO_PHONE_NUMBER!,
-          to: phone,
-        });
-        smsSent = true;
-        console.log(`[Intake Resend] SMS sent to ${phone}`);
-      } catch (err) {
-        console.error("[Intake Resend] SMS failed:", err);
-      }
-    }
-
-    // Send via email
-    if ((method === "email" || method === "both") && form.patient_email) {
-      try {
-        const { subject, html, from } = buildIntakeEmail({
-          practiceName,
-          providerName: practice.provider_name || undefined,
-          patientName: firstName,
-          intakeUrl,
-        });
-
-        const res = await sendPatientEmail({
-          practiceId: form.practice_id,
-          to: form.patient_email,
-          subject,
-          html,
-          from: `${practiceName} <${from}>`,
-        });
-        emailSent = res.sent;
-        if (res.skipped === 'opted_out') {
-          console.log(`[Intake Resend] Email skipped — ${form.patient_email} opted out`);
-        } else {
-          console.log(`[Intake Resend] Email sent to ${form.patient_email}`);
-        }
-      } catch (err) {
-        console.error("[Intake Resend] Email failed:", err);
-      }
-    }
-
-    if (!smsSent && !emailSent) {
-      return NextResponse.json(
-        {
-          error:
-            "Failed to send via any method. Check that the patient has a phone number or email on file.",
-        },
-        { status: 500 }
-      );
-    }
-
-    // Reset status back to pending if it was completed (allows re-filling)
-    if (form.status === "completed") {
-      await supabaseAdmin
-        .from("intake_forms")
-        .update({ status: "pending", completed_at: null })
-        .eq("id", form.id);
-    }
-
-    return NextResponse.json({
-      success: true,
-      sms_sent: smsSent,
-      email_sent: emailSent,
-    });
-  } catch (err) {
-    console.error("[Intake Resend] Error:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+export async function POST(req: NextRequest) {
+  const body = await req.json().catch(() => null) as any
+  const intakeId = body?.intake_form_id
+  if (!intakeId) {
+    return NextResponse.json({ error: 'intake_form_id is required' }, { status: 400 })
   }
+
+  const formRow = await pool.query(
+    `SELECT id, token, practice_id, patient_id, patient_name,
+            patient_phone, patient_email, status
+       FROM intake_forms WHERE id = $1 LIMIT 1`,
+    [intakeId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const form = formRow.rows[0]
+  if (!form) return NextResponse.json({ error: 'Intake form not found' }, { status: 404 })
+  if (!form.token) return NextResponse.json({ error: 'Intake form has no token - cannot resend' }, { status: 400 })
+
+  const practiceRow = await pool.query(
+    `SELECT name FROM practices WHERE id = $1 LIMIT 1`, [form.practice_id],
+  ).catch(() => ({ rows: [] as any[] }))
+  const practice = practiceRow.rows[0]
+  if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
+  // Refresh the expiry on resend so the link doesn't 410 immediately.
+  const newExpiry = new Date()
+  newExpiry.setDate(newExpiry.getDate() + 7)
+  await pool.query(
+    `UPDATE intake_forms SET expires_at = $1 WHERE id = $2`,
+    [newExpiry.toISOString(), form.id],
+  ).catch(() => {})
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://lab.harboroffice.ai'
+  const intakeUrl = `${baseUrl.replace(/\/$/, '')}/intake/${form.token}`
+  const practiceName = practice.name || 'the practice'
+  const firstName = (form.patient_name as string)?.split(' ')[0] || 'there'
+
+  let emailSent = false
+  let emailReason: string | null = null
+  if (form.patient_email) {
+    try {
+      const { subject, html, from } = buildIntakeEmail({
+        practiceName, patientName: firstName, intakeUrl,
+      })
+      const { sent, skipped } = await sendPatientEmail({
+        practiceId: form.practice_id, to: form.patient_email, subject, html,
+        from: `${practiceName} <${from}>`,
+      })
+      emailSent = sent
+      if (!sent) {
+        emailReason = skipped === 'opted_out'
+          ? 'recipient_opted_out'
+          : 'ses_not_verified_or_send_failed'
+      }
+    } catch (err) {
+      emailReason = `error: ${(err as Error).message}`
+    }
+  }
+
+  const smsPending = !!form.patient_phone
+
+  pool.query(
+    `INSERT INTO audit_logs (user_id, user_email, practice_id, action, resource_type, resource_id, details)
+     VALUES (NULL, NULL, $1, 'intake.resend', 'intake_form', $2, $3::jsonb)`,
+    [form.practice_id, form.id,
+     JSON.stringify({ email_sent: emailSent, email_reason: emailReason, sms_pending: smsPending })],
+  ).catch(() => {})
+
+  return NextResponse.json({
+    success: true,
+    intake_url: intakeUrl,
+    email_sent: emailSent,
+    email_reason: emailReason,
+    sms_sent: false,
+    sms_pending: smsPending ? 'awaiting_signalwire' : false,
+    expires_at: newExpiry.toISOString(),
+  })
 }

@@ -1,133 +1,123 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase-server'
-import { sendSMS } from '@/lib/twilio'
-import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
-import { randomBytes } from 'crypto'
+// Therapist-side intake creation linked to an appointment_id.
+// requireApiSession (Cognito). Email-only on AWS for now; SMS pending
+// SignalWire (response shape carries sms_pending flag).
 
-function generateToken(): string {
-  return randomBytes(20).toString('hex')
-}
+import { NextResponse, type NextRequest } from 'next/server'
+import { randomBytes } from 'crypto'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+
+  const body = await req.json().catch(() => null) as any
+  if (!body) return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 })
+
+  const {
+    appointment_id, patient_name, patient_phone, patient_email,
+    questionnaire_type = 'phq9_gad7',
+  } = body
+
+  if (!appointment_id || (!patient_phone && !patient_email)) {
+    return NextResponse.json(
+      { error: 'appointment_id and at least one of patient_phone or patient_email are required' },
+      { status: 400 },
+    )
+  }
+
+  // intake_enabled check — column may not exist on canonical, defensive.
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-    const body = await req.json()
-    const {
-      appointment_id,
-      patient_name,
-      patient_phone,
-      patient_email,
-      questionnaire_type = 'phq9_gad7',
-    } = body
-
-    if (!appointment_id || (!patient_phone && !patient_email)) {
-      return NextResponse.json(
-        { error: 'appointment_id and at least one of patient_phone or patient_email are required' },
-        { status: 400 }
-      )
-    }
-
-    // Look up practice by notification_email (matches dashboard auth pattern)
-    const { data: practice } = await supabase
-      .from('practices')
-      .select('id, name, provider_name, intake_enabled')
-      .eq('notification_email', user.email)
-      .single()
-
-    if (!practice) {
-      return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
-    }
-
-    if (practice.intake_enabled === false) {
+    const r = await pool.query(
+      `SELECT intake_enabled FROM practices WHERE id = $1 LIMIT 1`,
+      [ctx.practice.id],
+    )
+    if (r.rows[0]?.intake_enabled === false) {
       return NextResponse.json({ sent: false, message: 'Intake forms disabled for this practice' })
     }
+  } catch { /* column missing — proceed */ }
 
-    const token = generateToken()
-    const expiresAt = new Date()
-    expiresAt.setDate(expiresAt.getDate() + 7)
+  const token = randomBytes(20).toString('hex')
+  const expiresAt = new Date()
+  expiresAt.setDate(expiresAt.getDate() + 7)
 
-    const { data: intake, error: intakeError } = await supabase
-      .from('intake_forms')
-      .insert({
-        token,
-        practice_id: practice.id,
-        appointment_id,
-        patient_name: patient_name || null,
-        patient_phone: patient_phone || null,
-        patient_email: patient_email || null,
-        questionnaire_type,
-        status: 'pending',
-        expires_at: expiresAt.toISOString(),
-        created_at: new Date().toISOString(),
-      })
-      .select()
-      .single()
+  let intakeId: string
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO intake_forms (
+         token, practice_id, appointment_id, patient_name, patient_phone,
+         patient_email, questionnaire_type, status, expires_at, created_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', $8, NOW())
+       RETURNING id`,
+      [token, ctx.practice.id, appointment_id, patient_name ?? null,
+       patient_phone ?? null, patient_email ?? null, questionnaire_type, expiresAt.toISOString()],
+    )
+    intakeId = rows[0].id
+  } catch (err) {
+    console.error('[intake/create] insert failed:', (err as Error).message)
+    return NextResponse.json({ error: 'Failed to create intake form' }, { status: 500 })
+  }
 
-    if (intakeError) {
-      console.error('Failed to create intake form:', intakeError)
-      return NextResponse.json({ error: 'Failed to create intake form' }, { status: 500 })
-    }
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://lab.harboroffice.ai'
+  const intakeUrl = `${baseUrl.replace(/\/$/, '')}/intake/${token}`
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-    const intakeUrl = `${appUrl}/intake/${token}`
-
-    let smsSent = false
-    let emailSent = false
-
-    // Send SMS if phone provided
-    if (patient_phone) {
-      const patientLabel = patient_name ? `Hi ${patient_name}` : 'Hi there'
-      const smsMessage = [
-        `${patientLabel}, ${practice.provider_name || practice.name} sent you a brief intake form to complete before your first appointment.`,
-        '',
-        `Takes ~2 min: ${intakeUrl}`,
-        '',
-        'Your responses go directly to your therapist.',
-      ].join('\n')
-      try {
-        await sendSMS(patient_phone, smsMessage)
-        smsSent = true
-      } catch (err) {
-        console.error('Failed to send intake SMS:', err)
-      }
-    }
-
-    // Send email if email address provided
-    if (patient_email) {
+  // Email
+  let emailSent = false
+  let emailReason: string | null = null
+  if (patient_email) {
+    try {
       const { subject, html } = buildIntakeEmail({
-        practiceName: practice.name,
-        providerName: practice.provider_name,
-        patientName: patient_name,
+        practiceName: ctx.practice.name,
+        patientName: patient_name ?? undefined,
         intakeUrl,
       })
-      const res = await sendPatientEmail({ practiceId: practice.id, to: patient_email, subject, html })
-      emailSent = res.sent
-    }
-
-    await supabase
-      .from('intake_forms')
-      .update({
-        sms_sent: smsSent,
-        sms_sent_at: smsSent ? new Date().toISOString() : null,
-        email_sent: emailSent,
-        email_sent_at: emailSent ? new Date().toISOString() : null,
+      const res = await sendPatientEmail({
+        practiceId: ctx.practice.id, to: patient_email, subject, html,
       })
-      .eq('id', intake.id)
-
-    return NextResponse.json({
-      created: true,
-      intake_id: intake.id,
-      token,
-      intake_url: intakeUrl,
-      sms_sent: smsSent,
-      email_sent: emailSent,
-      expires_at: expiresAt.toISOString(),
-    })
-  } catch (error) {
-    console.error('Intake create error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+      emailSent = res.sent
+      if (!emailSent) {
+        emailReason = res.skipped === 'opted_out'
+          ? 'recipient_opted_out'
+          : 'ses_not_verified_or_send_failed'
+      }
+    } catch (err) {
+      emailReason = `error: ${(err as Error).message}`
+    }
   }
+
+  // SMS pending
+  const smsPending = !!patient_phone
+
+  // Persist tracking on intake_forms (defensive — columns may not exist).
+  pool.query(
+    `UPDATE intake_forms
+        SET email_sent = $1, email_sent_at = $2
+      WHERE id = $3`,
+    [emailSent, emailSent ? new Date().toISOString() : null, intakeId],
+  ).catch(() => {})
+
+  // Audit
+  pool.query(
+    `INSERT INTO audit_logs (user_id, user_email, practice_id, action, resource_type, resource_id, details)
+     VALUES ($1, $2, $3, 'intake.create', 'intake_form', $4, $5::jsonb)`,
+    [ctx.user.id, ctx.session.email, ctx.practice.id, intakeId,
+     JSON.stringify({ appointment_id, email_sent: emailSent, email_reason: emailReason, sms_pending: smsPending })],
+  ).catch(() => {})
+
+  return NextResponse.json({
+    created: true,
+    intake_id: intakeId,
+    token,
+    intake_url: intakeUrl,
+    email_sent: emailSent,
+    email_reason: emailReason,
+    sms_sent: false,
+    sms_pending: smsPending ? 'awaiting_signalwire' : false,
+    expires_at: expiresAt.toISOString(),
+  })
 }

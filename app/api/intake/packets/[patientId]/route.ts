@@ -1,84 +1,77 @@
-// app/api/intake/packets/[patientId]/route.ts
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase'
+// Intake progress for a patient. Two-tier: prefer intake_packets row;
+// fall back to a synthesized pseudo-packet from intake_forms so the UI
+// keeps working while the new packets table backfills.
 
-/**
- * GET /api/intake/packets/[patientId]
- *
- * Returns intake progress for a patient. Strategy:
- *  1. If there's an intake_packets row, return it + its items (preferred).
- *  2. Else, synthesize a pseudo-packet from the latest intake_forms row so
- *     the UI immediately works with the existing send/submit pipeline.
- */
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { patientId: string } }
+  { params }: { params: Promise<{ patientId: string }> },
 ) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+
+  const { patientId } = await params
+  if (!patientId) return NextResponse.json({ error: 'missing patientId' }, { status: 400 })
+
+  // 1. Real intake_packets row.
   try {
-    const patientId = params.patientId
-    if (!patientId) return NextResponse.json({ error: 'missing patientId' }, { status: 400 })
-
-    // 1. Try the new intake_packets table first.
-    const { data: packet } = await supabaseAdmin
-      .from('intake_packets')
-      .select('*')
-      .eq('patient_id', patientId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
+    const packetRow = await pool.query(
+      `SELECT * FROM intake_packets
+        WHERE patient_id = $1
+        ORDER BY created_at DESC LIMIT 1`,
+      [patientId],
+    )
+    const packet = packetRow.rows[0]
     if (packet) {
-      const { data: items } = await supabaseAdmin
-        .from('intake_packet_items')
-        .select('*')
-        .eq('packet_id', packet.id)
-        .order('created_at', { ascending: true })
-      return NextResponse.json({ packet, items: items ?? [] })
+      const itemsRow = await pool.query(
+        `SELECT * FROM intake_packet_items
+          WHERE packet_id = $1
+          ORDER BY created_at ASC`,
+        [packet.id],
+      )
+      return NextResponse.json({ packet, items: itemsRow.rows })
     }
+  } catch { /* table may not exist on this cluster — fall through */ }
 
-    // 2. Fall back to intake_forms (current live pipeline).
-    const { data: form } = await supabaseAdmin
-      .from('intake_forms')
-      .select('*')
-      .eq('patient_id', patientId)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle()
+  // 2. Fallback pseudo-packet from intake_forms.
+  const formRow = await pool.query(
+    `SELECT * FROM intake_forms
+      WHERE patient_id = $1
+      ORDER BY created_at DESC LIMIT 1`,
+    [patientId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const form = formRow.rows[0]
+  if (!form) return NextResponse.json({ packet: null, items: [] })
 
-    if (!form) {
-      return NextResponse.json({ packet: null, items: [] })
-    }
+  const isComplete = form.status === 'completed' || !!form.completed_at
+  const isSent = !!form.email_sent || !!form.sent_at || form.status !== 'pending'
 
-    // Build a pseudo-packet that mirrors the intake_forms state.
-    // intake_forms.status: 'pending' | 'sent' | 'opened' | 'completed'
-    const isComplete = form.status === 'completed' || !!form.completed_at
-    const isSent     = !!form.email_sent || !!form.sent_at || form.status !== 'pending'
-
-    const pseudoPacket = {
-      id: form.id,
-      status: isComplete ? 'complete' : isSent ? 'partial' : 'pending',
-      total_items: 1,
-      completed_items: isComplete ? 1 : 0,
-      last_reminder_at: form.last_reminder_at ?? null,
-      reminder_count: form.reminder_count ?? 0,
-      created_at: form.created_at,
-      _source: 'intake_forms',
-    }
-    const pseudoItems = [{
-      id: form.id,
-      document_type: 'intake_form',
-      document_title: 'New Patient Intake Form',
-      status: isComplete ? 'completed' : isSent ? 'sent' : 'pending',
-      sent_at: form.email_sent_at ?? null,
-      opened_at: null,
-      completed_at: form.completed_at ?? null,
-      reminder_count: form.reminder_count ?? 0,
-      last_reminder_at: form.last_reminder_at ?? null,
-    }]
-
-    return NextResponse.json({ packet: pseudoPacket, items: pseudoItems })
-  } catch (err: any) {
-    console.error('[packets.GET]', err)
-    return NextResponse.json({ error: err.message || 'internal error' }, { status: 500 })
+  const pseudoPacket = {
+    id: form.id,
+    status: isComplete ? 'complete' : isSent ? 'partial' : 'pending',
+    total_items: 1,
+    completed_items: isComplete ? 1 : 0,
+    last_reminder_at: form.last_reminder_at ?? null,
+    reminder_count: form.reminder_count ?? 0,
+    created_at: form.created_at,
+    _source: 'intake_forms',
   }
+  const pseudoItems = [{
+    id: form.id,
+    document_type: 'intake_form',
+    document_title: 'New Patient Intake Form',
+    status: isComplete ? 'completed' : isSent ? 'sent' : 'pending',
+    sent_at: form.email_sent_at ?? null,
+    opened_at: null,
+    completed_at: form.completed_at ?? null,
+    reminder_count: form.reminder_count ?? 0,
+    last_reminder_at: form.last_reminder_at ?? null,
+  }]
+  return NextResponse.json({ packet: pseudoPacket, items: pseudoItems })
 }
