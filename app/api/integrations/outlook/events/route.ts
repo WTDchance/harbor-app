@@ -1,176 +1,110 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { supabaseAdmin } from '@/lib/supabase'
-import { NextRequest, NextResponse } from 'next/server'
-import { resolvePracticeIdForApi } from '@/lib/active-practice'
+// Microsoft Outlook — list upcoming 30d of calendarview events.
+// Auto-refreshes the access token via inline helper if expired.
 
-async function getPracticeId(): Promise<string | null> {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => cookieStore.getAll(),
-        setAll: (s) => {
-          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
-        }
-      }
-    }
-  )
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  return resolvePracticeIdForApi(supabaseAdmin, user)
-}
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireApiSession } from '@/lib/aws/api-auth'
+import { pool } from '@/lib/aws/db'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 interface MicrosoftGraphEvent {
   id: string
-  subject: string
+  subject?: string
   bodyPreview?: string
-  start: { dateTime: string; timeZone: string }
-  end: { dateTime: string; timeZone: string }
-  location?: { displayName: string }
-  isReminderOn: boolean
+  start: { dateTime: string }
+  end: { dateTime: string }
+  location?: { displayName?: string }
 }
 
-interface NormalizedEvent {
-  id: string
-  title: string
-  description?: string
-  start: string
-  end: string
-  location?: string
-}
-
-async function refreshOutlookToken(
-  refreshToken: string,
-  practiceId: string
-): Promise<{ access_token: string } | null> {
+async function refreshOutlookToken(refreshToken: string, practiceId: string): Promise<string | null> {
+  const clientId = process.env.MICROSOFT_CLIENT_ID
+  const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
+  if (!clientId || !clientSecret) return null
   try {
-    const clientId = process.env.MICROSOFT_CLIENT_ID
-    const clientSecret = process.env.MICROSOFT_CLIENT_SECRET
-
-    if (!clientId || !clientSecret) {
-      console.error('[refreshOutlookToken] Microsoft credentials not configured')
-      return null
-    }
-
-    const response = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
+    const res = await fetch('https://login.microsoftonline.com/common/oauth2/v2.0/token', {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken,
-        grant_type: 'refresh_token',
-        scope: 'openid profile email Calendars.ReadWrite offline_access'
-      })
+        client_id: clientId, client_secret: clientSecret,
+        refresh_token: refreshToken, grant_type: 'refresh_token',
+        scope: 'openid profile email Calendars.ReadWrite offline_access',
+      }),
+      signal: AbortSignal.timeout(4000),
     })
-
-    if (!response.ok) {
-      console.error('[refreshOutlookToken] Token refresh failed:', await response.text())
+    if (!res.ok) {
+      console.error('[outlook/events] refresh failed', await res.text().catch(() => ''))
       return null
     }
-
-    const data = await response.json()
+    const data = await res.json() as { access_token: string; expires_in: number }
     const expiresAt = new Date(Date.now() + data.expires_in * 1000).toISOString()
-
-    // Update the stored token
-    await supabaseAdmin
-      .from('calendar_connections')
-      .update({
-        access_token: data.access_token,
-        token_expires_at: expiresAt,
-        updated_at: new Date().toISOString()
-      })
-      .eq('practice_id', practiceId)
-      .eq('provider', 'outlook')
-
-    return { access_token: data.access_token }
+    await pool.query(
+      `UPDATE calendar_connections
+          SET access_token = $1, token_expires_at = $2, updated_at = NOW()
+        WHERE practice_id = $3 AND provider = 'outlook'`,
+      [data.access_token, expiresAt, practiceId],
+    ).catch(() => {})
+    return data.access_token
   } catch (err) {
-    console.error('[refreshOutlookToken]', err)
+    console.error('[outlook/events] refresh error', (err as Error).message)
     return null
   }
 }
 
-export async function GET(req: NextRequest) {
-  try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    }
+export async function GET(_req: NextRequest) {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-    const { data: connection, error: connError } = await supabaseAdmin
-      .from('calendar_connections')
-      .select('*')
-      .eq('practice_id', practiceId)
-      .eq('provider', 'outlook')
-      .single()
+  const { rows } = await pool.query(
+    `SELECT access_token, refresh_token, token_expires_at
+       FROM calendar_connections
+      WHERE practice_id = $1 AND provider = 'outlook' LIMIT 1`,
+    [ctx.practiceId],
+  ).catch(() => ({ rows: [] as any[] }))
+  const conn = rows[0]
+  if (!conn) return NextResponse.json({ error: 'Outlook Calendar not connected' }, { status: 404 })
 
-    if (connError || !connection) {
+  let accessToken: string | null = conn.access_token
+  if (conn.token_expires_at && new Date(conn.token_expires_at).getTime() < Date.now()) {
+    if (!conn.refresh_token) {
       return NextResponse.json(
-        { error: 'Outlook Calendar not connected' },
-        { status: 404 }
+        { error: 'Outlook Calendar token expired and cannot be refreshed' },
+        { status: 401 },
       )
     }
-
-    let accessToken = connection.access_token
-
-    // Check if token is expired and refresh if needed
-    if (connection.token_expires_at) {
-      const expiresAt = new Date(connection.token_expires_at).getTime()
-      if (expiresAt < Date.now()) {
-        if (!connection.refresh_token) {
-          return NextResponse.json(
-            { error: 'Outlook Calendar token expired and cannot be refreshed' },
-            { status: 401 }
-          )
-        }
-
-        const refreshResult = await refreshOutlookToken(connection.refresh_token, practiceId)
-        if (!refreshResult) {
-          return NextResponse.json(
-            { error: 'Failed to refresh Outlook Calendar token' },
-            { status: 500 }
-          )
-        }
-        accessToken = refreshResult.access_token
-      }
+    accessToken = await refreshOutlookToken(conn.refresh_token, ctx.practiceId)
+    if (!accessToken) {
+      return NextResponse.json({ error: 'Failed to refresh Outlook Calendar token' }, { status: 500 })
     }
+  }
 
-    const now = new Date().toISOString()
-    const timeMax = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
-
-    const eventsResponse = await fetch(
-      `https://graph.microsoft.com/v1.0/me/calendarview?startDateTime=${encodeURIComponent(now)}&endDateTime=${encodeURIComponent(timeMax)}&\$orderby=start/dateTime`,
-      {
-        headers: { Authorization: `Bearer ${accessToken}` }
-      }
+  const now = new Date().toISOString()
+  const timeMax = new Date(Date.now() + 30 * 86_400_000).toISOString()
+  const eventsRes = await fetch(
+    `https://graph.microsoft.com/v1.0/me/calendarview?` +
+    `startDateTime=${encodeURIComponent(now)}&endDateTime=${encodeURIComponent(timeMax)}` +
+    `&$orderby=start/dateTime`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  )
+  if (!eventsRes.ok) {
+    if (eventsRes.status === 401) {
+      return NextResponse.json({ error: 'Outlook Calendar token invalid' }, { status: 401 })
+    }
+    return NextResponse.json(
+      { error: `Microsoft Graph API error: ${eventsRes.statusText}` },
+      { status: 502 },
     )
-
-    if (!eventsResponse.ok) {
-      if (eventsResponse.status === 401) {
-        return NextResponse.json(
-          { error: 'Outlook Calendar token invalid' },
-          { status: 401 }
-        )
-      }
-      throw new Error(`Microsoft Graph API error: ${eventsResponse.statusText}`)
-    }
-
-    const data = await eventsResponse.json()
-    const events: NormalizedEvent[] = (data.value || []).map((event: MicrosoftGraphEvent) => ({
-      id: event.id,
-      title: event.subject || 'Untitled',
-      description: event.bodyPreview,
-      start: event.start.dateTime,
-      end: event.end.dateTime,
-      location: event.location?.displayName
-    }))
-
-    return NextResponse.json({ events })
-  } catch (err) {
-    console.error('[outlook/events GET]', err)
-    return NextResponse.json({ error: 'Failed to fetch calendar events' }, { status: 500 })
   }
-  }
+
+  const data = await eventsRes.json() as { value?: MicrosoftGraphEvent[] }
+  const events = (data.value ?? []).map(event => ({
+    id: event.id,
+    title: event.subject || 'Untitled',
+    description: event.bodyPreview,
+    start: event.start.dateTime,
+    end: event.end.dateTime,
+    location: event.location?.displayName,
+  }))
+  return NextResponse.json({ events })
+}

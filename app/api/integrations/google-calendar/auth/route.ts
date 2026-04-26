@@ -1,76 +1,57 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import { supabaseAdmin } from '@/lib/supabase'
-import { getEffectivePracticeId } from '@/lib/active-practice'
-import { NextRequest, NextResponse } from 'next/server'
+// Google Calendar OAuth start. Cognito session → resolve practiceId →
+// build Google consent-screen URL with state-encoded {practiceId, baaAttested}.
+//
+// HIPAA gate: practice must have attested to a Workspace + signed BAA at
+// the modal step. The flag rides in OAuth state so the callback can refuse
+// to store a connection without it.
+//
+// Allowlist required: this route's redirect URI
+//   https://lab.harboroffice.ai/api/integrations/google-calendar/callback
+// must be added to the Google Cloud Console OAuth client's Authorized
+// redirect URIs before the consent screen will accept it.
 
-async function getPracticeId(): Promise<string | null> {
-  const cookieStore = await cookies()
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => cookieStore.getAll(),
-        setAll: (s) => {
-          try { s.forEach(({ name, value, options }) => cookieStore.set(name, value, options)) } catch {}
-        }
-      }
-    }
-  )
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return null
-  // Honor the admin "act as" cookie so connecting Google Calendar while
-  // viewing another practice's dashboard stores tokens on THAT practice,
-  // not the admin's own.
-  return await getEffectivePracticeId(supabaseAdmin, user)
-}
+import { NextResponse, type NextRequest } from 'next/server'
+import { requireApiSession } from '@/lib/aws/api-auth'
+
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  try {
-    const practiceId = await getPracticeId()
-    if (!practiceId) {
-      return NextResponse.redirect(new URL('/login', req.url))
-    }
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.redirect(new URL('/login', req.url))
 
-    const clientId = process.env.GOOGLE_CLIENT_ID
-    const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/integrations/google-calendar/callback`
+  const clientId = process.env.GOOGLE_CLIENT_ID
+  const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '')
+  const redirectUri = `${appUrl}/api/integrations/google-calendar/callback`
 
-    if (!clientId) {
-      return NextResponse.json(
-        { error: 'Google Calendar not configured' },
-        { status: 500 }
-      )
-    }
-
-    const scopes = [
-      'openid',
-      'email',
-      'profile',
-      'https://www.googleapis.com/auth/calendar.readonly',
-      'https://www.googleapis.com/auth/calendar.events'
-    ]
-
-    const params = new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: 'code',
-      scope: scopes.join(' '),
-      access_type: 'offline',
-      prompt: 'consent',
-      // Propagate the attestation into OAuth state so the callback can
-      // enforce that sync is only enabled after Workspace-BAA attestation.
-      state: Buffer.from(JSON.stringify({
-        practiceId,
-        baaAttested: req.nextUrl.searchParams.get('baa_attested') === '1',
-      })).toString('base64')
-    })
-
-    const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
-
-    return NextResponse.redirect(googleAuthUrl)
-  } catch (err) {
-    console.error('[google-calendar/auth GET]', err)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  if (!clientId) {
+    return NextResponse.json(
+      { error: 'Google Calendar not configured (set GOOGLE_CLIENT_ID)' },
+      { status: 500 },
+    )
   }
+
+  const scopes = [
+    'openid', 'email', 'profile',
+    'https://www.googleapis.com/auth/calendar.readonly',
+    'https://www.googleapis.com/auth/calendar.events',
+  ]
+
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: scopes.join(' '),
+    access_type: 'offline',
+    prompt: 'consent',
+    state: Buffer.from(JSON.stringify({
+      practiceId: ctx.practiceId,
+      baaAttested: req.nextUrl.searchParams.get('baa_attested') === '1',
+    })).toString('base64'),
+  })
+
+  return NextResponse.redirect(
+    `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+  )
 }
