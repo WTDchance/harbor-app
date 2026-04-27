@@ -139,6 +139,8 @@ export type EhrAuditAction =
   | 'admin.roi_lead.list'
   | 'admin.roi_lead.update'
   | 'admin.support_ticket.list'
+  | 'admin.audit_log.viewed'
+  | 'admin.audit_log.exported'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
