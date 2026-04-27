@@ -143,10 +143,27 @@ export function buildIntakeEmail(opts: {
   providerName?: string
   patientName?: string
   intakeUrl: string
+  /** If provided, surfaced in the footer so patients can call the
+   *  practice with questions instead of replying to the noreply address. */
+  practicePhone?: string
+  /** If provided, surfaced in the footer for context. */
+  practiceAddress?: string
 }): { subject: string; html: string; from: string } {
   const subject = `Complete your intake form — ${opts.practiceName}`
   const greeting = opts.patientName ? `Hi ${opts.patientName}` : 'Hi there'
   const provider = opts.providerName || opts.practiceName
+  const footerLines: string[] = [
+    `<p style="color:#666;font-size:12px;margin:0;font-weight:600">${opts.practiceName}</p>`,
+  ]
+  if (opts.practicePhone) {
+    footerLines.push(`<p style="color:#666;font-size:12px;margin:2px 0 0">${opts.practicePhone}</p>`)
+  }
+  if (opts.practiceAddress) {
+    footerLines.push(`<p style="color:#666;font-size:12px;margin:2px 0 0">${opts.practiceAddress}</p>`)
+  }
+  footerLines.push(
+    `<p style="color:#999;font-size:11px;margin:8px 0 0">Sent by Harbor · AI Receptionist for Therapy Practices</p>`,
+  )
 
   const html = `<!DOCTYPE html>
 <html>
@@ -173,7 +190,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     </div>
     <p class="note">This link expires in 7 days. If you have questions, contact your therapist's office directly.</p>
   </div>
-  <div class="footer">Sent by Harbor · AI Receptionist for Therapy Practices</div>
+  <div class="footer">${footerLines.join('\n')}</div>
 </div>
 </body></html>`
 
