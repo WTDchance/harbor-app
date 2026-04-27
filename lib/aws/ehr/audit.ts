@@ -214,6 +214,10 @@ export type EhrAuditAction =
   | 'cancellation_fee.waived'
   | 'no_show_fee.charged'
   | 'no_show_fee.waived'
+  | 'care_team.added'
+  | 'care_team.removed'
+  | 'care_team.updated'
+  | 'care_team.list'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
