@@ -56,15 +56,14 @@ export default function PortalSuperbillsPage() {
                   Issued {new Date(s.generated_at).toLocaleDateString()} · ${(s.total_cents / 100).toFixed(2)}
                 </div>
               </div>
-              <a
-                href={`/api/ehr/billing/superbill?patient_id=self&from=${s.from_date}&to=${s.to_date}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                href={`/portal/superbills/${s.id}`}
                 className="inline-flex items-center gap-1.5 text-sm text-teal-700 hover:text-teal-900 font-medium"
+                style={{ minHeight: 44 }}
               >
                 <Download className="w-4 h-4" />
                 Open
-              </a>
+              </Link>
             </div>
           ))}
         </div>
