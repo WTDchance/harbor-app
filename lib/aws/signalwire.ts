@@ -218,3 +218,193 @@ export function laMLConnectToRetell(args: {
 export function signalwireConfigured(): boolean {
   return !!(PROJECT_ID && TOKEN && SPACE_URL && FROM_NUMBER)
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Wave 41 — Twilio-shape parity helpers.
+//
+// Added during the Twilio→SignalWire port so the legacy `lib/twilio.ts`
+// callers (crisis SMS, reminders, no-show / prep, sms-inbound, the vapi
+// webhook's outbound notify, lib/reminders) can swap imports with minimal
+// edits and the route bodies keep their existing shape. Helpers below
+// hit SignalWire's LaML REST API (Twilio-API-compat) using basic auth
+// against PROJECT_ID:TOKEN — the same pattern as sendSMS above.
+// ───────────────────────────────────────────────────────────────────────────
+
+function laMLAccountBase(): string {
+  return `https://${SPACE_URL}/api/laml/2010-04-01/Accounts/${PROJECT_ID}`
+}
+
+/**
+ * Wave 41 — outbound SMS from a specific SignalWire number (multi-number
+ * setups). Mirrors the legacy lib/twilio.ts::sendSMSFromNumber shape but
+ * uses the SignalWire LaML endpoint.
+ *
+ * The `from` parameter must already be E.164 and owned by the SignalWire
+ * project; otherwise SignalWire returns 21606 ("'From' phone number is
+ * not a valid, SMS-capable inbound phone number").
+ */
+export async function sendSMSFromNumber(args: {
+  from: string
+  to: string
+  body: string
+  practiceId?: string | null
+  statusCallback?: string
+}): Promise<SmsResult> {
+  return sendSMS({
+    to: args.to,
+    body: args.body,
+    from: args.from,
+    practiceId: args.practiceId ?? null,
+    statusCallback: args.statusCallback,
+  })
+}
+
+/**
+ * Wave 41 — list every IncomingPhoneNumber owned by this SignalWire
+ * project. Used by /api/admin/phone-diag and /api/admin/reprovision to
+ * answer "which practice owns this inbound number?".
+ */
+export async function listPhoneNumbers(): Promise<Array<{
+  sid: string
+  phoneNumber: string
+  friendlyName: string
+  smsUrl: string
+  voiceUrl: string
+}>> {
+  if (!PROJECT_ID || !TOKEN || !SPACE_URL) return []
+  try {
+    const url = `${laMLAccountBase()}/IncomingPhoneNumbers.json?PageSize=200`
+    const res = await fetch(url, { headers: { Authorization: basicAuthHeader() } })
+    if (!res.ok) {
+      console.error('[signalwire/list] http', res.status, (await res.text().catch(() => '')).slice(0, 200))
+      return []
+    }
+    const json: any = await res.json()
+    const items: any[] = json.incoming_phone_numbers ?? []
+    return items.map(n => ({
+      sid: n.sid,
+      phoneNumber: n.phone_number,
+      friendlyName: n.friendly_name,
+      smsUrl: n.sms_url,
+      voiceUrl: n.voice_url,
+    }))
+  } catch (err) {
+    console.error('[signalwire/list] threw:', (err as Error).message)
+    return []
+  }
+}
+
+/**
+ * Wave 41 — fetch a single IncomingPhoneNumber's SMS webhook config.
+ * Used by reprovision to verify the inbound URL points at this app.
+ */
+export async function getPhoneNumberWebhook(phoneNumberSid: string): Promise<{
+  phoneNumber: string
+  smsUrl: string
+  smsMethod: string
+} | null> {
+  if (!PROJECT_ID || !TOKEN || !SPACE_URL) return null
+  try {
+    const url = `${laMLAccountBase()}/IncomingPhoneNumbers/${phoneNumberSid}.json`
+    const res = await fetch(url, { headers: { Authorization: basicAuthHeader() } })
+    if (!res.ok) return null
+    const n: any = await res.json()
+    return {
+      phoneNumber: n.phone_number,
+      smsUrl: n.sms_url,
+      smsMethod: n.sms_method,
+    }
+  } catch (err) {
+    console.error('[signalwire/get-webhook] threw:', (err as Error).message)
+    return null
+  }
+}
+
+/**
+ * Wave 41 — re-point an existing SignalWire number's SMS webhook.
+ * Used during practice setup / reprovision when the inbound URL needs to
+ * change (e.g. a new app domain).
+ */
+export async function updatePhoneNumberWebhook(
+  phoneNumberSid: string,
+  smsUrl: string,
+  smsMethod: 'GET' | 'POST' = 'POST',
+): Promise<boolean> {
+  if (!PROJECT_ID || !TOKEN || !SPACE_URL) return false
+  try {
+    const body = new URLSearchParams({ SmsUrl: smsUrl, SmsMethod: smsMethod })
+    const url = `${laMLAccountBase()}/IncomingPhoneNumbers/${phoneNumberSid}.json`
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: basicAuthHeader(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: body.toString(),
+    })
+    if (!res.ok) {
+      console.error('[signalwire/update-webhook] http', res.status, (await res.text().catch(() => '')).slice(0, 200))
+      return false
+    }
+    return true
+  } catch (err) {
+    console.error('[signalwire/update-webhook] threw:', (err as Error).message)
+    return false
+  }
+}
+
+/**
+ * Wave 41 — TwiML/LaML response builder for inbound-SMS replies. Mirrors
+ * the legacy lib/twilio.ts::generateSMSResponse exactly; SignalWire's
+ * inbound-SMS handler accepts the same <Response><Message>...</Message></Response>
+ * envelope as Twilio does. Re-exported under both names for caller parity.
+ */
+export function generateSMSResponse(message: string): string {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+    <Response>
+      <Message>${escapeXml(message)}</Message>
+      </Response>`
+}
+
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/**
+ * Wave 41 — pure E.164 normaliser. Carrier-agnostic; copied from the
+ * legacy lib/twilio.ts so callers can swap import paths without behaviour
+ * change.
+ */
+export function formatPhoneNumber(phone: string): string {
+  const digits = phone.replace(/\D/g, '')
+  if (digits.length === 10) return `+1${digits}`
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`
+  if (digits.length >= 11) return `+${digits}`
+  return `+${digits}`
+}
+
+/**
+ * Wave 41 — SignalWire inbound-SMS payload extractor. SignalWire LaML
+ * mirrors Twilio's webhook field names (From / To / Body / MessageSid),
+ * so the body of this helper is identical to the legacy
+ * extractPhoneFromTwilioPayload — but having a SignalWire-named export
+ * makes greppability + audit-trail accurate after the port.
+ */
+export function extractPhoneFromSignalWirePayload(payload: Record<string, any>): {
+  from: string
+  to: string
+  body: string
+  messageSid: string
+} {
+  return {
+    from: payload.From || '',
+    to: payload.To || '',
+    body: payload.Body || '',
+    messageSid: payload.MessageSid || '',
+  }
+}
