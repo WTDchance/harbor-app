@@ -223,6 +223,9 @@ export type EhrAuditAction =
   | 'letter.generate'
   | 'letter.view'
   | 'letter.sign'
+  | 'portal.scheduling.book'
+  | 'portal.scheduling.availability'
+  | 'public.scheduling.inquiry'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
