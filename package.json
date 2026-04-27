@@ -30,6 +30,7 @@
     "@tailwindcss/typography": "^0.5.10",
     "@types/qrcode": "^1.5.5",
     "amazon-chime-sdk-js": "^3.30.0",
+    "archiver": "^7.0.1",
     "aws-jwt-verify": "^5.1.0",
     "clsx": "^2.0.0",
     "date-fns": "^2.30.0",
@@ -54,6 +55,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.3.1",
     "@capacitor/core": "^8.3.1",
+    "@types/archiver": "^6.0.2",
     "@types/node": "^20.0.0",
     "@types/pg": "^8.11.10",
     "@types/react": "^18.2.0",
