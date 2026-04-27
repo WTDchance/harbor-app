@@ -29,14 +29,37 @@ export async function POST(req: NextRequest) {
 
   const practiceId = await getEffectivePracticeId(null, { email: ctx.session.email, id: ctx.user.id })
   if (!practiceId) {
-    return NextResponse.json({ error: 'Practice not found for this user' }, { status: 404 })
+    return NextResponse.json(
+      {
+        error: {
+          code: 'practice_not_found',
+          message: 'No practice is associated with this user account.',
+          retryable: false,
+        },
+        error_message: 'No practice is associated with this user account.',
+      },
+      { status: 404 },
+    )
   }
 
   // Daily cap — eligibility checks cost real money.
   const cap = await checkAiRateLimit(practiceId, 'eligibility.%')
   if (!cap.allowed) {
     return NextResponse.json(
-      { error: 'daily_cap_reached', cap: cap.cap, used: cap.used },
+      {
+        error: {
+          code: 'rate_limited',
+          message:
+            "Daily eligibility-check limit reached for this practice. Resets at midnight Pacific.",
+          retryable: false,
+        },
+        // Legacy fields preserved for older callers.
+        error_code: 'rate_limited',
+        error_message:
+          "Daily eligibility-check limit reached for this practice. Resets at midnight Pacific.",
+        cap: cap.cap,
+        used: cap.used,
+      },
       { status: 429 },
     )
   }
@@ -46,13 +69,35 @@ export async function POST(req: NextRequest) {
     [practiceId],
   )
   const practice = pRows[0]
-  if (!practice) return NextResponse.json({ error: 'Practice not found' }, { status: 404 })
+  if (!practice) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'practice_not_found',
+          message: 'Practice record could not be loaded.',
+          retryable: false,
+        },
+        error_message: 'Practice record could not be loaded.',
+      },
+      { status: 404 },
+    )
+  }
 
   let body: any
   try {
     body = await req.json()
   } catch {
-    return NextResponse.json({ error: 'invalid json' }, { status: 400 })
+    return NextResponse.json(
+      {
+        error: {
+          code: 'invalid_request',
+          message: 'Request body could not be parsed as JSON.',
+          retryable: false,
+        },
+        error_message: 'Request body could not be parsed as JSON.',
+      },
+      { status: 400 },
+    )
   }
   const {
     record_id,
@@ -70,7 +115,16 @@ export async function POST(req: NextRequest) {
 
   if (!insurance_company || !patient_name) {
     return NextResponse.json(
-      { error: 'insurance_company and patient_name are required' },
+      {
+        error: {
+          code: 'invalid_request',
+          message:
+            'Insurance carrier and patient name are required to run a verification.',
+          retryable: false,
+        },
+        error_message:
+          'Insurance carrier and patient name are required to run a verification.',
+      },
       { status: 400 },
     )
   }
@@ -80,12 +134,18 @@ export async function POST(req: NextRequest) {
   if (!payerIdOverride) {
     const resolved = await resolvePayerIdWithDb(insurance_company, null)
     if (!resolved) {
+      const msg = `We don't recognize the carrier "${insurance_company}". Check the spelling on the insurance card, or provide a payer ID manually.`
       return NextResponse.json(
         {
-          error: `Payer ID not found for "${insurance_company}". Provide payer_id manually or check spelling.`,
+          error: {
+            code: 'invalid_request',
+            message: msg,
+            retryable: false,
+          },
+          error_message: msg,
           known_payers: knownPayerNames(),
         },
-        { status: 400 },
+        { status: 422 },
       )
     }
   }
@@ -119,8 +179,17 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       console.error('[verify] failed to insert insurance_records', err)
       return NextResponse.json(
-        { error: 'Failed to save insurance record' },
-        { status: 500 },
+        {
+          error: {
+            code: 'persistence_failed',
+            message:
+              "Couldn't save the insurance record before verifying. Try again in a moment.",
+            retryable: true,
+          },
+          error_message:
+            "Couldn't save the insurance record before verifying. Try again in a moment.",
+        },
+        { status: 502 },
       )
     }
   }
@@ -166,28 +235,51 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  const httpStatus = result.status === 'error' ? 422 : 200
-  return NextResponse.json(
-    {
-      record_id: result.insuranceRecordId,
-      status: result.status,
-      insurance_company,
-      member_id,
-      is_active: result.isActive,
-      mental_health_covered: result.mentalHealthCovered,
-      copay_amount: result.copayAmount,
-      coinsurance_percent: result.coinsurancePercent,
-      deductible_total: result.deductibleTotal,
-      deductible_met: result.deductibleMet,
-      session_limit: result.sessionLimit,
-      sessions_used: result.sessionsUsed,
-      prior_auth_required: result.priorAuthRequired,
-      plan_name: result.planName,
-      coverage_start_date: result.coverageStartDate,
-      coverage_end_date: result.coverageEndDate,
-      error_message: result.errorMessage,
-      eligibility_check_id: result.eligibilityCheckId,
-    },
-    { status: httpStatus },
-  )
+  // Map structured errorKind → HTTP status per the Wave 39 contract.
+  //   422 → client-data issue (member not found, invalid request, unknown payer)
+  //   429 → rate limited (Stedi or our local cap, but the cap fires earlier)
+  //   502 → upstream issue (Stedi or payer down, network error)
+  //   200 → success branches AND coverage_inactive (a valid-but-bad answer)
+  let httpStatus: number = 200
+  if (result.status === 'error') {
+    switch (result.errorKind) {
+      case 'rate_limited': httpStatus = 429; break
+      case 'payer_down':
+      case 'network_error': httpStatus = 502; break
+      case 'member_not_found':
+      case 'invalid_request': httpStatus = 422; break
+      default: httpStatus = 422; break
+    }
+  }
+
+  const responseBody: Record<string, unknown> = {
+    record_id: result.insuranceRecordId,
+    status: result.status,
+    insurance_company,
+    member_id,
+    is_active: result.isActive,
+    mental_health_covered: result.mentalHealthCovered,
+    copay_amount: result.copayAmount,
+    coinsurance_percent: result.coinsurancePercent,
+    deductible_total: result.deductibleTotal,
+    deductible_met: result.deductibleMet,
+    session_limit: result.sessionLimit,
+    sessions_used: result.sessionsUsed,
+    prior_auth_required: result.priorAuthRequired,
+    plan_name: result.planName,
+    coverage_start_date: result.coverageStartDate,
+    coverage_end_date: result.coverageEndDate,
+    error_message: result.errorMessage,
+    eligibility_check_id: result.eligibilityCheckId,
+  }
+  // Only include the structured error envelope on actual error branches —
+  // coverage_inactive is a successful response with bad news, not an error.
+  if (result.status === 'error' && result.errorKind) {
+    responseBody.error = {
+      code: result.errorKind,
+      message: result.errorMessage,
+      retryable: result.retryable,
+    }
+  }
+  return NextResponse.json(responseBody, { status: httpStatus })
 }

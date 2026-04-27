@@ -65,6 +65,10 @@ export default function EligibilityPanel({
 }) {
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Wave 39 — structured error from /api/insurance/verify when the call
+  // fails. Lets us show a "Try again" affordance for retryable kinds
+  // without a generic toast.
+  const [errorRetryable, setErrorRetryable] = useState(false);
 
   const status: EligibilityStatus = eligibility?.latest_check?.status ?? "unknown";
   const check = eligibility?.latest_check ?? null;
@@ -73,6 +77,7 @@ export default function EligibilityPanel({
 
   async function handleVerify() {
     setError(null);
+    setErrorRetryable(false);
     setVerifying(true);
     try {
       const patientName = [patient.first_name, patient.last_name]
@@ -103,12 +108,25 @@ export default function EligibilityPanel({
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) {
-        setError(body?.error || `Verification failed (${res.status})`);
+        // Prefer the structured error envelope (Wave 39+), fall back to
+        // older shapes (`error_message` string, or `error` string).
+        const structured =
+          body && typeof body === "object" && body.error && typeof body.error === "object"
+            ? body.error
+            : null;
+        const friendly =
+          structured?.message ||
+          (typeof body?.error_message === "string" ? body.error_message : null) ||
+          (typeof body?.error === "string" ? body.error : null) ||
+          `Verification failed (${res.status})`;
+        setError(friendly);
+        setErrorRetryable(!!structured?.retryable);
       } else if (onChanged) {
         onChanged();
       }
     } catch (err: any) {
       setError(err?.message || "Request failed");
+      setErrorRetryable(true);
     } finally {
       setVerifying(false);
     }
@@ -189,7 +207,18 @@ export default function EligibilityPanel({
 
       {error && (
         <div className="mt-3 text-xs text-red-700 bg-red-50 rounded p-2">
-          {error}
+          <div>{error}</div>
+          {errorRetryable && (
+            <button
+              type="button"
+              onClick={handleVerify}
+              disabled={verifying}
+              className="mt-2 inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md bg-red-100 text-red-800 hover:bg-red-200 disabled:opacity-50"
+              style={{ minHeight: 44 }}
+            >
+              {verifying ? "Trying again…" : "Try again"}
+            </button>
+          )}
         </div>
       )}
     </div>
