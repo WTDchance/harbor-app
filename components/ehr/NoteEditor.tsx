@@ -16,7 +16,7 @@ export type NoteFormValue = {
   id?: string
   patient_id: string
   title: string
-  note_format: 'soap' | 'dap' | 'birp' | 'freeform'
+  note_format: 'soap' | 'dap' | 'birp' | 'girp' | 'freeform'
   subjective?: string | null
   objective?: string | null
   assessment?: string | null
@@ -158,7 +158,8 @@ export function NoteEditor({ patients, initial, mode }: Props) {
             <option value="soap">SOAP</option>
             <option value="dap">DAP</option>
             <option value="birp">BIRP</option>
-            <option value="freeform">Freeform</option>
+            <option value="girp">GIRP</option>
+            <option value="freeform">Narrative</option>
           </select>
         </div>
       </div>
@@ -310,6 +311,7 @@ function sectionLabel(format: NoteFormValue['note_format'], index: number): stri
     soap: ['Subjective', 'Objective', 'Assessment', 'Plan'],
     dap: ['Data', '—', 'Assessment', 'Plan'],
     birp: ['Behavior', 'Intervention', 'Response', 'Plan'],
+    girp: ['Goal', 'Intervention', 'Response', 'Plan'],
   }
   return maps[format]?.[index] ?? ''
 }
