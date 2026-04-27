@@ -108,10 +108,12 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     resourceType: 'patient',
     resourceId: patientId,
     details: {
+      // Wave 41 / T0 — patient_name removed (PHI). resource_id already
+      // carries patientId; admin_email + target_practice_id + payload_hash
+      // are sufficient for forensic linkage without storing PHI.
       admin_email: ctx.session.email,
       target_practice_id: before.practice_id,
       action: 'soft_delete',
-      patient_name: patientName,
       payload_hash: hashAdminPayload({ patient_id: patientId }),
     },
   })

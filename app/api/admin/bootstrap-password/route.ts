@@ -67,8 +67,11 @@ export async function POST(req: NextRequest) {
       action: 'admin.bootstrap_password',
       severity: 'warn',
       details: {
+        // Wave 41 / T0 — attempted_email renamed + hashed. The runtime
+        // sanitizer blocks `attempted_email` as PHI; this email is
+        // the admin's own (operator data) but the policy is uniform.
         outcome: 'forbidden_non_admin_email',
-        attempted_email: email,
+        actor_email_hash: hashAdminPayload({ email }),
         ip,
         payload_hash: payloadHash,
       },
@@ -137,8 +140,9 @@ export async function POST(req: NextRequest) {
     action: 'admin.bootstrap_password',
     severity: 'info',
     details: {
+      // Wave 41 / T0 — target_email renamed + hashed (sanitizer blocklist).
       outcome: 'success',
-      target_email: email,
+      subject_email_hash: hashAdminPayload({ email }),
       cognito_sub: cognitoSub,
       ip,
       payload_hash: payloadHash,

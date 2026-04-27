@@ -161,7 +161,12 @@ export async function POST(req: NextRequest) {
       action: 'provision.signup_received',
       severity: 'info',
       details: {
-        email: normalizedEmail,
+        // Wave 41 / T0 — `email` is on the runtime sanitizer's blocklist.
+        // Rename + hash for forensic linkage without storing the raw
+        // address. The signup flow can't yet correlate to a user_id
+        // (Cognito user not provisioned until later), so the hash is
+        // the lookup key for forensic review.
+        email_hash: hashAdminPayload({ email: normalizedEmail }),
         practice_name,
         founding_eligible: true,
         promo: normalizedPromo || null,
@@ -343,7 +348,8 @@ export async function POST(req: NextRequest) {
         action: 'provision.created',
         severity: 'info',
         practiceId,
-        details: { mode: 'dev_bypass', email: normalizedEmail },
+        // Wave 41 / T0 — email renamed + hashed (sanitizer blocklist).
+        details: { mode: 'dev_bypass', email_hash: hashAdminPayload({ email: normalizedEmail }) },
       })
       return NextResponse.json({
         success: true,
@@ -417,8 +423,9 @@ export async function POST(req: NextRequest) {
       action: 'provision.created',
       severity: 'info',
       practiceId,
+      // Wave 41 / T0 — email renamed + hashed (sanitizer blocklist).
       details: {
-        email: normalizedEmail,
+        email_hash: hashAdminPayload({ email: normalizedEmail }),
         founding_member: isFounding,
         comped: isCompedSignup,
         stripe_customer_id: customer.id,
