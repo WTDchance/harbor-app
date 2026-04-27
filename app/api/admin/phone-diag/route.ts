@@ -1,16 +1,18 @@
 // FILE: app/api/admin/phone-diag/route.ts
 // Diagnostic endpoint for tracing a phone number across Harbor's stack.
+// Wave 41 — ported from Twilio to SignalWire. Output shape adds a
+// `signalwire` block; the legacy `twilio` block is omitted now that
+// no Twilio numbers are owned by Harbor on the AWS stack.
 //
 // Auth: Bearer ${CRON_SECRET}
 //
 // GET /api/admin/phone-diag?phone=5415394890
 //   → Searches for the number across:
-//       - practices.phone_number
-//       - practices.owner_phone
+//       - practices.phone_number / owner_phone / signalwire_number
 //       - call_logs.patient_phone (last 90 days)
 //       - patients.phone
 //       - auth.users by email (if ?email=X is also passed)
-//       - Twilio account (all incoming numbers)
+//       - SignalWire account (all incoming numbers)
 //     Returns a structured report so we can reconstruct what happened to a
 //     number that went missing.
 //
@@ -19,11 +21,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import twilio from 'twilio'
-
-const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
-const authToken = process.env.TWILIO_AUTH_TOKEN || ''
-const twilioClient = accountSid && authToken ? twilio(accountSid, authToken) : null
+import { listPhoneNumbers } from '@/lib/aws/signalwire'
 
 function unauthorized() {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -41,7 +39,6 @@ export async function GET(req: NextRequest) {
   const rawPhone = req.nextUrl.searchParams.get('phone') || ''
   const email = req.nextUrl.searchParams.get('email') || ''
   const digits = normalizeDigits(rawPhone)
-  // Fuzzy key: strip leading country code if present (10 digit US comparison)
   const tenDigit = digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits
 
   if (!digits && !email) {
@@ -50,17 +47,21 @@ export async function GET(req: NextRequest) {
 
   const report: Record<string, any> = { query: { phone: rawPhone, digits, tenDigit, email } }
 
-  // 1. practices — match phone_number or owner_phone (loose)
+  // 1. practices — match phone_number / owner_phone / signalwire_number (loose)
+  // Schema retains twilio_* columns for historical rows; we surface them
+  // alongside signalwire_* so a forensics query against an old practice
+  // row still has a useful diff.
   const { data: allPractices } = await supabaseAdmin
     .from('practices')
     .select(
-      'id, name, therapist_name, notification_email, phone_number, owner_phone, status, subscription_status, twilio_phone_sid, vapi_phone_number_id, vapi_assistant_id, stripe_customer_id, stripe_subscription_id, created_at'
+      'id, name, therapist_name, notification_email, phone_number, owner_phone, signalwire_number, signalwire_phone_sid, retell_agent_id, retell_llm_id, twilio_phone_sid, vapi_phone_number_id, vapi_assistant_id, status, subscription_status, stripe_customer_id, stripe_subscription_id, created_at'
     )
-  const practiceMatches = (allPractices || []).filter((p) => {
+  const practiceMatches = (allPractices || []).filter((p: any) => {
     const pn = normalizeDigits(p.phone_number)
     const op = normalizeDigits(p.owner_phone)
+    const sw = normalizeDigits(p.signalwire_number)
     const phoneHit = digits
-      ? pn === digits || op === digits || pn.endsWith(tenDigit) || op.endsWith(tenDigit)
+      ? [pn, op, sw].some(d => d === digits || d.endsWith(tenDigit))
       : false
     const emailHit = email ? (p.notification_email || '').toLowerCase() === email.toLowerCase() : false
     return phoneHit || emailHit
@@ -117,33 +118,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // 5. Twilio — list incoming phone numbers and flag matches
-  if (twilioClient && digits) {
+  // 5. SignalWire — list incoming phone numbers and flag matches
+  if (digits) {
     try {
-      const numbers = await twilioClient.incomingPhoneNumbers.list({ limit: 200 })
-      const numberInfo = numbers.map((n) => ({
+      const numbers = await listPhoneNumbers()
+      const numberInfo = numbers.map(n => ({
         sid: n.sid,
         phone_number: n.phoneNumber,
         friendly_name: n.friendlyName,
-        date_created: n.dateCreated,
         voice_url: n.voiceUrl,
         sms_url: n.smsUrl,
-        status_callback: n.statusCallback,
       }))
-      const matches = numberInfo.filter((n) => {
+      const matches = numberInfo.filter(n => {
         const d = normalizeDigits(n.phone_number)
         return d === digits || d.endsWith(tenDigit)
       })
-      report.twilio = {
+      report.signalwire = {
         total: numberInfo.length,
         match: matches,
-        all_numbers: numberInfo.map((n) => ({ sid: n.sid, phone_number: n.phone_number, friendly_name: n.friendly_name })),
+        all_numbers: numberInfo.map(n => ({ sid: n.sid, phone_number: n.phone_number, friendly_name: n.friendly_name })),
       }
     } catch (e: any) {
-      report.twilio_error = e?.message || String(e)
+      report.signalwire_error = e?.message || String(e)
     }
-  } else if (!twilioClient) {
-    report.twilio_error = 'Twilio client not configured (missing TWILIO_ACCOUNT_SID/AUTH_TOKEN)'
   }
 
   return NextResponse.json(report)

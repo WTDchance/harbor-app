@@ -1,9 +1,19 @@
-// Temporary diagnostic endpoint for tracing call pipeline issues
+// app/api/admin/call-diag/route.ts
+//
+// Wave 41 — call pipeline diagnostic. Vapi blocks removed; the route now
+// returns DB-side state only (call_logs, intake_forms, patients) plus a
+// Retell snapshot for practices that have been provisioned through the
+// SignalWire+Retell stack. The legacy POST `fix-phone-server-url` action
+// (which patched a Vapi phone-number record) is replaced by a 410 — the
+// equivalent fix for Retell is to re-import the SignalWire number via
+// /api/admin/reprovision.
+//
 // Auth: Bearer ${CRON_SECRET}
-// GET /api/admin/call-diag?practice_id=<uuid>
+// GET  /api/admin/call-diag?practice_id=<uuid>
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
 function unauthorized() {
   return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -19,7 +29,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'practice_id required' }, { status: 400 })
   }
 
-  // Recent call logs (use * to avoid column name mismatches)
   const { data: calls, error: callErr } = await supabaseAdmin
     .from('call_logs')
     .select('*')
@@ -27,7 +36,6 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(10)
 
-  // Recent intake forms
   const { data: intakes, error: intakeErr } = await supabaseAdmin
     .from('intake_forms')
     .select('*')
@@ -35,7 +43,6 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(10)
 
-  // Recent patients
   const { data: patients, error: patErr } = await supabaseAdmin
     .from('patients')
     .select('id, first_name, last_name, phone, email, created_at')
@@ -43,54 +50,27 @@ export async function GET(req: NextRequest) {
     .order('created_at', { ascending: false })
     .limit(10)
 
-  // Check Vapi assistant config if practice has one
-  let vapiAssistant: any = null
+  // Retell agent snapshot (replaces the legacy Vapi assistant block)
+  let retellAgent: any = null
   const { data: practice } = await supabaseAdmin
     .from('practices')
-    .select('vapi_assistant_id')
+    .select('retell_agent_id, signalwire_number, signalwire_phone_sid')
     .eq('id', practiceId)
     .single()
 
-  if (practice?.vapi_assistant_id && process.env.VAPI_API_KEY) {
+  if ((practice as any)?.retell_agent_id && process.env.RETELL_API_KEY) {
     try {
-      const vapiRes = await fetch(`https://api.vapi.ai/assistant/${practice.vapi_assistant_id}`, {
-        headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
+      const r = await fetch(`https://api.retellai.com/get-agent/${(practice as any).retell_agent_id}`, {
+        headers: { Authorization: `Bearer ${process.env.RETELL_API_KEY}` },
       })
-      if (vapiRes.ok) {
-        const full = await vapiRes.json()
-        vapiAssistant = {
-          id: full.id,
-          name: full.name,
-          model_provider: full.model?.provider,
-          model_name: full.model?.model,
-          server_url: full.server?.url || full.serverUrl || '(not set)',
-          firstMessage: full.firstMessage?.substring(0, 100),
-        }
-      }
-    } catch { /* swallow */ }
-  }
-
-  // Check Vapi phone number config
-  let vapiPhoneConfig: any = null
-  const { data: practicePhone } = await supabaseAdmin
-    .from('practices')
-    .select('vapi_phone_number_id')
-    .eq('id', practiceId)
-    .single()
-
-  if (practicePhone?.vapi_phone_number_id && process.env.VAPI_API_KEY) {
-    try {
-      const phoneRes = await fetch(`https://api.vapi.ai/phone-number/${practicePhone.vapi_phone_number_id}`, {
-        headers: { Authorization: `Bearer ${process.env.VAPI_API_KEY}` },
-      })
-      if (phoneRes.ok) {
-        const ph = await phoneRes.json()
-        vapiPhoneConfig = {
-          id: ph.id,
-          number: ph.number,
-          assistantId: ph.assistantId || '(not set)',
-          serverUrl: ph.serverUrl || ph.server?.url || '(not set)',
-          squadId: ph.squadId || null,
+      if (r.ok) {
+        const a = await r.json()
+        retellAgent = {
+          agent_id: a.agent_id,
+          agent_name: a.agent_name,
+          response_engine: a.response_engine,
+          voice_id: a.voice_id,
+          inbound_dynamic_variables_webhook_url: a.inbound_dynamic_variables_webhook_url,
         }
       }
     } catch { /* swallow */ }
@@ -100,62 +80,28 @@ export async function GET(req: NextRequest) {
     call_logs: { data: calls, error: callErr?.message },
     intake_forms: { data: intakes, error: intakeErr?.message },
     patients: { data: patients, error: patErr?.message },
-    vapi_assistant: vapiAssistant,
-    vapi_phone: vapiPhoneConfig,
+    retell_agent: retellAgent,
+    signalwire_number: (practice as any)?.signalwire_number ?? null,
+    signalwire_phone_sid: (practice as any)?.signalwire_phone_sid ?? null,
   })
 }
 
-// POST /api/admin/call-diag — fix Vapi phone number serverUrl mismatch
-// Body: { practice_id, action: 'fix-phone-server-url' }
+// POST `fix-phone-server-url` was Vapi-specific. The SignalWire+Retell
+// equivalent is to re-import the number; tell ops to use reprovision.
 export async function POST(req: NextRequest) {
-  const auth = req.headers.get('authorization') || ''
-  const expected = `Bearer ${process.env.CRON_SECRET || ''}`
-  if (!process.env.CRON_SECRET || auth !== expected) return unauthorized()
+  await auditSystemEvent({
+    action: 'vapi.call_diag_fix.deprecated_hit',
+    severity: 'warn',
+    details: { ua: req.headers.get('user-agent') ?? null },
+  }).catch(() => {})
 
-  const body = await req.json()
-  const { practice_id, action } = body
-
-  if (action !== 'fix-phone-server-url') {
-    return NextResponse.json({ error: 'unknown action' }, { status: 400 })
-  }
-
-  const { data: p } = await supabaseAdmin
-    .from('practices')
-    .select('vapi_phone_number_id, vapi_assistant_id')
-    .eq('id', practice_id)
-    .single()
-
-  if (!p?.vapi_phone_number_id || !process.env.VAPI_API_KEY) {
-    return NextResponse.json({ error: 'missing vapi_phone_number_id or VAPI_API_KEY' }, { status: 400 })
-  }
-
-  // Build the correct serverUrl with secret
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'
-  const webhookSecret = process.env.VAPI_WEBHOOK_SECRET
-  const correctServerUrl = webhookSecret
-    ? `${baseUrl}/api/vapi/webhook?secret=${encodeURIComponent(webhookSecret)}`
-    : `${baseUrl}/api/vapi/webhook`
-
-  // PATCH the Vapi phone number to use the correct serverUrl
-  const patchRes = await fetch(`https://api.vapi.ai/phone-number/${p.vapi_phone_number_id}`, {
-    method: 'PATCH',
-    headers: {
-      Authorization: `Bearer ${process.env.VAPI_API_KEY}`,
-      'Content-Type': 'application/json',
+  return NextResponse.json(
+    {
+      error: 'gone',
+      reason: 'vapi_retired_wave_41',
+      replacement: '/api/admin/reprovision',
+      docs: 'The fix-phone-server-url action patched a Vapi phone record. Vapi is retired; the SignalWire+Retell equivalent is to re-run /api/admin/reprovision { practice_id }.',
     },
-    body: JSON.stringify({ serverUrl: correctServerUrl }),
-  })
-
-  if (!patchRes.ok) {
-    const errText = await patchRes.text()
-    return NextResponse.json({ error: `vapi patch failed: ${patchRes.status}`, body: errText }, { status: 502 })
-  }
-
-  const result = await patchRes.json()
-  return NextResponse.json({
-    ok: true,
-    phone_id: p.vapi_phone_number_id,
-    new_server_url: correctServerUrl,
-    vapi_response_server_url: result.serverUrl,
-  })
+    { status: 410 },
+  )
 }

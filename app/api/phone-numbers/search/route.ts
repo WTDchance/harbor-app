@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
-import twilio from 'twilio'
+import { searchAvailableNumbers } from '@/lib/aws/provisioning/signalwire-numbers'
 
+// Wave 41 — search SignalWire's pool for available US local numbers.
+// Public endpoint used by the signup flow before the user has an account.
+//
+// SignalWire's LaML AvailablePhoneNumbers endpoint accepts an AreaCode
+// param. Locality/region narrowing isn't supported by SignalWire's
+// search the way Twilio's was; we still accept the params for API
+// back-compat and simply scope by area-code if present.
 export async function POST(req: NextRequest) {
   try {
-    // No auth required — this is a read-only Twilio search used during signup
-    // before the user has an account
-
-    // Parse request body
     const { area_code, city, state, zip_code } = await req.json()
 
-    // Validate that at least one search parameter is provided
     if (!area_code && !city && !state && !zip_code) {
       return NextResponse.json(
         { error: 'Must provide at least one search parameter: area_code, city, state, or zip_code' },
@@ -17,51 +19,26 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Initialize Twilio client
-    const client = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
-
-    // Build search options
-    const searchOptions: Record<string, any> = {
-      voiceEnabled: true,
-      smsEnabled: true,
+    const numbers = await searchAvailableNumbers({
+      areaCode: area_code ? String(area_code) : undefined,
       limit: 10,
+    })
+
+    // Optional client-side filter by region if `state` came in without
+    // area_code — SignalWire returns the region on each row, so we can
+    // narrow without a second call.
+    let filtered = numbers
+    if (state && !area_code) {
+      const target = String(state).toUpperCase()
+      filtered = numbers.filter(n => (n.region || '').toUpperCase() === target)
     }
 
-    if (area_code) {
-      searchOptions.areaCode = area_code
-    }
-
-    if (city && state) {
-      searchOptions.inLocality = city
-      searchOptions.inRegion = state
-    } else if (state) {
-      searchOptions.inRegion = state
-    }
-
-    if (zip_code) {
-      searchOptions.inPostalCode = zip_code
-    }
-
-    // Search for available phone numbers
-    const availableNumbers = await client.availablePhoneNumbers('US').local.list(searchOptions)
-
-    if (!availableNumbers || availableNumbers.length === 0) {
-      return NextResponse.json(
-        {
-          message: 'No available phone numbers found for the given criteria',
-          results: [],
-        },
-        { status: 200 }
-      )
-    }
-
-    // Format results
-    const results = availableNumbers.map((num) => ({
-      phoneNumber: num.phoneNumber,
-      friendlyName: num.friendlyName,
-      locality: num.locality,
-      region: num.region,
-      postalCode: num.postalCode,
+    const results = filtered.map(n => ({
+      phoneNumber: n.phoneNumber,
+      friendlyName: n.friendlyName,
+      locality: n.locality,
+      region: n.region,
+      postalCode: '',
     }))
 
     console.log(`[Phone Numbers Search] Found ${results.length} available numbers`, {
@@ -71,14 +48,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ results }, { status: 200 })
   } catch (error) {
     console.error('[Phone Numbers Search] Error:', error)
-
     if (error instanceof SyntaxError) {
       return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 })
     }
-
     return NextResponse.json(
       { error: 'Failed to search for phone numbers' },
       { status: 500 }
     )
   }
-      }
+}

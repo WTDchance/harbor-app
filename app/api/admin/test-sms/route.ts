@@ -1,15 +1,33 @@
-// Admin-only test SMS endpoint - bypasses the SMS_ENABLED env gate so post-A2P
-// verification can happen before the Railway env var flip.
+// app/api/admin/test-sms/route.ts
 //
-// Uses the Twilio REST API directly via fetch + Basic auth to avoid any
-// Twilio SDK type churn in this route.
+// Wave 41 — admin test SMS endpoint, ported off Twilio.
+// Sends through SignalWire's LaML endpoint via lib/aws/signalwire so the
+// HIPAA stack stays SignalWire/Retell only. The SMS_ENABLED env gate is
+// intentionally bypassed (point of this endpoint) for post-rollout
+// verification before the gate is flipped on.
 //
-// POST /api/admin/test-sms
-// Headers: Authorization Bearer CRON_SECRET
-// Body: JSON with to, body, optional from
+// POST /api/admin/test-sms  Authorization: Bearer ${CRON_SECRET}
+//   Body: { to: string, body?: string, from?: string }
+//   Sends a test SMS. If `from` is omitted we look up Harbor's primary
+//   demo practice number from the practices table.
+//
+// GET /api/admin/test-sms?sid=<message_sid>  Authorization: Bearer ${CRON_SECRET}
+//   Fetches delivery status + error info for a previously-sent message.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+
+const PROJECT_ID = process.env.SIGNALWIRE_PROJECT_ID || ''
+const TOKEN = process.env.SIGNALWIRE_TOKEN || ''
+const SPACE_URL = process.env.SIGNALWIRE_SPACE_URL || ''
+
+function authHeader(): string {
+  return 'Basic ' + Buffer.from(PROJECT_ID + ':' + TOKEN).toString('base64')
+}
+
+function laMLBase(): string {
+  return `https://${SPACE_URL}/api/laml/2010-04-01/Accounts/${PROJECT_ID}`
+}
 
 export async function POST(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''
@@ -20,7 +38,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}))
   const to: string | undefined = body?.to
-  const msg: string = body?.body || 'Harbor test SMS - if you are reading this, A2P is working.'
+  const msg: string = body?.body || 'Harbor test SMS - if you are reading this, the SignalWire path is working.'
   let from: string | undefined = body?.from
 
   if (!to) {
@@ -30,52 +48,39 @@ export async function POST(req: NextRequest) {
   if (!from) {
     const { data: p } = await supabaseAdmin
       .from('practices')
-      .select('phone_number')
+      .select('phone_number, signalwire_number')
       .eq('id', '172405dd-65f9-46ce-88e9-104c68d24da4')
       .maybeSingle()
-    from = p?.phone_number || undefined
+    from = (p as any)?.signalwire_number || (p as any)?.phone_number || undefined
     if (!from) {
       return NextResponse.json({ error: 'No from number available' }, { status: 500 })
     }
   }
 
-  const sid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-  if (!sid || !token) {
-    return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 })
+  if (!PROJECT_ID || !TOKEN || !SPACE_URL) {
+    return NextResponse.json({ error: 'SignalWire credentials not configured' }, { status: 500 })
   }
 
-  const auth64 = Buffer.from(sid + ':' + token).toString('base64')
   const form = new URLSearchParams()
-  // Prefer MessagingServiceSid - required post-A2P so Twilio routes through
-  // the approved campaign. Fall back to From when not supplied.
-  const msSid: string | undefined = body?.messaging_service_sid
-  if (msSid) {
-    form.set('MessagingServiceSid', msSid)
-  } else {
-    form.set('From', from)
-  }
+  form.set('From', from)
   form.set('To', to)
   form.set('Body', msg)
 
-  const resp = await fetch(
-    'https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages.json',
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': 'Basic ' + auth64,
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: form.toString(),
-    }
-  )
+  const resp = await fetch(`${laMLBase()}/Messages.json`, {
+    method: 'POST',
+    headers: {
+      'Authorization': authHeader(),
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: form.toString(),
+  })
 
   const json: any = await resp.json().catch(() => ({}))
   if (!resp.ok) {
     return NextResponse.json({
       ok: false,
       status: resp.status,
-      error: json?.message || 'Twilio send failed',
+      error: json?.message || 'SignalWire send failed',
       code: json?.code,
       more_info: json?.more_info,
     }, { status: 500 })
@@ -89,8 +94,6 @@ export async function POST(req: NextRequest) {
   })
 }
 
-// GET /api/admin/test-sms?sid=<message_sid>
-// Fetches delivery status + any error code from Twilio.
 export async function GET(req: NextRequest) {
   const auth = req.headers.get('authorization') || ''
   const expected = 'Bearer ' + (process.env.CRON_SECRET || '')
@@ -100,19 +103,21 @@ export async function GET(req: NextRequest) {
   const sid = req.nextUrl.searchParams.get('sid')
   if (!sid) return NextResponse.json({ error: 'sid required' }, { status: 400 })
 
-  const accountSid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-  if (!accountSid || !token) {
-    return NextResponse.json({ error: 'Twilio credentials not configured' }, { status: 500 })
+  if (!PROJECT_ID || !TOKEN || !SPACE_URL) {
+    return NextResponse.json({ error: 'SignalWire credentials not configured' }, { status: 500 })
   }
-  const auth64 = Buffer.from(accountSid + ':' + token).toString('base64')
-  const resp = await fetch(
-    'https://api.twilio.com/2010-04-01/Accounts/' + accountSid + '/Messages/' + sid + '.json',
-    { headers: { 'Authorization': 'Basic ' + auth64 } }
-  )
+  const resp = await fetch(`${laMLBase()}/Messages/${sid}.json`, {
+    headers: { 'Authorization': authHeader() },
+  })
   const json: any = await resp.json().catch(() => ({}))
   if (!resp.ok) {
-    return NextResponse.json({ ok: false, status: resp.status, error: json?.message, code: json?.code, more_info: json?.more_info }, { status: 500 })
+    return NextResponse.json({
+      ok: false,
+      status: resp.status,
+      error: json?.message,
+      code: json?.code,
+      more_info: json?.more_info,
+    }, { status: 500 })
   }
   return NextResponse.json({
     ok: true,

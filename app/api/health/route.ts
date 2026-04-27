@@ -16,8 +16,8 @@ export async function GET() {
     wired: {
       supabase: Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL),
       stripe: Boolean(process.env.STRIPE_SECRET_KEY),
-      twilio: Boolean(process.env.TWILIO_ACCOUNT_SID),
-      vapi: Boolean(process.env.VAPI_API_KEY),
+      signalwire: Boolean(process.env.SIGNALWIRE_PROJECT_ID),
+      retell: Boolean(process.env.RETELL_API_KEY),
       resend: Boolean(process.env.RESEND_API_KEY),
       anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
       pg_host: Boolean(process.env.PGHOST),

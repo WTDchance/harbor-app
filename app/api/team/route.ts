@@ -4,10 +4,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 
-const VAPI_API_KEY = process.env.VAPI_API_KEY
-const VAPI_BASE_URL = 'https://api.vapi.ai'
-const DEFAULT_VOICE_ID = 'EXAVITQu4vr4xnSDxMaL'
-
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams
@@ -73,46 +69,12 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create Vapi assistant for this therapist
-    let vapiAssistantId = null
-    if (VAPI_API_KEY) {
-      const systemPrompt = `You are ${therapist_name}, a receptionist for ${practice.name}. ${specialties ? `You specialize in: ${specialties.join(', ')}.` : ''} Answer calls warmly and professionally.`
-
-      const vapiRes = await fetch(`${VAPI_BASE_URL}/assistant`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${VAPI_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: `${practice.ai_name} — ${practice.name} (${therapist_name})`,
-          model: {
-            provider: 'anthropic',
-            model: 'claude-haiku-4-5-20251001',
-            systemPrompt,
-            temperature: 0.7,
-          },
-          voice: {
-            provider: 'elevenlabs',
-            voiceId: DEFAULT_VOICE_ID,
-            model: 'eleven_turbo_v2_5',
-            stability: 0.5,
-            similarityBoost: 0.75,
-          },
-          firstMessage: `Hi, thank you for calling ${practice.name}! This is ${therapist_name}'s assistant. How can I help you today?`,
-          endCallMessage: `Thank you for calling ${practice.name}. Have a wonderful day!`,
-          silenceTimeoutSeconds: 30,
-          maxDurationSeconds: 600,
-          backgroundSound: 'off',
-          backchannelingEnabled: false,
-        }),
-      })
-
-      if (vapiRes.ok) {
-        const vapiAssistant = await vapiRes.json()
-        vapiAssistantId = vapiAssistant.id
-      }
-    }
+    // Wave 41 — Vapi retired. Per-therapist AI assistants are not yet
+    // ported to Retell; the practice's primary Retell agent (provisioned
+    // by lib/aws/provisioning/provision-practice) handles all inbound
+    // calls. New team members are recorded without their own assistant
+    // until the per-therapist Retell agent feature ships.
+    const vapiAssistantId: string | null = null
 
     // Create practice member record
     const { data: member, error } = await supabaseAdmin
