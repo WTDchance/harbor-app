@@ -119,6 +119,11 @@ export type EhrAuditAction =
   | 'treatment_plan_review.viewed'
   | 'treatment_plan_review.created'
   | 'treatment_plan_review.cosigned'
+  | 'mandatory_report.created'
+  | 'mandatory_report.viewed'
+  | 'mandatory_report.updated'
+  | 'mandatory_report.filed'
+  | 'mandatory_report.closed'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
