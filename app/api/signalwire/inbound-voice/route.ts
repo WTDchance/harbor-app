@@ -165,8 +165,12 @@ export async function POST(req: NextRequest) {
   if (!agentId || !retellApiKey) {
     return rejectTwiML('retell_not_configured')
   }
-  // Wave 27p — corrected to /v2/register-phone-call (the un-versioned path 404s)
-  // and surface non-2xx loudly so future regressions don't silently drop dynamic vars.
+  // Wave 27p — /v2/register-phone-call returns a call_id; the wss URL we hand
+  // SignalWire MUST embed that call_id (wss://api.retellai.com/audio-websocket/<id>)
+  // so Retell's server can attach the registered dynamic_variables. The previous
+  // code threw the response away and built the wss URL from agent_id alone,
+  // which silently 2-second-disconnected every call.
+  let retellCallId = ''
   try {
     const resp = await fetch('https://api.retellai.com/v2/register-phone-call', {
       method: 'POST',
@@ -189,21 +193,36 @@ export async function POST(req: NextRequest) {
         resp.status,
         body.slice(0, 200),
       )
+    } else {
+      const j = (await resp.json().catch(() => ({}))) as { call_id?: string }
+      retellCallId = j.call_id ?? ''
+      if (!retellCallId) {
+        console.error('[signalwire/inbound-voice] register-call 2xx but no call_id in response')
+      }
     }
   } catch (err) {
     console.error('[signalwire/inbound-voice] register-call failed:', (err as Error).message)
-    // Not fatal — the LaML below still streams to the same agent_id
+  }
+
+  if (!retellCallId) {
+    await auditSystemEvent({
+      action: 'signalwire.inbound_voice.retell_register_failed',
+      severity: 'error',
+      practiceId: practice.id,
+      details: { from: fromNumber, to: toNumber, callSid, agent_id: agentId },
+    })
+    return rejectTwiML('retell_register_failed')
   }
 
   await auditSystemEvent({
     action: 'signalwire.inbound_voice.routed',
     severity: 'info',
     practiceId: practice.id,
-    details: { from: fromNumber, to: toNumber, callSid, agent_id: agentId },
+    details: { from: fromNumber, to: toNumber, callSid, agent_id: agentId, call_id: retellCallId },
   })
 
   const twiml = laMLConnectToRetell({
-    agentId,
+    callId: retellCallId,
     callMetadata: { practice_id: practice.id, call_sid: callSid || '' },
   })
   return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS })

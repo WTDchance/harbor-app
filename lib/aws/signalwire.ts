@@ -182,23 +182,22 @@ export function validateInboundWebhook(args: {
 }
 
 /**
- * Build a LaML/TwiML response that hands the inbound call off to
- * Retell's media-stream endpoint. The agent_id is encoded in the
- * stream URL query string per Retell's docs.
+ * Build a LaML/TwiML response that bridges the inbound call into Retell's
+ * per-call audio websocket. Retell expects the wss URL to embed the call_id
+ * returned by /v2/register-phone-call so the websocket can authenticate +
+ * pick up the dynamic_variables that were registered with the call.
  *
- * Retell's media-stream URL pattern:
- *   wss://api.retellai.com/v2/agent/<agent_id>/audio
+ * The legacy wss://api.retellai.com/v2/agent/<agent_id>/audio endpoint is
+ * deprecated; SignalWire's media gateway accepts the upgrade briefly but
+ * Retell tears it down because no per-call context is attached.
+ *
+ * Pattern: wss://api.retellai.com/audio-websocket/<call_id>
  */
 export function laMLConnectToRetell(args: {
-  agentId: string
+  callId: string
   callMetadata?: Record<string, string>
 }): string {
-  const params = new URLSearchParams()
-  params.set('agent_id', args.agentId)
-  for (const [k, v] of Object.entries(args.callMetadata ?? {})) {
-    params.set(k, v)
-  }
-  const streamUrl = `wss://api.retellai.com/v2/agent/${args.agentId}/audio`
+  const streamUrl = `wss://api.retellai.com/audio-websocket/${args.callId}`
   return `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
