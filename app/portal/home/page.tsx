@@ -56,6 +56,8 @@ export default function PortalHome() {
   const [loading, setLoading] = useState(true)
   const [signingName, setSigningName] = useState('')
   const [signing, setSigning] = useState<string | null>(null)
+  // Wave 38 TS4 — count unsigned required consent_documents.
+  const [unsignedRequired, setUnsignedRequired] = useState<number>(0)
 
   async function load() {
     try {
@@ -71,6 +73,15 @@ export default function PortalHome() {
         const asJson = await asRes.json()
         setAssessments(asJson.assessments || [])
       }
+      // Wave 38 TS4 — load consent documents to gate first-login flow.
+      try {
+        const cr = await fetch('/api/portal/consents')
+        if (cr.ok) {
+          const cj = await cr.json()
+          const docs = (cj.documents || []) as Array<{ required: boolean; signed_at: string | null }>
+          setUnsignedRequired(docs.filter(d => d.required && !d.signed_at).length)
+        }
+      } catch {}
     } finally { setLoading(false) }
   }
   useEffect(() => { load() /* eslint-disable-line */ }, [])
@@ -106,6 +117,20 @@ export default function PortalHome() {
           {me.practice.phone_number && <> · {me.practice.phone_number}</>}
         </p>
       </div>
+
+      {unsignedRequired > 0 && (
+        <a
+          href="/portal/consents"
+          className="block bg-amber-50 border border-amber-300 rounded-xl px-4 py-3 hover:bg-amber-100"
+        >
+          <div className="text-sm font-semibold text-amber-900">
+            {unsignedRequired} consent {unsignedRequired === 1 ? 'document needs' : 'documents need'} your signature
+          </div>
+          <div className="text-xs text-amber-800 mt-0.5">
+            Please sign before your first session — tap to review and sign.
+          </div>
+        </a>
+      )}
 
       {/* Quick actions — 2x3 grid */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

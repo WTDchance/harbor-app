@@ -36,6 +36,7 @@ export async function GET(_req: NextRequest) {
     overdueAssessments,
     treatmentPlanReviews,
     unsignedNotes,
+    missingConsents,
     apptsMissingNote,
     activity,
   ] = await Promise.all([
@@ -115,6 +116,32 @@ export async function GET(_req: NextRequest) {
           AND n.status = 'draft'
           AND n.created_at > NOW() - INTERVAL '7 days'
         ORDER BY n.created_at ASC
+        LIMIT 5`,
+      [practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+
+    // 5. Active patients missing one or more REQUIRED consent_signatures
+    //    against the latest version of each required document.
+    pool.query(
+      `WITH latest AS (
+         SELECT DISTINCT ON (kind) id, kind, required
+           FROM consent_documents
+          WHERE practice_id = $1
+          ORDER BY kind, effective_at DESC
+       )
+       SELECT p.id AS patient_id,
+              p.first_name || ' ' || p.last_name AS patient_name,
+              COUNT(*) AS missing_count
+         FROM patients p
+         CROSS JOIN latest l
+         LEFT JOIN consent_signatures cs
+           ON cs.document_id = l.id AND cs.patient_id = p.id
+        WHERE p.practice_id = $1
+          AND COALESCE(p.patient_status, 'active') NOT IN ('inactive','discharged','archived')
+          AND l.required = TRUE
+          AND cs.id IS NULL
+        GROUP BY p.id, p.first_name, p.last_name
+        ORDER BY missing_count DESC
         LIMIT 5`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
@@ -235,6 +262,20 @@ export async function GET(_req: NextRequest) {
       why,
       action_url: `/dashboard/ehr/notes/${r.note_id}`,
       severity: ageHours > 48 ? 'warn' : 'info',
+    })
+  }
+
+  // 5) Active patients missing required consents
+  for (const r of missingConsents.rows) {
+    attentionAll.push({
+      id: `consent-${r.patient_id}`,
+      kind: 'consent_expiring',
+      patient_id: r.patient_id,
+      patient_name: r.patient_name,
+      label: r.patient_name || 'Unnamed patient',
+      why: `${r.missing_count} required consent ${Number(r.missing_count) === 1 ? 'document is' : 'documents are'} unsigned. Patient portal can complete.`,
+      action_url: `/dashboard/patients/${r.patient_id}#consents`,
+      severity: 'warn',
     })
   }
 
