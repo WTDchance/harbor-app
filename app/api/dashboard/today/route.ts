@@ -40,6 +40,7 @@ export async function GET(_req: NextRequest) {
     apptsMissingNote,
     activity,
     highRiskPatients,
+    stalePreauthRequests,
   ] = await Promise.all([
     pool.query(
       `SELECT name FROM practices WHERE id = $1 LIMIT 1`,
@@ -242,6 +243,18 @@ export async function GET(_req: NextRequest) {
         LIMIT 10`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
+    // Wave 43 chase reminder — preauth requests waiting > 14 days for payer
+    // response. Surfaces in the Needs-Attention block as a single tile.
+    pool.query(
+      `SELECT COUNT(*)::int AS stale_count
+         FROM ehr_preauth_requests
+        WHERE practice_id = $1
+          AND status IN ('submitted','pending')
+          AND submitted_at IS NOT NULL
+          AND submitted_at < NOW() - INTERVAL '14 days'`,
+      [practiceId],
+    ).catch(() => ({ rows: [{ stale_count: 0 }] as any[] })),
+
   ])
 
   const practiceName = practiceRow.rows[0]?.name || 'Your practice'
@@ -361,6 +374,21 @@ export async function GET(_req: NextRequest) {
       label: r.patient_name || 'Unnamed patient',
       why,
       action_url: `/dashboard/ehr/notes/new?patient_id=${r.patient_id}&appointment_id=${r.appointment_id}`,
+      severity: 'warn',
+    })
+  }
+
+  // 6) Pre-auth requests > 14 days awaiting payer response (W43 chase).
+  const stalePre = Number(stalePreauthRequests.rows[0]?.stale_count ?? 0)
+  if (stalePre > 0) {
+    attentionAll.push({
+      id: `preauth-stale-${stalePre}`,
+      kind: 'preauth_response_overdue',
+      patient_id: null,
+      patient_name: null,
+      label: `${stalePre} pre-auth request${stalePre === 1 ? '' : 's'} awaiting response`,
+      why: `${stalePre === 1 ? 'A request has been' : 'Requests have been'} pending > 14 days. Chase the payer or close the loop.`,
+      action_url: `/dashboard/preauth-requests`,
       severity: 'warn',
     })
   }

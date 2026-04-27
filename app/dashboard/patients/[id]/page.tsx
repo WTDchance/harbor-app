@@ -44,6 +44,7 @@ import { PortalLinkCard } from "@/components/ehr/PortalLinkCard"
 import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes"
 import { ExportPatientButton } from "@/components/ehr/ExportPatientButton"
 import { InsuranceCardScanner } from "@/components/ehr/InsuranceCardScanner"
+import { PreauthRequestsCard } from "@/components/ehr/PreauthRequestsCard"
 
 type PatientResp = {
   patient: {
@@ -101,6 +102,7 @@ type SectionKey =
   | 'biopsychosocial'
   | 'progress_notes' | 'assessments' | 'mood' | 'homework'
   | 'billing' | 'consents' | 'part2_consents' | 'portal' | 'communications'
+  | 'preauth_requests'
   | 'demographics' | 'history'
 
 const ALL_SECTIONS: { key: SectionKey; label: string; icon: any; default_open: boolean }[] = [
@@ -118,6 +120,7 @@ const ALL_SECTIONS: { key: SectionKey; label: string; icon: any; default_open: b
   { key: 'part2_consents',label: '42 CFR Part 2 Consents', icon: ShieldAlert,  default_open: false },
   { key: 'portal',        label: 'Patient Portal',     icon: ExternalLink, default_open: false },
   { key: 'communications',label: 'Communications',     icon: MessageSquare,default_open: false },
+  { key: 'preauth_requests', label: 'Pre-Authorization Requests', icon: FileText,    default_open: false },
   { key: 'demographics',  label: 'Demographics',       icon: SettingsIcon, default_open: false },
   { key: 'history',       label: 'Intake History',     icon: ClipboardList,default_open: false },
 ]
@@ -418,6 +421,8 @@ function SectionContent({ sectionKey, patientId, data }: { sectionKey: SectionKe
       return <CommsBlock data={data} />
     case 'demographics':
       return <DemographicsBlock data={data} />
+    case 'preauth_requests':
+      return <PreauthRequestsCard patientId={patientId} />
     case 'history':
       return <IntakeHistoryBlock data={data} />
     default:

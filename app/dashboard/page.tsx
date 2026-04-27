@@ -61,6 +61,7 @@ type AttentionItem = {
     | 'note_unsigned'
     | 'appointment_missing_note'
     | 'crisis_high_risk'
+    | 'preauth_response_overdue'
     // (legacy kinds kept so older clients don't break during deploy)
     | 'crisis'
     | 'unread_message'
