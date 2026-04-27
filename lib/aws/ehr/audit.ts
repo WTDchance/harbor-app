@@ -214,6 +214,7 @@ export type PortalAuditAction =
   | 'portal.assessment.complete'
   | 'portal.message.send'
   | 'portal.consent.sign'
+  | 'portal.superbill.download'
 
 /**
  * Audit a portal patient action. Mirrors auditEhrAccess() but takes a
