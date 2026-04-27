@@ -218,6 +218,11 @@ export type EhrAuditAction =
   | 'care_team.removed'
   | 'care_team.updated'
   | 'care_team.list'
+  | 'letter.template_create'
+  | 'letter.template_update'
+  | 'letter.generate'
+  | 'letter.view'
+  | 'letter.sign'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
