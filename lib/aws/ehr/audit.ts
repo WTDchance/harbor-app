@@ -147,6 +147,11 @@ export type EhrAuditAction =
   | 'part2_disclosure.create'
   | 'part2_disclosure.view'
   | 'part2_disclosure.list'
+  | 'insurance_authorization.create'
+  | 'insurance_authorization.update'
+  | 'insurance_authorization.view'
+  | 'insurance_authorization.list'
+  | 'insurance_authorization.used'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
