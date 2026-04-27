@@ -196,3 +196,47 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
   return { subject, html, from: EMAIL_SUPPORT }
 }
+
+// Supervisor heads-up email when a clinician initiates a mandatory
+// report. PHI-FREE — only the clinician name + the dashboard link
+// go in the body. Report type, patient name, and disclosure content
+// must NEVER appear here. Reply-To Support@.
+export function buildMandatoryReportSupervisorEmail(opts: {
+  clinicianName: string
+  reportUrl: string
+}): { subject: string; html: string; text: string; from: string } {
+  const subject = 'Action needed — mandatory report initiated'
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f0; margin: 0; padding: 20px; color: #1f2937; }
+.container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.header { background: #b91c1c; padding: 24px 32px; color: white; }
+.header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+.body { padding: 28px 32px; font-size: 15px; line-height: 1.7; color: #333; }
+.button { display: inline-block; background: #b91c1c; color: white !important; padding: 12px 28px; border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 15px; margin-top: 16px; }
+.note { font-size: 12px; color: #6b7280; margin-top: 20px; }
+.footer { padding: 18px 32px; background: #f9f9f7; font-size: 12px; color: #999; text-align: center; }
+</style></head>
+<body>
+<div class="container">
+  <div class="header"><h1>Mandatory report initiated</h1></div>
+  <div class="body">
+    <p><strong>${opts.clinicianName}</strong> has initiated a mandatory report on a patient.</p>
+    <p>This is a non-PHI heads-up. The clinician will work through the form, contact the appropriate agency, and record the outcome. Review the report in the dashboard:</p>
+    <a href="${opts.reportUrl}" class="button">Open report →</a>
+    <p class="note">This message intentionally contains no patient name, report type, or disclosure content. Open the dashboard to review.</p>
+  </div>
+  <div class="footer">Sent by Harbor</div>
+</div>
+</body></html>`
+  const text = [
+    `${opts.clinicianName} has initiated a mandatory report on a patient.`,
+    ``,
+    `This is a non-PHI heads-up. The clinician will work through the form, contact the appropriate agency, and record the outcome.`,
+    ``,
+    `Review at: ${opts.reportUrl}`,
+  ].join('\n')
+  return { subject, html, text, from: EMAIL_SUPPORT }
+}
+

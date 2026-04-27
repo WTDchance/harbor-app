@@ -104,6 +104,11 @@ export type EhrAuditAction =
   | 'patients.export'
   | 'patients.verify_identity'
   | 'admin.practice.decommission'
+  | 'mandatory_report.created'
+  | 'mandatory_report.viewed'
+  | 'mandatory_report.updated'
+  | 'mandatory_report.filed'
+  | 'mandatory_report.closed'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
