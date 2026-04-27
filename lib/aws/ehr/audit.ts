@@ -201,6 +201,17 @@ export type EhrAuditAction =
   | 'billing.superbill.snapshot_replayed'
   | 'billing.superbill.snapshot_regenerated'
   | 'billing.superbill.snapshot_integrity_failure'
+  // Wave 42 — practice-level cancellation policy + late-fee enforcement.
+  // Configured event records the practice writing/clearing the policy
+  // fields (hours, fee cents, no-show cents, disclosure text). charged
+  // / waived events fire on each Stripe charge or refund attempt; both
+  // late-cancel and no-show fees are tracked separately so audit replay
+  // can reconcile per-appointment fee state without joining tables.
+  | 'cancellation_policy.configured'
+  | 'cancellation_fee.charged'
+  | 'cancellation_fee.waived'
+  | 'no_show_fee.charged'
+  | 'no_show_fee.waived'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
