@@ -32,6 +32,7 @@ import {
   Sparkles, RefreshCw, Calendar, Phone, Video, Clock,
   AlertTriangle, FileText, MessageSquare, ChevronRight,
   CheckCircle2, Mic, ClipboardList, Activity, ArrowRight, Target,
+  ShieldAlert,
 } from "lucide-react"
 import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
 
@@ -59,6 +60,7 @@ type AttentionItem = {
     | 'treatment_plan_review'
     | 'note_unsigned'
     | 'appointment_missing_note'
+    | 'crisis_high_risk'
     // (legacy kinds kept so older clients don't break during deploy)
     | 'crisis'
     | 'unread_message'
@@ -76,7 +78,7 @@ type AttentionItem = {
   href?: string
   patient_id?: string | null
   patient_name?: string | null
-  severity: 'info' | 'warn' | 'urgent'
+  severity: 'info' | 'warn' | 'urgent' | 'crisis'
 }
 
 type ActivityItem = {
@@ -104,6 +106,9 @@ const ATTENTION_TONES: Record<AttentionItem['severity'], { bg: string; border: s
   info:   { bg: 'bg-blue-50',  border: 'border-blue-200',  text: 'text-blue-900',  icon: 'text-blue-600' },
   warn:   { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-900', icon: 'text-amber-600' },
   urgent: { bg: 'bg-red-50',   border: 'border-red-200',   text: 'text-red-900',   icon: 'text-red-600' },
+  // Wave 38 / TS5 — Stanley-Brown crisis card. Same red palette as urgent
+  // but a stronger background so it visually anchors at the top of the list.
+  crisis: { bg: 'bg-red-100',  border: 'border-red-300',   text: 'text-red-900',   icon: 'text-red-700' },
 }
 
 export default function TodayPage() {
@@ -290,7 +295,8 @@ function PillStat({ label, value, tone }: { label: string; value: number; tone: 
 function AttentionRow({ item }: { item: AttentionItem }) {
   const tone = ATTENTION_TONES[item.severity]
   const Icon =
-    item.kind === 'crisis' ? AlertTriangle
+    item.kind === 'crisis_high_risk' ? ShieldAlert
+    : item.kind === 'crisis' ? AlertTriangle
     : item.kind === 'note_unsigned' ? FileText
     : item.kind === 'unread_message' ? MessageSquare
     : item.kind === 'missed_call' ? Phone

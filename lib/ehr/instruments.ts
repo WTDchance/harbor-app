@@ -21,6 +21,18 @@ export type Question = {
   id: string
   text: string
   options: ResponseOption[]
+  /** Optional follow-up rendered when this question is answered Yes (value === 1).
+   *  The follow-up answer is stored alongside the answers map under `followup_id`. */
+  followup?: {
+    /** Stored under this key in the answers / responses_json map. */
+    id: string
+    /** Prompt shown to the patient. */
+    text: string
+    /** Render hint for the portal UI. */
+    input_type: 'date' | 'text'
+    /** Show the follow-up only when the parent question's value matches. */
+    show_when: number
+  }
 }
 
 export type SeverityBand = {
@@ -650,11 +662,145 @@ export const VANDERBILT_TEACHER: Instrument = {
   ],
 }
 
+
+// ---------------------------------------------------------------------------
+// CSSRS — Columbia Suicide Severity Rating Scale, Self-Report
+//   Lifetime / Recent, ages 12+. Posner et al., Columbia University.
+//   Six yes/no items. Q6 has a follow-up date field ("How long ago...").
+//   Severity is the HIGHEST-severity Yes (1..6), not a sum:
+//     Q1 yes → 1 Wish to be dead
+//     Q2 yes → 2 Non-specific active suicidal thoughts
+//     Q3 yes → 3 Active suicidal ideation with method
+//     Q4 yes → 4 Active suicidal ideation with intent
+//     Q5 yes → 5 Active suicidal ideation with plan and intent (HIGH RISK)
+//     Q6 yes within last 3 months → 6 Suicidal behavior — recent (CRITICAL)
+//     Q6 yes outside last 3 months → still 6, but flagged historical.
+//   Severity ≥ 5 OR Q6-recent must set patients.risk_level = 'high' and
+//   trigger a crisis alert in addition to the normal completion flow.
+// ---------------------------------------------------------------------------
+
+/** Optional companion key written into responses_json when Q6 is yes:
+ *  the date the most recent attempt/preparatory behavior occurred (ISO date).
+ *  The portal UI converts that date to a 0/1 "recent" flag stored under
+ *  `cssrs_6_recent` (1 = within last 3 months, 0 = older) so the pure
+ *  scoring function below can stay numeric. */
+const CSSRS_BANDS: SeverityBand[] = [
+  { min: 0, max: 0, label: 'No suicidal ideation or behavior reported', color: 'green' },
+  { min: 1, max: 1, label: 'Wish to be dead',                          color: 'amber' },
+  { min: 2, max: 2, label: 'Non-specific active suicidal thoughts',    color: 'amber' },
+  { min: 3, max: 3, label: 'Active suicidal ideation with method',     color: 'orange' },
+  { min: 4, max: 4, label: 'Active suicidal ideation with intent',     color: 'orange' },
+  { min: 5, max: 5, label: 'Active suicidal ideation with plan and intent', color: 'red' },
+  { min: 6, max: 6, label: 'Suicidal behavior',                        color: 'red' },
+]
+
+export const CSSRS: Instrument = {
+  id: 'CSSRS',
+  name: 'C-SSRS — Columbia Suicide Severity Rating Scale (Self-Report)',
+  description:
+    'Columbia Suicide Severity Rating Scale — Self-Report, Lifetime/Recent. Six yes/no items measuring the spectrum of suicidal ideation and behavior. Ages 12+.',
+  max_score: 6,
+  estimated_minutes: 3,
+  instructions:
+    'The following questions ask about thoughts of suicide and behaviors. Please answer each question honestly — your answers help us keep you safe. If you answered Yes to question 6, please also tell us how long ago.',
+  questions: [
+    {
+      id: 'cssrs_1',
+      text: 'Have you wished you were dead or wished you could go to sleep and not wake up?',
+      options: YES_NO_OPTIONS,
+    },
+    {
+      id: 'cssrs_2',
+      text: 'Have you actually had any thoughts of killing yourself?',
+      options: YES_NO_OPTIONS,
+    },
+    {
+      id: 'cssrs_3',
+      text: 'Have you been thinking about how you might do this?',
+      options: YES_NO_OPTIONS,
+    },
+    {
+      id: 'cssrs_4',
+      text: 'Have you had these thoughts and had some intention of acting on them?',
+      options: YES_NO_OPTIONS,
+    },
+    {
+      id: 'cssrs_5',
+      text: 'Have you started to work out or worked out the details of how to kill yourself? Do you intend to carry out this plan?',
+      options: YES_NO_OPTIONS,
+    },
+    {
+      id: 'cssrs_6',
+      text: 'Have you ever done anything, started to do anything, or prepared to do anything to end your life? Examples: Collected pills, obtained a gun, gave away valuables, wrote a will or suicide note, took out pills but didn\'t swallow any, held a gun but changed your mind or it was grabbed from your hand, went to the roof but didn\'t jump; or actually took pills, tried to shoot yourself, cut yourself, tried to hang yourself, etc.',
+      options: YES_NO_OPTIONS,
+      followup: {
+        id: 'cssrs_6_when',
+        text: 'How long ago did you do any of these?',
+        input_type: 'date',
+        show_when: 1,
+      },
+    },
+  ],
+  // Highest-severity Yes wins. Q6-recent (within last 3 months) is encoded
+  // by the portal as cssrs_6_recent = 1 so this stays a pure numeric fn.
+  scoring: (a) => {
+    let highest = 0
+    if ((a.cssrs_1 ?? 0) === 1) highest = Math.max(highest, 1)
+    if ((a.cssrs_2 ?? 0) === 1) highest = Math.max(highest, 2)
+    if ((a.cssrs_3 ?? 0) === 1) highest = Math.max(highest, 3)
+    if ((a.cssrs_4 ?? 0) === 1) highest = Math.max(highest, 4)
+    if ((a.cssrs_5 ?? 0) === 1) highest = Math.max(highest, 5)
+    if ((a.cssrs_6 ?? 0) === 1) highest = Math.max(highest, 6)
+    return highest
+  },
+  bands: CSSRS_BANDS,
+  severity: (s) => bandFor(s, CSSRS_BANDS),
+  alert_rules: [
+    {
+      type: 'suicidal_ideation',
+      severity: 'error',
+      // Any Yes to Q2..Q5 endorses active ideation — escalate to therapist.
+      trigger: (a) =>
+        (a.cssrs_2 ?? 0) === 1 ||
+        (a.cssrs_3 ?? 0) === 1 ||
+        (a.cssrs_4 ?? 0) === 1 ||
+        (a.cssrs_5 ?? 0) === 1,
+      message:
+        'C-SSRS: active suicidal ideation endorsed. Clinical review required within 24 hours.',
+    },
+    {
+      type: 'suicidal_plan_intent',
+      severity: 'error',
+      // Q5 = ideation with plan AND intent. High risk by published rubric.
+      trigger: (a) => (a.cssrs_5 ?? 0) === 1,
+      message:
+        'C-SSRS Q5 endorsed: active suicidal ideation with plan and intent. High risk — initiate safety plan now.',
+    },
+    {
+      type: 'suicidal_behavior_recent',
+      severity: 'error',
+      // Q6 yes within the last 3 months (encoded by portal as cssrs_6_recent=1).
+      trigger: (a) =>
+        (a.cssrs_6 ?? 0) === 1 && (a.cssrs_6_recent ?? 0) === 1,
+      message:
+        'C-SSRS Q6 endorsed within last 3 months: recent suicidal behavior. CRITICAL — assess for immediate safety, consider 988 / ED referral.',
+    },
+    {
+      type: 'suicidal_behavior_lifetime',
+      severity: 'warn',
+      trigger: (a) =>
+        (a.cssrs_6 ?? 0) === 1 && (a.cssrs_6_recent ?? 0) !== 1,
+      message:
+        'C-SSRS Q6 endorsed (historical, not within last 3 months): prior suicidal behavior on record.',
+    },
+  ],
+}
+
 // ---------------------------------------------------------------------------
 // Registry + helpers
 // ---------------------------------------------------------------------------
 
-export const INSTRUMENTS: Instrument[] = [PHQ_9, GAD_7, PHQ_2, GAD_2, PCL_5, AUDIT_C, AUDIT, DAST_10, VANDERBILT_PARENT, VANDERBILT_TEACHER]
+export const INSTRUMENTS: Instrument[] = [PHQ_9, GAD_7, PHQ_2, GAD_2, PCL_5, AUDIT_C, AUDIT, DAST_10, VANDERBILT_PARENT, VANDERBILT_TEACHER, CSSRS]
 
 export function getInstrument(id: string): Instrument | undefined {
   const normalized = id.toUpperCase().replace(/[^A-Z0-9-]/g, '')

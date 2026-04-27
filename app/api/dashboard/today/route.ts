@@ -39,6 +39,7 @@ export async function GET(_req: NextRequest) {
     missingConsents,
     apptsMissingNote,
     activity,
+    highRiskPatients,
   ] = await Promise.all([
     pool.query(
       `SELECT name FROM practices WHERE id = $1 LIMIT 1`,
@@ -195,6 +196,52 @@ export async function GET(_req: NextRequest) {
         ORDER BY occurred_at DESC LIMIT 15`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
+
+    // 6. Wave 38 / TS5 — High suicide-risk patients (e.g. CSSRS severity ≥ 5
+    //    or Q6 endorsement raised risk_level to 'high'/'crisis') who do
+    //    NOT yet have a usable Stanley-Brown safety plan on file. These
+    //    surface as the Today crisis card so the therapist sees them
+    //    before the next session starts.
+    pool.query(
+      `SELECT p.id AS patient_id,
+              p.first_name || ' ' || p.last_name AS patient_name,
+              p.risk_level,
+              (
+                SELECT MAX(pa.completed_at)
+                  FROM patient_assessments pa
+                 WHERE pa.patient_id = p.id
+                   AND pa.assessment_type = 'CSSRS'
+                   AND pa.status = 'completed'
+              ) AS last_cssrs_at,
+              (
+                SELECT MAX(pa.score)
+                  FROM patient_assessments pa
+                 WHERE pa.patient_id = p.id
+                   AND pa.assessment_type = 'CSSRS'
+                   AND pa.status = 'completed'
+                   AND pa.completed_at > NOW() - INTERVAL '30 days'
+              ) AS recent_cssrs_score,
+              EXISTS (
+                SELECT 1 FROM ehr_safety_plans sp
+                 WHERE sp.patient_id = p.id
+                   AND sp.status = 'active'
+                   AND (
+                     COALESCE(sp.section_1_warning_signs, '') <> ''
+                     OR COALESCE(sp.section_2_internal_coping, '') <> ''
+                     OR COALESCE(sp.section_3_distraction_contacts, '') <> ''
+                     OR COALESCE(sp.section_4_help_contacts, '') <> ''
+                     OR COALESCE(sp.section_5_professionals_agencies, '') <> ''
+                     OR COALESCE(sp.section_6_means_restriction, '') <> ''
+                   )
+              ) AS has_usable_safety_plan
+         FROM patients p
+        WHERE p.practice_id = $1
+          AND p.risk_level IN ('high','crisis')
+          AND COALESCE(p.patient_status, 'active') NOT IN ('inactive','discharged','archived')
+        ORDER BY p.last_contact_at DESC NULLS LAST
+        LIMIT 10`,
+      [practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
   ])
 
   const practiceName = practiceRow.rows[0]?.name || 'Your practice'
@@ -207,6 +254,29 @@ export async function GET(_req: NextRequest) {
 
   function fmtMonth(d: Date): string {
     return d.toLocaleString(undefined, { month: 'short', year: 'numeric' })
+  }
+
+  // 0) Wave 38 / TS5 crisis card — high suicide-risk patients without a
+  //    usable Stanley-Brown safety plan. These get top priority and are
+  //    rendered with a red 'crisis' severity in the UI.
+  for (const r of highRiskPatients.rows) {
+    const why = r.has_usable_safety_plan
+      ? r.recent_cssrs_score != null
+        ? `C-SSRS severity ${r.recent_cssrs_score}/6 in last 30 days. Active safety plan on file — review before next contact.`
+        : 'Risk level set to high. Active safety plan on file — review before next contact.'
+      : r.recent_cssrs_score != null
+        ? `C-SSRS severity ${r.recent_cssrs_score}/6 in last 30 days. No usable safety plan on file — build the Stanley-Brown plan with the patient.`
+        : 'Risk level set to high. No usable safety plan on file — build the Stanley-Brown plan with the patient.'
+    attentionAll.push({
+      id: `crisis-${r.patient_id}`,
+      kind: 'crisis_high_risk',
+      patient_id: r.patient_id,
+      patient_name: r.patient_name,
+      label: r.patient_name || 'Unnamed patient',
+      why,
+      action_url: `/dashboard/patients/${r.patient_id}#safety_plan`,
+      severity: 'crisis',
+    })
   }
 
   // 1) Overdue assessments
@@ -327,7 +397,7 @@ export async function GET(_req: NextRequest) {
       occurred_at: a.occurred_at,
     })),
     drafts_pending: unsignedNotes.rows.length,
-    crisis_count: 0,
+    crisis_count: highRiskPatients.rows.length,
     unread_messages: 0,
     attention_overflow,
   })

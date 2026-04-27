@@ -33,6 +33,15 @@ function inferSeverity(type: string, score: number): string {
   if (t.includes('PHQ-2') || t === 'PHQ2' || t.includes('GAD-2') || t === 'GAD2') {
     return score >= 3 ? 'positive' : 'negative'
   }
+  if (t === 'CSSRS' || t.includes('C-SSRS') || t.includes('CSSRS')) {
+    if (score >= 6) return 'Suicidal behavior'
+    if (score >= 5) return 'Active suicidal ideation with plan and intent'
+    if (score >= 4) return 'Active suicidal ideation with intent'
+    if (score >= 3) return 'Active suicidal ideation with method'
+    if (score >= 2) return 'Non-specific active suicidal thoughts'
+    if (score >= 1) return 'Wish to be dead'
+    return 'No suicidal ideation or behavior reported'
+  }
   return 'unspecified'
 }
 
@@ -86,6 +95,35 @@ export async function POST(req: NextRequest) {
   )
   const assessment = rows[0]
 
+  // Manual CSSRS entry at severity ≥ 5 → escalate risk_level to 'high'
+  // and drop a crisis_alerts row, mirroring the portal completion path.
+  const t = (body.assessment_type || '').toUpperCase()
+  const isCssrs = t === 'CSSRS' || t.includes('C-SSRS')
+  const isHighRisk = isCssrs && Number(body.score) >= 5
+  if (isHighRisk) {
+    await pool.query(
+      `UPDATE patients
+          SET risk_level = 'high'
+        WHERE id = $1
+          AND practice_id = $2
+          AND (risk_level IS NULL OR risk_level NOT IN ('high','crisis'))`,
+      [body.patient_id, ctx.practiceId],
+    ).catch(err => console.error('[ehr/assessments] risk_level update failed', err))
+
+    await pool.query(
+      `INSERT INTO crisis_alerts (
+         practice_id, patient_id, tier, matched_phrases, transcript_snippet
+       ) VALUES (
+         $1, $2, 2, $3::text[], $4
+       )`,
+      [
+        ctx.practiceId, body.patient_id,
+        [`CSSRS_severity_${body.score}`],
+        `Therapist recorded C-SSRS at severity level ${body.score} (${severity}).`,
+      ],
+    ).catch(err => console.error('[ehr/assessments] crisis_alerts insert failed', err))
+  }
+
   await auditEhrAccess({
     ctx,
     action: 'note.create', // no dedicated assessment.create enum entry; closest match
@@ -96,6 +134,7 @@ export async function POST(req: NextRequest) {
       type: body.assessment_type,
       score: body.score,
       severity,
+      cssrs_high_risk: isHighRisk,
     },
   })
 
