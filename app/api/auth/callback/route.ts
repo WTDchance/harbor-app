@@ -39,10 +39,24 @@ export async function GET(req: NextRequest) {
       id_len: tokens.id_token?.length, access_len: tokens.access_token?.length,
       refresh_len: tokens.refresh_token?.length, expires_in: tokens.expires_in,
     }))
-    await verifyIdToken(tokens.id_token)
+    const claims = await verifyIdToken(tokens.id_token)
     console.log('[auth/callback] id token verified')
 
-    const target = state.startsWith('/') ? state : '/dashboard'
+    // Wave 30 — admin landing routing. Admins (per ADMIN_EMAIL allowlist)
+    // land on /admin by default; everyone else lands on /dashboard. An
+    // explicit ?next= override (e.g. deep link from email) wins either
+    // way. The default-to-dashboard fallback is preserved when state is
+    // exactly '/dashboard'.
+    const adminEmails = (process.env.ADMIN_EMAIL || 'chancewonser@gmail.com')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean)
+    const isAdmin = !!claims?.email && adminEmails.includes(claims.email.toLowerCase())
+    const stateIsDefault = state === '/dashboard'
+    const defaultTarget = isAdmin ? '/admin' : '/dashboard'
+    const target = state.startsWith('/')
+      ? (stateIsDefault ? defaultTarget : state)
+      : defaultTarget
     const redirectTo = absoluteUrl(req, target)
     console.log('[auth/callback] redirecting to', redirectTo)
     const res = NextResponse.redirect(redirectTo)
