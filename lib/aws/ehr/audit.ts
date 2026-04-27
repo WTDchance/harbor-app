@@ -112,6 +112,10 @@ export type EhrAuditAction =
   | 'mental_status_exam.created'
   | 'mental_status_exam.updated'
   | 'mental_status_exam.completed'
+  | 'discharge_summary.viewed'
+  | 'discharge_summary.created'
+  | 'discharge_summary.updated'
+  | 'discharge_summary.completed'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
