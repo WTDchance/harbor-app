@@ -138,29 +138,30 @@ I did not bundle these into this PR because:
 - Bundling them with a small "Resend wording sweep" PR after the active
   wave settles is safer.
 
-## Decision needed from the user — AgentMail
+## AgentMail decision — RESOLVED 2026-04-27 (Wave 39)
 
-`lib/agentmail.ts`, `app/api/integrations/agentmail/route.ts`, and
-`app/api/webhooks/email/route.ts` integrate with **AgentMail**, a
-third-party email-inbox provider. It is used for inbound email (one
-inbox per practice; messages arrive via Svix-signed webhooks) and is
-**not** part of the brief's HIPAA-aligned stack.
+User picked **option 3 (remove)** in the Wave 39 brief. Closure PR
+`chore/agentmail-removal` deletes:
 
-Three options, in order of risk:
+- `lib/agentmail.ts` (the API client wrapper)
+- `app/api/integrations/agentmail/route.ts` (admin list/create/delete
+  inbox endpoints; was wired to legacy Supabase auth, not Cognito —
+  unreachable from any UI on the AWS deploy)
+- `app/api/webhooks/email/route.ts` (Svix-signed webhook receiver
+  whose `handleInboundEmail` was a stub of three TODO lines —
+  inbound email was scaffolded but never actually wired into a
+  practice or AI agent)
 
-1. **Keep, add a BAA flag**: if AgentMail has a BAA with Harbor and
-   was approved before the brief was written, document the approval
-   in `docs/key-management-policy.md` and leave the integration in.
-2. **Wall off behind a feature flag** (`USE_AGENTMAIL=false` defaults
-   to false, code is dormant unless the flag flips). Enable per
-   environment only after BAA verification.
-3. **Remove** — drop the three files and the `AGENTMAIL_*` env vars.
-   Inbound email lives somewhere else (SES inbound, Cloudflare Email
-   Workers, or a dedicated transactional-mail vendor with a BAA).
+Env vars `AGENTMAIL_API_KEY` and `AGENTMAIL_WEBHOOK_SECRET` should be
+removed from Railway / SSM after the merge — no code reads them
+anymore. No `agentmail` package was in `package.json`, so no
+`npm uninstall` was needed.
 
-This PR makes **zero changes** to the AgentMail surfaces. The user
-should pick (1), (2), or (3) and the follow-up patch is small under
-any of them.
+If the user later signs a BAA and wants AgentMail back, the cleanest
+re-introduction path is a fresh integration that uses Cognito-backed
+auth on the management surface and a real inbound-email handler
+(not a stub) on the webhook receiver. Don't restore the deleted
+files verbatim; their auth wiring was Supabase-era.
 
 ## Acceptance criteria from the brief
 
