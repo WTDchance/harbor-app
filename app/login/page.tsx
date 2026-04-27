@@ -55,16 +55,8 @@ function LoginForm() {
       <div className="w-full max-w-md">
         {/* Logo + brand */}
         <div className="flex flex-col items-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-teal-600 flex items-center justify-center mb-4 shadow-md">
-            {/* Anchor / harbor mark — placeholder. Swap for /harbor-icon-clean.png once asset lands. */}
-            <svg viewBox="0 0 24 24" className="w-8 h-8 text-white" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="6" r="2.5" />
-              <path d="M12 8.5v13" />
-              <path d="M5 13v2a7 7 0 0 0 14 0v-2" />
-              <path d="M3 13h4" />
-              <path d="M17 13h4" />
-            </svg>
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/harbor-icon-clean.png" alt="Harbor" className="w-14 h-14 mb-4" />
           <h1 className="text-2xl font-semibold text-gray-900">Welcome to Harbor</h1>
           <p className="text-sm text-gray-500 mt-1">Sign in to your practice</p>
         </div>
@@ -91,7 +83,7 @@ function LoginForm() {
                 autoComplete="email"
                 autoFocus
                 className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                placeholder="you@yourpractice.com"
+                placeholder="Email address"
               />
             </div>
 
@@ -112,7 +104,7 @@ function LoginForm() {
                 required
                 autoComplete="current-password"
                 className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent"
-                placeholder="••••••••"
+                placeholder="Password"
               />
             </div>
 
