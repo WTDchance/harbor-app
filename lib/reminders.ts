@@ -10,7 +10,7 @@
 // stuck in A2P 10DLC review.
 
 import { supabaseAdmin } from '@/lib/supabase'
-import { sendSMS } from '@/lib/twilio'
+import { sendSMS } from '@/lib/aws/signalwire'
 import { sendPatientEmail, EMAIL_SUPPORT } from '@/lib/email'
 
 /**
@@ -112,9 +112,17 @@ async function sendRemindersForDate(targetDate: Date, hoursAhead: number) {
     // --- SMS ---
     if (patient.phone) {
       try {
-        await sendSMS(patient.phone, smsMessage)
-        anyChannelSent = true
-        console.log(`✓ SMS ${hoursAhead}hr reminder sent to ${patient.phone}`)
+        const r = await sendSMS({
+          to: patient.phone,
+          body: smsMessage,
+          practiceId: (appt as any).practice_id ?? null,
+        })
+        if (r.ok) {
+          anyChannelSent = true
+          console.log(`✓ SMS ${hoursAhead}hr reminder sent to ${patient.phone}`)
+        } else {
+          console.error(`SMS reminder failed for ${patient.phone}: ${r.reason}`)
+        }
       } catch (err) {
         console.error(`SMS reminder failed for ${patient.phone}:`, err)
       }
