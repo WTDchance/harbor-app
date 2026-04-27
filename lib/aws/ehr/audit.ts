@@ -139,6 +139,14 @@ export type EhrAuditAction =
   | 'admin.roi_lead.list'
   | 'admin.roi_lead.update'
   | 'admin.support_ticket.list'
+  // Wave 41 — 42 CFR Part 2 separate consent track.
+  | 'part2_consent.create'
+  | 'part2_consent.view'
+  | 'part2_consent.list'
+  | 'part2_consent.revoke'
+  | 'part2_disclosure.create'
+  | 'part2_disclosure.view'
+  | 'part2_disclosure.list'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

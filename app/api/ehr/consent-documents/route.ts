@@ -11,7 +11,7 @@ import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const VALID_KINDS = new Set(['hipaa_npp', 'telehealth', 'financial_responsibility', 'roi'])
+const VALID_KINDS = new Set(['hipaa_npp', 'telehealth', 'financial_responsibility', 'roi', '42_cfr_part2'])
 
 export async function GET(_req: NextRequest) {
   const ctx = await requireEhrApiSession()
