@@ -123,8 +123,22 @@ export default function InsurancePage() {
           subscriber_name: record.subscriber_name,
         })
       })
-      const data = await res.json()
-      if (!res.ok && data.error) setError(data.error)
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        // Wave 39 — read the structured `{ code, message, retryable }`
+        // envelope; tolerate older shapes in case anything still returns a
+        // plain string.
+        const structured =
+          data && typeof data === 'object' && data.error && typeof data.error === 'object'
+            ? data.error
+            : null
+        const friendly =
+          structured?.message ||
+          (typeof data?.error_message === 'string' ? data.error_message : null) ||
+          (typeof data?.error === 'string' ? data.error : null) ||
+          `Verification failed (${res.status})`
+        setError(friendly)
+      }
       await fetchRecords()
     } catch { setError('Verification failed') }
     setVerifying(null)
