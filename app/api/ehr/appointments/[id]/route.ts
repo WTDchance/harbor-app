@@ -140,6 +140,21 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     details: { scope, patch_keys: Object.keys(patch).filter(k => ALLOWED_PATCH_KEYS.has(k)), updated: upd.rowCount },
   })
 
+  // Wave 42 — when a therapist marks one or more rows as no_show, fire
+  // the practice's no-show fee enforcement against each affected row.
+  // Late-cancel fees are *not* fired from here because the constraint
+  // says therapist-initiated cancellations don't trigger fees.
+  if (patch.status === 'no_show' && upd.rowCount && upd.rowCount > 0) {
+    try {
+      const { enforceNoShowFee } = await import('@/lib/aws/ehr/cancellation-policy')
+      for (const r of upd.rows) {
+        await enforceNoShowFee(r.id, 'system')
+      }
+    } catch (err) {
+      console.error('[ehr/appointments] no-show fee enforcement failed:', (err as Error).message)
+    }
+  }
+
   return NextResponse.json({ updated: upd.rowCount })
 }
 

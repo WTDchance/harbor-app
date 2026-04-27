@@ -207,6 +207,16 @@ export async function POST(req: NextRequest) {
       .update({ status: 'no_show', no_show_followup_sent: true, no_show_followup_sent_at: new Date().toISOString() })
       .eq('id', appointment_id)
 
+    // Wave 42 — practice-level no-show fee enforcement. Library is a
+    // no-op when no policy is configured. Charge failures fall back to
+    // billable-on-invoice; never blocks the follow-up flow.
+    try {
+      const { enforceNoShowFee } = await import('@/lib/aws/ehr/cancellation-policy')
+      await enforceNoShowFee(appointment_id, 'system')
+    } catch (err) {
+      console.error('[no-show-followup] no-show fee enforcement failed:', err)
+    }
+
     const now = new Date()
     const lookAhead = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000) // 30 days out
 
