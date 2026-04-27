@@ -15,8 +15,21 @@
 // We DO NOT implement BYMONTHDAY / BYSETPOS / EXDATE / RDATE — practices
 // scheduling weekly therapy sessions don't need them, and a richer RRULE
 // engine (rrule.js) can drop in later behind the same expand() signature.
+//
+// Wave 43 T1: optional `timezone` argument preserves wall-clock time
+// across DST boundaries (a 9am PST appointment stays 9am after DST
+// flips to PDT). When the offset shifts between the anchor start and
+// an expanded occurrence we flag `dstAdjusted: true` so the API layer
+// can stamp `appointments.dst_adjusted`. Holiday detection lives in
+// `holidays.ts`; the API decorates occurrences with `holidayException`
+// at write time.
 
-export type ExpandedOccurrence = { startUtcIso: string }
+export type ExpandedOccurrence = {
+  startUtcIso: string
+  /** True when the UTC instant was shifted to preserve the local clock
+   *  time across a DST transition relative to the anchor start. */
+  dstAdjusted?: boolean
+}
 
 export type ParsedRRule = {
   freq: 'DAILY' | 'WEEKLY' | 'MONTHLY' | 'YEARLY'
@@ -79,6 +92,67 @@ const DAY_INDEX: Record<string, number> = {
 }
 
 /**
+ * Return the offset (in minutes) east of UTC for a given UTC instant
+ * in the supplied IANA timezone. e.g. America/Los_Angeles is -480
+ * during PST and -420 during PDT. Returns 0 if the timezone is invalid
+ * or if Intl is unavailable (we fall back to UTC, which is what the
+ * pre-W43 expander assumed).
+ */
+export function tzOffsetMinutes(utcDate: Date, timezone: string): number {
+  if (!timezone) return 0
+  try {
+    // Format the UTC instant as if it were in `timezone`, then parse it
+    // back as if it were UTC. The delta is the offset.
+    const fmt = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit',
+      hour12: false,
+    })
+    const parts = fmt.formatToParts(utcDate).reduce<Record<string, string>>((acc, p) => {
+      if (p.type !== 'literal') acc[p.type] = p.value
+      return acc
+    }, {})
+    const asUtc = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour) === 24 ? 0 : Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    )
+    return Math.round((asUtc - utcDate.getTime()) / 60_000)
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * Adjust a UTC Date so its wall-clock representation in `timezone`
+ * matches the wall-clock representation of `anchor` in `timezone`.
+ *
+ * Returns the (possibly shifted) Date and a `dstAdjusted` flag that's
+ * true iff the offset between anchor and target differed (meaning we
+ * crossed a DST boundary).
+ */
+export function preserveLocalClock(
+  target: Date,
+  anchor: Date,
+  timezone: string,
+): { date: Date; dstAdjusted: boolean } {
+  if (!timezone) return { date: target, dstAdjusted: false }
+  const anchorOffset = tzOffsetMinutes(anchor, timezone)
+  const targetOffset = tzOffsetMinutes(target, timezone)
+  if (anchorOffset === targetOffset) {
+    return { date: target, dstAdjusted: false }
+  }
+  // If target's offset is +60 vs anchor (e.g. PST → PDT), the same
+  // wall-clock moment is +60 minutes earlier in UTC; subtract.
+  const deltaMs = (targetOffset - anchorOffset) * 60_000
+  return { date: new Date(target.getTime() - deltaMs), dstAdjusted: true }
+}
+
+/**
  * Expand a parsed RRULE starting from `start` into UTC occurrence ISO
  * strings. The first occurrence is `start` itself unless BYDAY excludes
  * its weekday (in which case we advance to the next valid day).
@@ -86,7 +160,7 @@ const DAY_INDEX: Record<string, number> = {
  * `maxOccurrences` is a hard cap so a misconfigured rule can't
  * produce 100k rows.
  */
-export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12): ExpandedOccurrence[] {
+export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12, timezone?: string): ExpandedOccurrence[] {
   const out: ExpandedOccurrence[] = []
   const cap = Math.min(rule.count ?? maxOccurrences, maxOccurrences)
   const days = rule.byDay && rule.byDay.length
@@ -116,7 +190,13 @@ export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12): Exp
         if (rule.untilUtc && d.getTime() > rule.untilUtc.getTime()) {
           return out
         }
-        out.push({ startUtcIso: d.toISOString() })
+        const adj = timezone
+          ? preserveLocalClock(d, start, timezone)
+          : { date: d, dstAdjusted: false }
+        out.push({
+          startUtcIso: adj.date.toISOString(),
+          dstAdjusted: adj.dstAdjusted || undefined,
+        })
         if (out.length >= cap) return out
       }
       weekIdx++
@@ -129,7 +209,13 @@ export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12): Exp
     let d = new Date(start)
     while (out.length < cap) {
       if (rule.untilUtc && d.getTime() > rule.untilUtc.getTime()) return out
-      out.push({ startUtcIso: d.toISOString() })
+      const adj = timezone
+        ? preserveLocalClock(d, start, timezone)
+        : { date: d, dstAdjusted: false }
+      out.push({
+        startUtcIso: adj.date.toISOString(),
+        dstAdjusted: adj.dstAdjusted || undefined,
+      })
       d = new Date(d.getTime() + rule.interval * 86_400_000)
     }
     return out
@@ -139,7 +225,13 @@ export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12): Exp
     let d = new Date(start)
     while (out.length < cap) {
       if (rule.untilUtc && d.getTime() > rule.untilUtc.getTime()) return out
-      out.push({ startUtcIso: d.toISOString() })
+      const adj = timezone
+        ? preserveLocalClock(d, start, timezone)
+        : { date: d, dstAdjusted: false }
+      out.push({
+        startUtcIso: adj.date.toISOString(),
+        dstAdjusted: adj.dstAdjusted || undefined,
+      })
       const next = new Date(d)
       next.setUTCMonth(next.getUTCMonth() + rule.interval)
       d = next
@@ -151,7 +243,13 @@ export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12): Exp
     let d = new Date(start)
     while (out.length < cap) {
       if (rule.untilUtc && d.getTime() > rule.untilUtc.getTime()) return out
-      out.push({ startUtcIso: d.toISOString() })
+      const adj = timezone
+        ? preserveLocalClock(d, start, timezone)
+        : { date: d, dstAdjusted: false }
+      out.push({
+        startUtcIso: adj.date.toISOString(),
+        dstAdjusted: adj.dstAdjusted || undefined,
+      })
       const next = new Date(d)
       next.setUTCFullYear(next.getUTCFullYear() + rule.interval)
       d = next
@@ -166,10 +264,10 @@ export function expand(start: Date, rule: ParsedRRule, maxOccurrences = 12): Exp
  * Convenience wrapper: take an UTC start ISO + a rule string, return the
  * next N occurrences (always including the start as occurrence 0).
  */
-export function nextOccurrences(startIso: string, rule: string, n = 12): string[] {
+export function nextOccurrences(startIso: string, rule: string, n = 12, timezone?: string): string[] {
   const start = new Date(startIso)
   if (Number.isNaN(start.getTime())) return []
   const parsed = parseRrule(rule)
   if (!parsed) return [startIso]
-  return expand(start, parsed, n).map(e => e.startUtcIso)
+  return expand(start, parsed, n, timezone).map(e => e.startUtcIso)
 }

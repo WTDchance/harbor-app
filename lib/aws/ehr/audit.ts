@@ -231,6 +231,8 @@ export type EhrAuditAction =
   | 'telehealth.recording.downloaded'
   | 'telehealth.recording.deleted'
   | 'telehealth.recording.consent_missing'
+  | 'recurrence.dst_adjusted'
+  | 'recurrence.holiday_exception_flagged'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
