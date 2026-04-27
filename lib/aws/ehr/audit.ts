@@ -153,6 +153,11 @@ export type EhrAuditAction =
   | 'note.patient.added'
   | 'note.patient.removed'
   | 'note.patient.section_updated'
+  | 'era.received'
+  | 'era.parsed'
+  | 'era.matched_auto'
+  | 'era.matched_manual'
+  | 'era.viewed'
   // Wave 41 — 42 CFR Part 2 separate consent track.
   | 'part2_consent.create'
   | 'part2_consent.view'
