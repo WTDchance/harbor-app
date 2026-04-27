@@ -104,6 +104,21 @@ export type EhrAuditAction =
   | 'patients.export'
   | 'patients.verify_identity'
   | 'admin.practice.decommission'
+  // Wave 39 — audit-gap closure (8 routes flagged in docs/hipaa-audit-matrix.md).
+  // Names finalised against docs/audit-gap-proposals.md.
+  | 'appointment.session.view'
+  | 'appointment.session.start'
+  | 'appointment.session.stop'
+  | 'appointment.session.reset'
+  | 'homework.update'
+  | 'homework.complete'
+  | 'message.thread.view'
+  | 'mood.list'
+  | 'diagnoses.recent.list'
+  | 'admin.patient.list'
+  | 'admin.roi_lead.list'
+  | 'admin.roi_lead.update'
+  | 'admin.support_ticket.list'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
