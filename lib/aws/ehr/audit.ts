@@ -139,6 +139,11 @@ export type EhrAuditAction =
   | 'admin.roi_lead.list'
   | 'admin.roi_lead.update'
   | 'admin.support_ticket.list'
+  | 'era.received'
+  | 'era.parsed'
+  | 'era.matched_auto'
+  | 'era.matched_manual'
+  | 'era.viewed'
   // Wave 41 — 42 CFR Part 2 separate consent track.
   | 'part2_consent.create'
   | 'part2_consent.view'

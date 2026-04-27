@@ -48,7 +48,9 @@ const PUBLIC_API_PREFIXES = [
   '/api/signalwire/',
   '/api/retell/',
   '/api/voice/',
-  '/api/twilio/',               // deprecation stubs — keep public so
+  '/api/twilio/',
+  '/api/stedi/',                // Wave 41 — Stedi 835 ERA + 837 claim webhooks
+                                // (HMAC verified at route level)               // deprecation stubs — keep public so
                                 // stale Twilio dashboards see the
                                 // 'this number has moved' TwiML.
 ]
