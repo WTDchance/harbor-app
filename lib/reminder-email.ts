@@ -59,7 +59,11 @@ export function buildReminderEmail(params: ReminderEmailParams) {
   if (practicePhone) h.push('<p style="color:#666;font-size:14px">Need to reschedule? Call <a href="tel:' + practicePhone + '" style="color:#0d5c4b">' + practicePhone + '</a></p>')
   h.push('<p>We look forward to seeing you!</p></div>')
   h.push('<div style="padding:16px 32px;background:#f9fafb;border-radius:0 0 8px 8px;text-align:center">')
-  h.push('<p style="color:#999;font-size:12px;margin:0">Sent by Harbor on behalf of ' + practiceName + '</p></div></div>')
+  h.push('<p style="color:#666;font-size:12px;margin:0;font-weight:600">' + practiceName + '</p>')
+  if (practicePhone) h.push('<p style="color:#666;font-size:12px;margin:2px 0 0">' + practicePhone + '</p>')
+  if (practiceAddress) h.push('<p style="color:#666;font-size:12px;margin:2px 0 0">' + practiceAddress + '</p>')
+  h.push('<p style="color:#999;font-size:11px;margin:8px 0 0">Sent by Harbor on behalf of ' + practiceName + '</p>')
+  h.push('</div></div>')
   const html = h.join('\n')
   return { subject, html, text }
 }
