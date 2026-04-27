@@ -190,6 +190,9 @@ export type EhrAuditAction =
   // writes parsed fields back to the patient row. Append-only here to
   // minimise merge collision with Wave 41.
   | 'insurance_card.scanned'
+  | 'portal.scheduling.book'
+  | 'portal.scheduling.availability'
+  | 'public.scheduling.inquiry'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
