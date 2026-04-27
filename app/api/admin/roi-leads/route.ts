@@ -3,6 +3,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
@@ -106,6 +107,13 @@ export async function GET(req: NextRequest) {
     new Set(allLeads.map(l => l.utm_source).filter(Boolean)),
   )
 
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.roi_lead.list',
+    resourceType: 'roi_calculator_submission_list',
+    resourceId: null,
+    details: { stage, source, days, count: leads.length },
+  })
   return NextResponse.json({
     leads,
     summary: {

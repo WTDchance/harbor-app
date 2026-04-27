@@ -4,6 +4,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
@@ -87,5 +88,20 @@ export async function PATCH(
   )
 
   if (!rows[0]) return NextResponse.json({ error: 'Lead not found' }, { status: 404 })
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.roi_lead.update',
+    resourceType: 'roi_calculator_submission',
+    resourceId: id,
+    details: {
+      // sets[] is the SQL fragment list; not informative on its own —
+      // pull the actually-changed body keys for forensic clarity.
+      fields_changed: Object.keys(body).filter(k =>
+        ['stage', 'notes', 'next_action_at', 'converted_practice_id'].includes(k),
+      ),
+      stage_set: typeof body.stage === 'string' ? body.stage : null,
+      converted_practice_id: body.converted_practice_id ?? null,
+    },
+  })
   return NextResponse.json({ lead: rows[0] })
 }
