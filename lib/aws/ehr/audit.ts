@@ -141,6 +141,7 @@ export type EhrAuditAction =
   | 'admin.support_ticket.list'
   | 'practice.sliding_fee.configured'
   | 'patient.fee_tier.set'
+  | 'patient.outcomes.viewed'
   // Wave 41 — 42 CFR Part 2 separate consent track.
   | 'part2_consent.create'
   | 'part2_consent.view'
