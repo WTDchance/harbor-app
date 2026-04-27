@@ -158,6 +158,10 @@ export type EhrAuditAction =
   | 'era.matched_auto'
   | 'era.matched_manual'
   | 'era.viewed'
+  | 'claim.submitted'
+  | 'claim.status_updated'
+  | 'claim.rejected'
+  | 'claim.accepted'
   // Wave 41 — 42 CFR Part 2 separate consent track.
   | 'part2_consent.create'
   | 'part2_consent.view'
