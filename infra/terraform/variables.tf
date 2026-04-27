@@ -132,3 +132,10 @@ variable "ses_from_address" {
   description = "Default SES From address (must be within the hosted zone domain)."
   type        = string
 }
+
+# ---- Alerting (T1.4) ----
+variable "alert_email" {
+  description = "Email subscribed to the alerts SNS topic. Empty string disables the subscription resource."
+  type        = string
+  default     = "chancewonser@gmail.com"
+}

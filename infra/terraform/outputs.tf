@@ -47,3 +47,8 @@ output "s3_uploads_bucket" {
 output "ses_from_domain" {
   value = aws_ses_domain_identity.root.domain
 }
+
+output "alerts_sns_topic_arn" {
+  description = "SNS topic that receives all CloudWatch alarms. Subscribe additional endpoints to it (Slack/PagerDuty/etc.) without re-running terraform."
+  value       = aws_sns_topic.alerts.arn
+}
