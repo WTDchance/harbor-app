@@ -3,10 +3,17 @@
 // Wave 27c — Retell tool: cancel an existing appointment for a verified
 // caller. patientId comes from the prior verifyIdentity call (the agent
 // stores it in working memory and passes it back here).
+//
+// Wave 42 — Cancellation policy enforcement. After the appointment is
+// flipped to status='cancelled' we evaluate the practice's policy via
+// lib/aws/ehr/cancellation-policy.enforceLateCancelFee(). The library
+// is a no-op when no policy is configured. Charge failures never block
+// the cancellation — they fall back to the billable-on-invoice path.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { parseRetellToolCall, toolResult } from '@/lib/aws/voice/auth'
+import { enforceLateCancelFee } from '@/lib/aws/ehr/cancellation-policy'
 
 function parseWhen(s: string): Date | null {
   if (!s) return null
@@ -56,7 +63,23 @@ export async function POST(req: NextRequest) {
     if (rows.length === 0) {
       return toolResult("CANCEL_FAILED: I wasn't able to find that appointment on the calendar. Could the date or time be different?")
     }
-    return toolResult(`CANCEL_OK: I've cancelled your appointment on ${when.toLocaleString()}. You'll receive a text confirmation shortly.`)
+
+    // Apply per-practice cancellation policy. Voice-initiated cancels
+    // count as patient-initiated (the caller has been identity-verified
+    // upstream via verifyIdentity).
+    let policySuffix = ''
+    try {
+      const fee = await enforceLateCancelFee(rows[0].id, 'voice')
+      if (fee.status === 'charged' && fee.amountCents) {
+        policySuffix = ` Because you're cancelling within the practice's policy window, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee was charged to the card on file.`
+      } else if ((fee.status === 'billable' || fee.status === 'failed') && fee.amountCents) {
+        policySuffix = ` Because you're cancelling within the practice's policy window, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee will be added to your next invoice.`
+      }
+    } catch (err) {
+      console.error('[retell/cancel-appointment] policy enforcement failed:', (err as Error).message)
+    }
+
+    return toolResult(`CANCEL_OK: I've cancelled your appointment on ${when.toLocaleString()}.${policySuffix} You'll receive a text confirmation shortly.`)
   } catch (err) {
     console.error('[retell/cancel-appointment]', (err as Error).message)
     return toolResult('I had trouble cancelling that. Let me take a message so the therapist can follow up directly.')
