@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireEhrApiSession()
@@ -19,6 +20,12 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     [id, ctx.practiceId],
   )
   if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  await auditEhrAccess({
+    ctx,
+    action: 'appointment.session.view',
+    resourceType: 'appointment',
+    resourceId: id,
+  })
   return NextResponse.json({
     started_at: rows[0].actual_started_at,
     ended_at: rows[0].actual_ended_at,
@@ -56,6 +63,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     const { rows } = await pool.query(sql, args)
     if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    const subAction =
+      action === 'start' ? 'appointment.session.start' as const :
+      action === 'stop'  ? 'appointment.session.stop'  as const :
+                            'appointment.session.reset' as const
+    await auditEhrAccess({
+      ctx,
+      action: subAction,
+      resourceType: 'appointment',
+      resourceId: id,
+      details: {
+        actual_started_at: rows[0].actual_started_at,
+        actual_ended_at: rows[0].actual_ended_at,
+      },
+    })
     return NextResponse.json({
       started_at: rows[0].actual_started_at,
       ended_at: rows[0].actual_ended_at,

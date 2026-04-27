@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 const UPDATABLE = new Set(['title', 'description', 'due_date', 'status'])
 
@@ -36,6 +37,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       args,
     )
     if (rows.length === 0) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    const action = body.status === 'completed' ? 'homework.complete' as const : 'homework.update' as const
+    await auditEhrAccess({
+      ctx,
+      action,
+      resourceType: 'ehr_homework',
+      resourceId: id,
+      details: { fields_changed: Object.keys(body).filter(k => UPDATABLE.has(k)) },
+    })
     return NextResponse.json({ homework: rows[0] })
   } catch (err) {
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
