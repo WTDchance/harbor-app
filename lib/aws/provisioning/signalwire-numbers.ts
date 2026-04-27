@@ -120,3 +120,40 @@ export async function updateNumberWebhooks(opts: {
   })
   if (!res.ok) throw new Error(`signalwire_update_failed_${res.status}`)
 }
+
+/**
+ * Release a previously-purchased SignalWire number back to SignalWire's
+ * pool. Used by the practice decommission flow.
+ *
+ * Best-effort by design: the caller (the decommission route) doesn't want
+ * a transient SignalWire 5xx to block the rest of the side effects, so
+ * this throws on hard 4xx but logs-and-returns false on 5xx.
+ *
+ * Returns true on 204 No Content (the SignalWire success shape for DELETE).
+ */
+export async function releaseSignalWireNumber(sid: string): Promise<boolean> {
+  if (!PROJECT_ID || !TOKEN || !SPACE_URL) throw new Error('SIGNALWIRE_NOT_CONFIGURED')
+  if (!sid) return false
+  const url = `${laMLBase()}/IncomingPhoneNumbers/${sid}.json`
+  try {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: { Authorization: authHeader() },
+    })
+    if (res.status === 204 || res.ok) return true
+    if (res.status >= 500) {
+      console.warn(`[signalwire] release got ${res.status} for ${sid} — leaving DB row in place`)
+      return false
+    }
+    // 4xx (e.g. 404 already released) — treat as success so we don't
+    // block decommission on numbers we already lost track of.
+    if (res.status === 404) {
+      console.warn(`[signalwire] release: ${sid} already gone (404) — proceeding`)
+      return true
+    }
+    throw new Error(`signalwire_release_failed_${res.status}: ${await res.text().catch(() => '')}`)
+  } catch (err) {
+    console.error('[signalwire] release threw:', (err as Error).message)
+    return false
+  }
+}
