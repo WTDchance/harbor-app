@@ -56,7 +56,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "img-src 'self' data: blob: https:",
               "font-src 'self' https://fonts.gstatic.com",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.vapi.ai https://api.stripe.com https://www.clarity.ms https://www.google-analytics.com https://www.googletagmanager.com https://*.ingest.sentry.io",
+              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.stripe.com https://www.clarity.ms https://www.google-analytics.com https://www.googletagmanager.com https://*.ingest.sentry.io",
               "frame-src 'self' https://js.stripe.com",
               "object-src 'none'",
               "base-uri 'self'",
