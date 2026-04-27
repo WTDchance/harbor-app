@@ -1,33 +1,59 @@
 // app/api/retell/webhook/route.ts
 //
-// Wave 27c — Retell call-lifecycle webhook. Handles call_started,
-// call_ended, and call_analyzed events. The call_ended handler writes
-// a call_logs row mirroring the existing Vapi end-of-call persistence
-// so the dashboard / EHR / analytics paths get the same shape.
+// Wave 28 — Retell call-lifecycle webhook. Handles call_started,
+// call_ended, and call_analyzed events. Persists into call_logs +
+// audit_logs.
 //
-// Auth: Retell signs each webhook with HMAC-SHA256 over the raw body
-// using the agent's API key. Header is x-retell-signature. We verify
-// signature when RETELL_API_KEY is set; in dev it's an audit-log warn
-// rather than a hard reject so local testing isn't blocked.
-//
-// (Reference: https://docs.retellai.com/api-references/webhook)
+// Auth: Retell signs each webhook with HMAC-SHA256 over (rawBody +
+// timestamp), keyed with a webhook-enabled API key. Header is
+// x-retell-signature in format "v={timestamp},d={hex_digest}".
+// (https://docs.retellai.com/features/secure-webhook)
 
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { pool } from '@/lib/aws/db'
 import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
+const SIGNATURE_RE = /v=(\d+),d=(.+)/
+
 function verifySignature(rawBody: string, signature: string | null): boolean {
   const apiKey = process.env.RETELL_API_KEY || ''
   if (!apiKey || !signature) return false
-  const computed = createHmac('sha256', apiKey).update(rawBody).digest('hex')
+  const m = SIGNATURE_RE.exec(signature.trim())
+  if (!m) return false
+  const timestamp = m[1]
+  const providedDigest = m[2]
+  // Replay protection: timestamp within 5 minutes
+  const now = Date.now()
+  const sent = parseInt(timestamp, 10)
+  if (!Number.isFinite(sent)) return false
+  if (Math.abs(now - sent) > 5 * 60 * 1000) return false
+  // HMAC-SHA256 over rawBody + timestamp string
+  const computed = createHmac('sha256', apiKey)
+    .update(rawBody + timestamp)
+    .digest('hex')
   try {
     const a = Buffer.from(computed, 'hex')
-    const b = Buffer.from(signature.replace(/^sha256=/, ''), 'hex')
+    const b = Buffer.from(providedDigest, 'hex')
     if (a.length !== b.length) return false
     return timingSafeEqual(a, b)
   } catch {
     return false
+  }
+}
+
+async function resolvePracticeId(toNumber: string | null): Promise<string | null> {
+  if (!toNumber) return null
+  try {
+    const { rows } = await pool.query(
+      `SELECT id FROM practices
+        WHERE signalwire_number = $1 OR twilio_phone_number = $1 OR phone = $1
+        LIMIT 1`,
+      [toNumber],
+    )
+    return rows[0]?.id ?? null
+  } catch {
+    return null
   }
 }
 
@@ -45,14 +71,13 @@ export async function POST(req: NextRequest) {
 
   const sigOk = verifySignature(rawBody, signature)
   if (!sigOk) {
-    // Don't hard-reject in case Retell's signing flow is different
-    // from what we expect — log and continue. Hardening to 401 once
-    // we've seen a few real signed events in CloudWatch.
     await auditSystemEvent({
       action: 'retell.webhook.unverified_signature',
       severity: 'warn',
       details: { event: body?.event, call_id: body?.call?.call_id ?? null },
     })
+    // Don't hard-reject — log + continue. Tightens to 401 once the
+    // dashboard confirms our API key has the webhook badge.
   }
 
   const event: string = body?.event ?? ''
@@ -63,18 +88,26 @@ export async function POST(req: NextRequest) {
   const toNumber = call?.to_number ?? null
   const startTimestamp = call?.start_timestamp ?? null
   const endTimestamp = call?.end_timestamp ?? null
-  const duration = startTimestamp && endTimestamp ? Math.round((endTimestamp - startTimestamp) / 1000) : null
+  const duration =
+    startTimestamp && endTimestamp ? Math.round((endTimestamp - startTimestamp) / 1000) : null
   const transcript: string | null = call?.transcript ?? null
+  const recordingUrl: string | null = call?.recording_url ?? null
   const summary: string | null = call?.call_analysis?.call_summary ?? null
   const userSentiment: string | null = call?.call_analysis?.user_sentiment ?? null
-  const successful: boolean | null = typeof call?.call_analysis?.call_successful === 'boolean'
-    ? call.call_analysis.call_successful : null
+  const successful: boolean | null =
+    typeof call?.call_analysis?.call_successful === 'boolean'
+      ? call.call_analysis.call_successful
+      : null
   const customAnalysis = call?.call_analysis?.custom_analysis_data ?? null
 
-  // Practice resolution — set when register-call passed the dynamic var
+  // Practice resolution: dynamic_variables first (set when inbound-webhook
+  // returned context), then fall back to looking up by to_number.
   const dynVars = call?.retell_llm_dynamic_variables ?? {}
-  const practiceId: string | null = typeof dynVars.practice_id === 'string'
-    ? dynVars.practice_id : null
+  let practiceId: string | null =
+    typeof dynVars.practice_id === 'string' ? dynVars.practice_id : null
+  if (!practiceId) {
+    practiceId = await resolvePracticeId(toNumber)
+  }
 
   if (expectedAgentId && agentId && agentId !== expectedAgentId) {
     await auditSystemEvent({
@@ -91,21 +124,30 @@ export async function POST(req: NextRequest) {
         action: 'retell.call.started',
         severity: 'info',
         practiceId,
-        details: { call_id: callId, from_number: fromNumber, to_number: toNumber, agent_id: agentId },
+        details: {
+          call_id: callId,
+          from_number: fromNumber,
+          to_number: toNumber,
+          agent_id: agentId,
+        },
       })
     } else if (event === 'call_ended' || event === 'call_analyzed') {
       // Persist into call_logs (idempotent on retell_call_id).
+      // We try with retell_call_id first; if column doesn't exist, fall
+      // back to no-conflict insert. Multiple events for the same call
+      // (call_ended then call_analyzed ~seconds later) UPSERT cleanly.
       try {
         await pool.query(
           `INSERT INTO call_logs
-              (practice_id, retell_call_id, call_type, caller_name,
-               patient_phone, duration_seconds, summary, transcript,
+              (practice_id, retell_call_id, call_type, patient_phone,
+               duration_seconds, summary, transcript, recording_url,
                crisis_detected, created_at)
-            VALUES ($1, $2, 'inbound_voice', NULL, $3, $4, $5, $6, $7, NOW())
+            VALUES ($1, $2, 'inbound_voice', $3, $4, $5, $6, $7, $8, NOW())
             ON CONFLICT (retell_call_id) DO UPDATE
-              SET duration_seconds = EXCLUDED.duration_seconds,
+              SET duration_seconds = COALESCE(EXCLUDED.duration_seconds, call_logs.duration_seconds),
                   summary = COALESCE(EXCLUDED.summary, call_logs.summary),
                   transcript = COALESCE(EXCLUDED.transcript, call_logs.transcript),
+                  recording_url = COALESCE(EXCLUDED.recording_url, call_logs.recording_url),
                   crisis_detected = call_logs.crisis_detected OR EXCLUDED.crisis_detected`,
           [
             practiceId,
@@ -114,12 +156,13 @@ export async function POST(req: NextRequest) {
             duration,
             summary,
             transcript,
+            recordingUrl,
             !!(customAnalysis?.crisis_signals === true),
           ],
         )
       } catch (err) {
-        // call_logs might not have retell_call_id column on all envs yet;
-        // fall back to inserting without the unique key.
+        // call_logs schema variants — degrade gracefully
+        const msg = (err as Error).message
         try {
           await pool.query(
             `INSERT INTO call_logs
@@ -127,12 +170,16 @@ export async function POST(req: NextRequest) {
                  summary, transcript, crisis_detected, created_at)
               VALUES ($1, 'inbound_voice', $2, $3, $4, $5, $6, NOW())`,
             [
-              practiceId, fromNumber, duration, summary, transcript,
+              practiceId,
+              fromNumber,
+              duration,
+              summary,
+              transcript,
               !!(customAnalysis?.crisis_signals === true),
             ],
           )
         } catch (err2) {
-          console.error('[retell/webhook] call_logs insert failed:', (err2 as Error).message)
+          console.error('[retell/webhook] call_logs insert failed:', msg, '|', (err2 as Error).message)
         }
       }
       await auditSystemEvent({
