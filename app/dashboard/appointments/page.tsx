@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { CalendarDays, Plus, ChevronLeft, ChevronRight, Clock, Phone, User, CheckCircle, XCircle, AlertCircle, FileText } from 'lucide-react'
 import { TelehealthButton } from '@/components/ehr/TelehealthButton'
 import { SessionTimerButton } from '@/components/ehr/SessionTimerButton'
+import { RecurrencePicker } from '@/components/ehr/RecurrencePicker'
 
 interface Appointment {
   id: string
@@ -55,6 +56,8 @@ export default function AppointmentsPage() {
     duration_minutes: 50,
     appointment_type: 'in-person',
     notes: '',
+    // Wave 38 TS1
+    recurrence: 'none',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -121,7 +124,12 @@ export default function AppointmentsPage() {
       }
 
       const method = selectedAppt ? 'PATCH' : 'POST'
-      const body = selectedAppt ? { id: selectedAppt.id, ...form } : form
+      const body: any = selectedAppt ? { id: selectedAppt.id, ...form } : { ...form }
+      // TS1 — only the create path materializes a series; on edit we
+      // route through PATCH /api/ehr/appointments/[id] with a scope.
+      if (!selectedAppt && form.recurrence && form.recurrence !== 'none') {
+        body.recurrence = form.recurrence
+      }
       const r = await fetch('/api/appointments', {
         method,
         headers: { 'Content-Type': 'application/json' },
@@ -446,7 +454,16 @@ export default function AppointmentsPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                
+              {!selectedAppt && (
+                <div className="mb-3">
+                  <RecurrencePicker
+                    value={form.recurrence}
+                    onChange={(v) => setForm({ ...form, recurrence: v })}
+                  />
+                </div>
+              )}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
                 <textarea
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                   rows={2}
