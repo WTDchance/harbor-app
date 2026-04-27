@@ -5,10 +5,11 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import React from 'react'
 import { useRouter } from 'next/navigation'
 import { CodePicker } from '@/components/ehr/CodePicker'
 import { CPT_CODES, ICD10_CODES } from '@/lib/ehr/codes'
-import { Target } from 'lucide-react'
+import { Target, Mic, StopCircle, Loader2, Sparkles } from 'lucide-react'
 
 type Patient = { id: string; first_name: string; last_name: string }
 
@@ -60,6 +61,141 @@ export function NoteEditor({ patients, initial, mode }: Props) {
   const [planGoals, setPlanGoals] = useState<PlanGoal[] | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Wave 38 M2 — voice dictation via MediaRecorder + AWS Transcribe.
+  const [recording, setRecording] = useState(false)
+  const [transcribing, setTranscribing] = useState(false)
+  const [cleaning, setCleaning] = useState(false)
+  const [voiceError, setVoiceError] = useState<string | null>(null)
+  const [lastTranscript, setLastTranscript] = useState<string | null>(null)
+  const mediaRef = React.useRef<MediaRecorder | null>(null)
+  const chunksRef = React.useRef<Blob[]>([])
+  const streamRef = React.useRef<MediaStream | null>(null)
+  // We append transcribed text into whichever section the cursor was in.
+  // For simplicity v1: append to 'subjective' (or 'body' for freeform).
+  function activeBucket(): 'subjective' | 'body' {
+    return form.note_format === 'freeform' ? 'body' : 'subjective'
+  }
+  function appendToActive(chunk: string) {
+    const bucket = activeBucket()
+    setForm(f => ({ ...f, [bucket]: ((f as any)[bucket] || '') + (((f as any)[bucket]) ? '\n\n' : '') + chunk }))
+  }
+
+  function pickRecorderMime(): string | null {
+    if (typeof window === 'undefined' || typeof (window as any).MediaRecorder === 'undefined') return null
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+    for (const c of candidates) {
+      try { if ((window as any).MediaRecorder.isTypeSupported(c)) return c } catch {}
+    }
+    return null
+  }
+  const recorderMime = typeof window === 'undefined' ? null : pickRecorderMime()
+
+  async function startRecording() {
+    setVoiceError(null)
+    if (!recorderMime || !navigator.mediaDevices?.getUserMedia) {
+      setVoiceError('This browser cannot record audio.')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      streamRef.current = stream
+      const rec = new MediaRecorder(stream, { mimeType: recorderMime })
+      chunksRef.current = []
+      rec.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
+      rec.onstop = async () => {
+        try { streamRef.current?.getTracks().forEach(t => t.stop()) } catch {}
+        const blob = new Blob(chunksRef.current, { type: recorderMime })
+        await handleTranscribe(blob)
+      }
+      rec.start()
+      mediaRef.current = rec
+      setRecording(true)
+    } catch (err) {
+      setVoiceError(err instanceof Error ? err.message : 'Microphone permission denied')
+    }
+  }
+  function stopRecording() {
+    try { mediaRef.current?.stop() } catch {}
+    mediaRef.current = null
+    setRecording(false)
+  }
+
+  async function handleTranscribe(blob: Blob) {
+    setTranscribing(true)
+    try {
+      const fd = new FormData()
+      const ext = recorderMime?.includes('mp4') ? 'mp4' : 'webm'
+      fd.append('audio', blob, `dictation.${ext}`)
+      fd.append('patient_id', form.patient_id)
+      if (initial?.id) fd.append('note_id', initial.id)
+      const r = await fetch('/api/transcribe', { method: 'POST', body: fd })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}))
+        throw new Error(j.error || `transcribe_failed (${r.status})`)
+      }
+      const j = await r.json()
+      let text: string = j.text || ''
+      const jobId: string | undefined = j.job_id
+      // Poll if not yet done.
+      if (!text && jobId) {
+        for (let i = 0; i < 40; i++) {
+          await new Promise(res => setTimeout(res, 2000))
+          const pr = await fetch(`/api/transcribe/${encodeURIComponent(jobId)}`)
+          if (!pr.ok) continue
+          const pj = await pr.json()
+          if (pj.status === 'completed') { text = pj.text || ''; break }
+          if (pj.status === 'failed') { throw new Error(`transcribe failed: ${pj.reason || 'unknown'}`) }
+        }
+      }
+      if (!text) throw new Error('No transcript returned (still processing — try again in a moment).')
+      setLastTranscript(text)
+      appendToActive(text)
+    } catch (err) {
+      setVoiceError(err instanceof Error ? err.message : 'Transcribe failed')
+    } finally {
+      setTranscribing(false)
+    }
+  }
+
+  async function handleAiClean() {
+    if (!lastTranscript) {
+      setVoiceError('Record + transcribe a dictation first, then AI clean.')
+      return
+    }
+    setCleaning(true)
+    setVoiceError(null)
+    try {
+      const r = await fetch('/api/ehr/notes/clean-transcript', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transcript: lastTranscript,
+          format: form.note_format,
+          patient_id: form.patient_id,
+        }),
+      })
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}))
+        throw new Error(j.error || `clean_failed (${r.status})`)
+      }
+      const j = await r.json()
+      const fields = j.fields || {}
+      setForm(f => ({
+        ...f,
+        subjective: typeof fields.subjective === 'string' ? fields.subjective : f.subjective,
+        objective: typeof fields.objective === 'string' ? fields.objective : f.objective,
+        assessment: typeof fields.assessment === 'string' ? fields.assessment : f.assessment,
+        plan: typeof fields.plan === 'string' ? fields.plan : f.plan,
+        body: typeof fields.body === 'string' ? fields.body : f.body,
+      }))
+    } catch (err) {
+      setVoiceError(err instanceof Error ? err.message : 'AI clean failed')
+    } finally {
+      setCleaning(false)
+    }
+  }
+
 
   // Load the patient's active treatment plan so we can show goal checkboxes.
   useEffect(() => {
@@ -176,6 +312,61 @@ export function NoteEditor({ patients, initial, mode }: Props) {
           className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 disabled:bg-gray-50"
         />
       </div>
+
+      {/* Wave 38 M2 — voice dictation toolbar */}
+      {!isLocked && (
+        <div className="flex flex-wrap items-center gap-2 border border-teal-200 bg-teal-50 rounded-lg px-3 py-2">
+          {recorderMime ? (
+            <button
+              type="button"
+              onClick={recording ? stopRecording : startRecording}
+              disabled={transcribing || cleaning}
+              className={`min-h-[44px] inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition ${
+                recording
+                  ? 'bg-red-600 text-white hover:bg-red-700'
+                  : 'bg-white border border-teal-300 text-teal-800 hover:bg-teal-100'
+              } disabled:opacity-50`}
+              aria-pressed={recording}
+              aria-label={recording ? 'Stop recording' : 'Start voice dictation'}
+            >
+              {recording ? (
+                <>
+                  <span className="relative flex w-2.5 h-2.5">
+                    <span className="absolute inline-flex w-full h-full rounded-full bg-white opacity-60 animate-ping" />
+                    <span className="relative inline-flex w-2.5 h-2.5 rounded-full bg-white" />
+                  </span>
+                  Stop
+                </>
+              ) : (
+                <>
+                  <Mic className="w-4 h-4" />
+                  Dictate
+                </>
+              )}
+            </button>
+          ) : (
+            <span className="text-xs text-gray-500">Voice dictation isn&apos;t supported in this browser.</span>
+          )}
+          {transcribing && (
+            <span className="inline-flex items-center gap-1.5 text-xs text-teal-800">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Transcribing…
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={handleAiClean}
+            disabled={!lastTranscript || cleaning || transcribing}
+            className="min-h-[44px] inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium bg-white border border-teal-300 text-teal-800 hover:bg-teal-100 disabled:opacity-40"
+            title={lastTranscript ? `AI clean into ${form.note_format.toUpperCase()}` : 'Dictate first to enable'}
+          >
+            {cleaning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            {cleaning ? 'Cleaning…' : `AI clean → ${form.note_format.toUpperCase()}`}
+          </button>
+          {voiceError && (
+            <span className="text-xs text-red-700 ml-auto">{voiceError}</span>
+          )}
+        </div>
+      )}
 
       {form.note_format !== 'freeform' ? (
         <div className="space-y-4">
