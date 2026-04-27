@@ -162,6 +162,8 @@ export type EhrAuditAction =
   | 'claim.status_updated'
   | 'claim.rejected'
   | 'claim.accepted'
+  | 'practice_settings.updated'
+  | 'practice_settings.test_call_triggered'
   // Wave 41 — 42 CFR Part 2 separate consent track.
   | 'part2_consent.create'
   | 'part2_consent.view'
