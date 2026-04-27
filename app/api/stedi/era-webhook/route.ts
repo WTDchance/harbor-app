@@ -170,8 +170,12 @@ export async function POST(req: NextRequest) {
 
       if (matchedInvoiceId) {
         autoMatched++
-        // Apply paid_cents to the matched invoice + flip status.
-        await pool.query(
+        // Apply paid_cents + flip both billing status and the W41 T5
+        // submission_status so the trail of 'this invoice was
+        // accepted-then-paid by the payer' is captured. RETURNING
+        // the post-state lets us emit claim.status_updated only on
+        // an actual transition (W42 T0 follow-up to W41 T4).
+        const updated = await pool.query(
           `UPDATE ehr_invoices
               SET paid_cents = paid_cents + $1,
                   status     = CASE
@@ -179,14 +183,19 @@ export async function POST(req: NextRequest) {
                                  WHEN paid_cents + $1 > 0           THEN 'partial'
                                  ELSE status
                                END,
+                  submission_status = CASE
+                                        WHEN paid_cents + $1 >= total_cents THEN 'paid'
+                                        ELSE submission_status
+                                      END,
                   paid_at    = CASE
                                  WHEN paid_cents + $1 >= total_cents AND paid_at IS NULL THEN NOW()
                                  ELSE paid_at
                                END,
                   updated_at = NOW()
-            WHERE id = $2 AND practice_id = $3`,
+            WHERE id = $2 AND practice_id = $3
+          RETURNING id, status, submission_status`,
           [c.paid_amount_cents, matchedInvoiceId, practiceId],
-        ).catch(() => {})
+        ).catch(() => ({ rows: [] as any[] }))
 
         await auditSystemEvent({
           action: 'era.matched_auto',
@@ -200,6 +209,26 @@ export async function POST(req: NextRequest) {
             era_file_id: fileRowId,
           },
         })
+
+        // W42 T0 — emit claim.status_updated when the ERA flips the
+        // submission lifecycle (typically accepted -> paid). The
+        // W41 T5 audit enum reserves this for exactly this event.
+        const newSubmissionStatus = updated.rows[0]?.submission_status
+        if (newSubmissionStatus === 'paid') {
+          await auditSystemEvent({
+            action: 'claim.status_updated',
+            severity: 'info',
+            practiceId,
+            resourceType: 'ehr_invoice',
+            resourceId: matchedInvoiceId,
+            details: {
+              from: 'accepted',
+              to: 'paid',
+              era_file_id: fileRowId,
+              paid_amount_cents: c.paid_amount_cents,
+            },
+          })
+        }
       }
     } catch (err) {
       console.error('[era-webhook] claim insert failed:', (err as Error).message)
