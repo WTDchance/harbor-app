@@ -8,7 +8,7 @@ const supabase = createClient()
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ExternalLink, Phone, Mail, Eye } from 'lucide-react'
+import { ExternalLink, Phone, Mail, Eye, Power, X } from 'lucide-react'
 
 interface Practice {
   id: string
@@ -20,12 +20,65 @@ interface Practice {
   telehealth: boolean
   specialties: string[]
   created_at: string
+  // Wave 39 — decommission fields. Optional because older API responses
+  // may not include them; we treat absence as "still active".
+  provisioning_state?: string | null
+  decommissioned_at?: string | null
+  stripe_subscription_id?: string | null
 }
 
 export default function AdminPractices() {
   const [practices, setPractices] = useState<Practice[]>([])
   const [loading, setLoading] = useState(true)
   const [viewingId, setViewingId] = useState<string | null>(null)
+  // Wave 39 — decommission modal state.
+  const [decommissionTarget, setDecommissionTarget] = useState<Practice | null>(null)
+  const [confirmText, setConfirmText] = useState('')
+  const [decommissioning, setDecommissioning] = useState(false)
+  const [decommissionResult, setDecommissionResult] =
+    useState<{ practiceId: string; sideEffects: Record<string, { ok: boolean; detail?: string }> } | null>(null)
+
+  async function decommission(practice: Practice) {
+    setDecommissioning(true)
+    setDecommissionResult(null)
+    try {
+      const res = await fetch(`/api/admin/practices/${practice.id}/decommission`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ practice_id: practice.id }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        const friendly =
+          (data?.error && typeof data.error === 'object' && data.error.message) ||
+          (typeof data?.error === 'string' ? data.error : null) ||
+          `Decommission failed (${res.status})`
+        alert(friendly)
+        return
+      }
+      setDecommissionResult({
+        practiceId: practice.id,
+        sideEffects: data?.side_effects ?? {},
+      })
+      // Refresh the list so the row reflects the new status.
+      const listRes = await fetch('/api/admin/signups', { credentials: 'include' })
+      if (listRes.ok) {
+        const j = await listRes.json()
+        setPractices(j.practices || [])
+      }
+    } catch (err: any) {
+      alert(err?.message || 'Decommission request failed')
+    } finally {
+      setDecommissioning(false)
+    }
+  }
+
+  function closeModal() {
+    setDecommissionTarget(null)
+    setConfirmText('')
+    setDecommissionResult(null)
+    setDecommissioning(false)
+  }
 
   async function actAs(practiceId: string) {
     setViewingId(practiceId)
@@ -141,6 +194,11 @@ export default function AdminPractices() {
                         Telehealth
                       </span>
                     )}
+                    {p.provisioning_state === 'cancelled' && (
+                      <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-200 text-gray-700">
+                        Decommissioned
+                      </span>
+                    )}
                   </td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex items-center gap-3 justify-end">
@@ -157,6 +215,17 @@ export default function AdminPractices() {
                         className="flex items-center gap-1 text-teal-600 hover:text-teal-700 text-sm font-medium">
                         Manage <ExternalLink className="w-3 h-3" />
                       </Link>
+                      {p.provisioning_state !== 'cancelled' && (
+                        <button
+                          onClick={() => setDecommissionTarget(p)}
+                          className="flex items-center gap-1 text-red-600 hover:text-red-700 text-sm font-medium"
+                          title="Gracefully decommission this practice — releases SignalWire number, cancels Stripe sub, deactivates users. Does NOT delete PHI."
+                          style={{ minHeight: 44 }}
+                        >
+                          <Power className="w-4 h-4" />
+                          Decommission
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -170,6 +239,125 @@ export default function AdminPractices() {
               )}
             </tbody>
           </table>
+          </div>
+        </div>
+      )}
+
+      {decommissionTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !decommissioning && closeModal()}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <h2 className="text-lg font-semibold text-gray-900">
+                Decommission practice
+              </h2>
+              <button
+                onClick={() => !decommissioning && closeModal()}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close"
+                style={{ minHeight: 44, minWidth: 44 }}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {!decommissionResult ? (
+              <>
+                <p className="text-sm text-gray-600 mb-4">
+                  This will gracefully retire <strong>{decommissionTarget.name}</strong>:
+                </p>
+                <ul className="text-sm text-gray-600 list-disc pl-5 mb-4 space-y-1">
+                  <li>Mark the practice as <em>cancelled</em> (status flip)</li>
+                  <li>Release the SignalWire number back to the pool</li>
+                  <li>Pause the Retell agent</li>
+                  <li>Deactivate every user on the practice</li>
+                  <li>Cancel the active Stripe subscription</li>
+                  <li>Write an entry to <code>audit_logs</code></li>
+                </ul>
+                <p className="text-sm text-gray-600 mb-4">
+                  Patient records, appointments, notes, and audit logs are <strong>not deleted</strong> —
+                  the practice owner can request an export later.
+                </p>
+                {decommissionTarget.stripe_subscription_id && (
+                  <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                    <strong>Active Stripe subscription will be cancelled immediately.</strong>{' '}
+                    No prorated refund will be issued.
+                  </div>
+                )}
+                <p className="text-sm text-gray-600 mb-2">
+                  To enable the Decommission button, type the practice name below verbatim:
+                </p>
+                <p className="text-xs text-gray-500 mb-2">
+                  <code className="bg-gray-100 px-1.5 py-0.5 rounded">{decommissionTarget.name}</code>
+                </p>
+                <input
+                  type="text"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder="Type practice name to confirm"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-red-500"
+                  autoFocus
+                  disabled={decommissioning}
+                  style={{ minHeight: 44 }}
+                />
+                <div className="flex items-center justify-end gap-2 mt-5">
+                  <button
+                    onClick={closeModal}
+                    disabled={decommissioning}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-60"
+                    style={{ minHeight: 44 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => decommission(decommissionTarget)}
+                    disabled={decommissioning || confirmText !== decommissionTarget.name}
+                    className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:bg-red-300 disabled:cursor-not-allowed"
+                    style={{ minHeight: 44 }}
+                  >
+                    <Power className="w-4 h-4" />
+                    {decommissioning ? 'Decommissioning…' : 'Decommission'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div>
+                <p className="text-sm text-gray-700 mb-3">
+                  Practice marked as cancelled. Side effects:
+                </p>
+                <ul className="text-sm space-y-1.5 mb-4">
+                  {(Object.entries(decommissionResult.sideEffects) as Array<
+                    [string, { ok: boolean; detail?: string }]
+                  >).map(([key, val]) => (
+                    <li key={key} className="flex items-start gap-2">
+                      <span className={val.ok ? 'text-green-600' : 'text-amber-600'}>
+                        {val.ok ? '✓' : '!'}
+                      </span>
+                      <span>
+                        <strong className="text-gray-900">{key.replace(/_/g, ' ')}</strong>
+                        {val.detail && (
+                          <span className="text-gray-500"> — {val.detail}</span>
+                        )}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="flex justify-end">
+                  <button
+                    onClick={closeModal}
+                    className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
+                    style={{ minHeight: 44 }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

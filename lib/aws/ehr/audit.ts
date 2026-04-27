@@ -103,6 +103,7 @@ export type EhrAuditAction =
   | 'provision.linked_carrier'
   | 'patients.export'
   | 'patients.verify_identity'
+  | 'admin.practice.decommission'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
