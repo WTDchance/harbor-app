@@ -41,6 +41,7 @@ import { HomeworkCard } from "@/components/ehr/HomeworkCard"
 import { BillingCard } from "@/components/ehr/BillingCard"
 import { PortalLinkCard } from "@/components/ehr/PortalLinkCard"
 import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes"
+import { ExportPatientButton } from "@/components/ehr/ExportPatientButton"
 
 type PatientResp = {
   patient: {
@@ -244,6 +245,7 @@ export default function PatientDetailPage() {
               <Edit3 className="w-3.5 h-3.5" />
               Edit
             </Link>
+            <ExportPatientButton patientId={patientId} />
           </div>
         </div>
       </div>

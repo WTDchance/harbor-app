@@ -8,7 +8,7 @@ const supabase = createClient()
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
-import { ExternalLink, Phone, Mail, Eye, Power, X } from 'lucide-react'
+import { ExternalLink, Phone, Mail, Eye, Power, X, Download } from 'lucide-react'
 
 interface Practice {
   id: string
@@ -37,6 +37,55 @@ export default function AdminPractices() {
   const [decommissioning, setDecommissioning] = useState(false)
   const [decommissionResult, setDecommissionResult] =
     useState<{ practiceId: string; sideEffects: Record<string, { ok: boolean; detail?: string }> } | null>(null)
+
+  // Wave 39 — PHI export modal state. Separate from the decommission flow
+  // because admins may want to export without retiring the practice.
+  const [exportTarget, setExportTarget] = useState<Practice | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportResult, setExportResult] =
+    useState<{ url: string; expires_at: string; export_id: string; patient_count?: number } | null>(null)
+  const [exportError, setExportError] = useState<string | null>(null)
+
+  async function exportPhi(practice: Practice) {
+    setExporting(true)
+    setExportError(null)
+    setExportResult(null)
+    try {
+      const res = await fetch(`/api/admin/practices/${practice.id}/export-phi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok && res.status !== 202) {
+        setExportError(
+          (data?.error && typeof data.error === 'object' ? data.error.message : data?.error) ||
+            `Export failed (${res.status})`,
+        )
+        return
+      }
+      if (res.status === 202) {
+        setExportError(
+          data?.message ||
+            'Practice is too large for synchronous export. Async processing is queued for Wave 40.',
+        )
+        return
+      }
+      setExportResult(data)
+    } catch (err: any) {
+      setExportError(err?.message || 'Export request failed')
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  function closeExportModal() {
+    setExportTarget(null)
+    setExporting(false)
+    setExportResult(null)
+    setExportError(null)
+  }
+
 
   async function decommission(practice: Practice) {
     setDecommissioning(true)
@@ -215,6 +264,15 @@ export default function AdminPractices() {
                         className="flex items-center gap-1 text-teal-600 hover:text-teal-700 text-sm font-medium">
                         Manage <ExternalLink className="w-3 h-3" />
                       </Link>
+                      <button
+                        onClick={() => setExportTarget(p)}
+                        className="flex items-center gap-1 text-indigo-600 hover:text-indigo-700 text-sm font-medium"
+                        title="Generate a complete ZIP of all clinical data for this practice. Downloads expire after 24 hours."
+                        style={{ minHeight: 44 }}
+                      >
+                        <Download className="w-4 h-4" />
+                        Export PHI
+                      </button>
                       {p.provisioning_state !== 'cancelled' && (
                         <button
                           onClick={() => setDecommissionTarget(p)}
@@ -350,6 +408,116 @@ export default function AdminPractices() {
                 <div className="flex justify-end">
                   <button
                     onClick={closeModal}
+                    className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
+                    style={{ minHeight: 44 }}
+                  >
+                    Done
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {exportTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !exporting && closeExportModal()}
+        >
+          <div
+            className="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-3">
+              <h2 className="text-lg font-semibold text-gray-900">Export PHI</h2>
+              <button
+                onClick={() => !exporting && closeExportModal()}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close"
+                style={{ minHeight: 44, minWidth: 44 }}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {!exportResult ? (
+              <>
+                <p className="text-sm text-gray-600 mb-4">
+                  This generates a complete ZIP of all clinical data for{' '}
+                  <strong>{exportTarget.name}</strong>. Downloads expire after 24 hours. Continue?
+                </p>
+                <ul className="text-sm text-gray-600 list-disc pl-5 mb-4 space-y-1">
+                  <li>Patient profiles, demographics, appointments</li>
+                  <li>Progress notes (JSON + printable PDF), treatment plans, assessments</li>
+                  <li>Safety plans, consent signatures, mandatory reports</li>
+                  <li>Audit log entries</li>
+                </ul>
+                {exportError && (
+                  <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-800">
+                    {exportError}
+                  </div>
+                )}
+                <div className="flex items-center justify-end gap-2 mt-5">
+                  <button
+                    onClick={closeExportModal}
+                    disabled={exporting}
+                    className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg disabled:opacity-60"
+                    style={{ minHeight: 44 }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => exportPhi(exportTarget)}
+                    disabled={exporting}
+                    className="flex items-center gap-1 px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:bg-indigo-300 disabled:cursor-not-allowed"
+                    style={{ minHeight: 44 }}
+                  >
+                    <Download className="w-4 h-4" />
+                    {exporting ? 'Generating…' : 'Continue'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div>
+                <p className="text-sm text-gray-700 mb-3">
+                  Export ready. The link below is valid until{' '}
+                  <strong>{new Date(exportResult.expires_at).toLocaleString()}</strong>.
+                </p>
+                {typeof exportResult.patient_count === 'number' && (
+                  <p className="text-xs text-gray-500 mb-3">
+                    {exportResult.patient_count} patient{exportResult.patient_count === 1 ? '' : 's'} included.
+                  </p>
+                )}
+                <div className="flex items-center gap-2 mb-4">
+                  <input
+                    readOnly
+                    value={exportResult.url}
+                    className="flex-1 px-2 py-1.5 border border-gray-300 rounded-md text-xs font-mono bg-gray-50"
+                    onFocus={(e) => e.currentTarget.select()}
+                  />
+                  <button
+                    onClick={() => navigator.clipboard?.writeText(exportResult.url)}
+                    className="px-3 py-1.5 text-xs font-medium text-white bg-gray-700 rounded-md hover:bg-gray-800"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500 mb-4 break-all">
+                  Export id: <code>{exportResult.export_id}</code>
+                </p>
+                <div className="flex justify-end gap-2">
+                  <a
+                    href={exportResult.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700"
+                    style={{ minHeight: 44 }}
+                  >
+                    Download ZIP
+                  </a>
+                  <button
+                    onClick={closeExportModal}
                     className="px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg hover:bg-teal-700"
                     style={{ minHeight: 44 }}
                   >
