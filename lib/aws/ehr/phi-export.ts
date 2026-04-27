@@ -27,6 +27,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { pool } from '@/lib/aws/db'
+import { PART2_REDISCLOSURE_NOTICE } from '@/lib/aws/ehr/part2'
 
 let _client: S3Client | null = null
 function s3(): S3Client {
@@ -355,6 +356,12 @@ export async function buildPatientZip(args: {
   zip.file(
     `${root}README.md`,
     [
+      `# 42 CFR Part 2 — Notice Prohibiting Re-disclosure`,
+      ``,
+      `> ${PART2_REDISCLOSURE_NOTICE}`,
+      ``,
+      `---`,
+      ``,
       `# Harbor PHI export`,
       ``,
       `**Patient id:** ${args.patientId}`,
