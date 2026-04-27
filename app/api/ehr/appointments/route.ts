@@ -20,6 +20,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { findActiveAuth, computeWarning, consumeAuthSession } from '@/lib/aws/ehr/authorizations'
 import { presetToRrule, parseRrule, expand } from '@/lib/aws/ehr/recurrence'
 
 export const runtime = 'nodejs'
@@ -159,6 +160,60 @@ export async function POST(req: NextRequest) {
 
     await client.query('COMMIT')
 
+    // Wave 40 / P1 — best-effort insurance authorization consumption.
+    // Runs AFTER the transaction commits so an auth-side-effect hiccup
+    // never blocks scheduling. Surfaces warnings in the response so the
+    // UI can flag low/expired/exhausted auths inline.
+    type ApptAuthWarning = {
+      appointment_id: string
+      auth_id: string | null
+      warning: 'low' | 'expired' | 'exhausted' | null
+      message: string | null
+    }
+    const appointmentWarnings: ApptAuthWarning[] = []
+    const apptsToCheck = [parent, ...children]
+    for (const a of apptsToCheck) {
+      try {
+        const auth = await findActiveAuth({
+          practiceId: ctx.practiceId!,
+          patientId: a.patient_id,
+          cptCode: a.cpt_code ?? null,
+          scheduledFor: a.scheduled_for,
+        })
+        if (!auth) continue
+        const { warning, message } = computeWarning(auth, a.scheduled_for)
+        // Don't consume against an already-exhausted or expired auth.
+        if (warning !== 'exhausted' && warning !== 'expired') {
+          const post = await consumeAuthSession({ authId: auth.id })
+          await auditEhrAccess({
+            ctx,
+            action: 'insurance_authorization.used',
+            resourceType: 'ehr_insurance_authorization',
+            resourceId: auth.id,
+            details: {
+              appointment_id: a.id,
+              patient_id: a.patient_id,
+              cpt_code: a.cpt_code ?? null,
+              scheduled_for: a.scheduled_for,
+              sessions_used_after: post?.sessions_used ?? null,
+              sessions_authorized: post?.sessions_authorized ?? null,
+            },
+          })
+        }
+        if (warning) {
+          appointmentWarnings.push({
+            appointment_id: a.id,
+            auth_id: auth.id,
+            warning,
+            message,
+          })
+        }
+      } catch (err) {
+        // Auth bookkeeping must never break scheduling.
+        console.error('[appointments] auth consumption failed:', (err as Error).message)
+      }
+    }
+
     await auditEhrAccess({
       ctx,
       action: 'note.create',
@@ -171,7 +226,14 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    return NextResponse.json({ appointment: parent, occurrences: [parent, ...children] }, { status: 201 })
+    return NextResponse.json(
+      {
+        appointment: parent,
+        occurrences: [parent, ...children],
+        appointment_warnings: appointmentWarnings,
+      },
+      { status: 201 },
+    )
   } catch (err) {
     try { await client.query('ROLLBACK') } catch {}
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
