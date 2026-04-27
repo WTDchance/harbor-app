@@ -6,6 +6,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
@@ -52,6 +53,16 @@ export async function GET(
     ).catch(() => {})
   }
 
+  await auditEhrAccess({
+    ctx,
+    action: 'message.thread.view',
+    resourceType: 'ehr_message_thread',
+    resourceId: id,
+    details: {
+      message_count: msgRes.rows.length,
+      messages_marked_read: thread.unread_by_practice_count ?? 0,
+    },
+  })
   return NextResponse.json({ thread, messages: msgRes.rows })
 }
 

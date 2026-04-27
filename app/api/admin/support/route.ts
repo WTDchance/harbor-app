@@ -3,6 +3,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
@@ -51,5 +52,22 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.support_ticket.list',
+    resourceType: 'support_ticket_list',
+    resourceId: null,
+    details: {
+      status,
+      priority,
+      limit,
+      count: tickets.length,
+      // Cap practice_ids in details to keep audit rows compact; the full
+      // list is reconstructable from support_tickets by timestamp anyway.
+      practice_ids_touched: Array.from(
+        new Set(tickets.map((t: any) => t.practice_id).filter(Boolean)),
+      ).slice(0, 50),
+    },
+  })
   return NextResponse.json({ tickets })
 }

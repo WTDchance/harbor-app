@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { requireAdminSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 export async function GET(req: NextRequest) {
   const ctx = await requireAdminSession()
@@ -37,5 +38,16 @@ export async function GET(req: NextRequest) {
     [practiceId, limit],
   )
 
+  await auditEhrAccess({
+    ctx,
+    action: 'admin.patient.list',
+    resourceType: 'patient_list',
+    resourceId: practiceId,
+    details: {
+      target_practice_id: practiceId,
+      limit,
+      count: rows.length,
+    },
+  })
   return NextResponse.json({ patients: rows })
 }
