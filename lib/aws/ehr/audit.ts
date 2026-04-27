@@ -161,6 +161,12 @@ export type EhrAuditAction =
   | 'external_provider.delete'
   | 'patient.external_provider.link'
   | 'patient.external_provider.unlink'
+  // Wave 42 — insurance-card scanner. Therapist snaps front/back of the
+  // patient's card on their phone; backend uploads to the KMS-encrypted
+  // insurance-cards S3 bucket, runs Textract AnalyzeDocument(FORMS), and
+  // writes parsed fields back to the patient row. Append-only here to
+  // minimise merge collision with Wave 41.
+  | 'insurance_card.scanned'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
