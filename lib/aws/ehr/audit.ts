@@ -231,6 +231,11 @@ export type EhrAuditAction =
   | 'telehealth.recording.downloaded'
   | 'telehealth.recording.deleted'
   | 'telehealth.recording.consent_missing'
+  | 'reengagement.campaign_created'
+  | 'reengagement.campaign_updated'
+  | 'reengagement.patient_flagged'
+  | 'reengagement.outreach_sent'
+  | 'reengagement.outreach_failed'
   // Wave 43 — insurance pre-authorization REQUEST workflow. Counterpart to
   // the W40 insurance_authorization.* events (which fire once the payer has
   // already said yes). preauth.* covers the request side: drafting the
