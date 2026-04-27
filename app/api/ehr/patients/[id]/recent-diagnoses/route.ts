@@ -13,13 +13,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-export async function GET(_req: NextRequest, _: { params: Promise<{ id: string }> }) {
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireEhrApiSession()
   if (ctx instanceof NextResponse) return ctx
+  const { id } = await params
   if (!ctx.practiceId) return NextResponse.json({ codes: [] })
 
   // Pull from active treatment plans + recent signed notes' icd10_codes
@@ -51,6 +53,13 @@ export async function GET(_req: NextRequest, _: { params: Promise<{ id: string }
 
   try {
     const { rows } = await pool.query(sql, [ctx.practiceId])
+    await auditEhrAccess({
+      ctx,
+      action: 'diagnoses.recent.list',
+      resourceType: 'patient',
+      resourceId: id,
+      details: { count: rows.length },
+    })
     return NextResponse.json({ codes: rows.map(r => r.code) })
   } catch (err) {
     // Schema gaps (icd10_codes column missing on either table) — quiet fallback

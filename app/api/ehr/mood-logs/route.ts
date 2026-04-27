@@ -3,6 +3,7 @@
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
@@ -25,5 +26,12 @@ export async function GET(req: NextRequest) {
     [ctx.practiceId, patientId],
   )
 
+  await auditEhrAccess({
+    ctx,
+    action: 'mood.list',
+    resourceType: 'ehr_mood_logs',
+    resourceId: patientId,
+    details: { count: rows.length },
+  })
   return NextResponse.json({ logs: rows })
 }
