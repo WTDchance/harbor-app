@@ -40,7 +40,8 @@ export async function GET(req: NextRequest) {
 
   const { rows } = await pool.query(
     `SELECT id, patient_id, scheduled_for, duration_minutes, appointment_type,
-            status, recurrence_rule, recurrence_parent_id, notes
+            status, recurrence_rule, recurrence_parent_id, notes,
+            cpt_code, modifiers
        FROM appointments
       WHERE ${where}
       ORDER BY scheduled_for ASC LIMIT 500`,
@@ -63,6 +64,16 @@ export async function POST(req: NextRequest) {
   const apptType = String(body.appointment_type || 'follow_up')
   const notes = body.notes ? String(body.notes) : null
   const recurrence = String(body.recurrence || 'none')
+  const cptCode = body.cpt_code ? String(body.cpt_code) : null
+  // Auto-attach CMS modifier 95 (synchronous interactive telehealth)
+  // whenever the appointment is booked as telehealth — TS6.
+  const isTelehealth = apptType === 'telehealth' || body.is_telehealth === true
+  const explicitModifiers: string[] = Array.isArray(body.modifiers)
+    ? body.modifiers.map((m: any) => String(m)).filter(Boolean)
+    : []
+  const modifierSet = new Set<string>(explicitModifiers)
+  if (isTelehealth) modifierSet.add('95')
+  const modifiers = Array.from(modifierSet)
   const occurrencesCap = Math.max(1, Math.min(52, parseInt(body.occurrences || '12', 10) || 12))
 
   if (!patientId) return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
@@ -94,8 +105,8 @@ export async function POST(req: NextRequest) {
       `INSERT INTO appointments
          (practice_id, patient_id, patient_name, patient_phone,
           scheduled_for, duration_minutes, appointment_type, status,
-          recurrence_rule, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9)
+          recurrence_rule, notes, cpt_code, modifiers)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9, $10, $11)
        RETURNING *`,
       [
         ctx.practiceId,
@@ -107,6 +118,8 @@ export async function POST(req: NextRequest) {
         apptType,
         rrule,
         notes,
+        cptCode,
+        modifiers,
       ],
     )
     const parent = parentRes.rows[0]
@@ -122,8 +135,8 @@ export async function POST(req: NextRequest) {
             `INSERT INTO appointments
                (practice_id, patient_id, patient_name, patient_phone,
                 scheduled_for, duration_minutes, appointment_type, status,
-                recurrence_parent_id, notes)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9)
+                recurrence_parent_id, notes, cpt_code, modifiers)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9, $10, $11)
              RETURNING *`,
             [
               ctx.practiceId,
@@ -135,6 +148,8 @@ export async function POST(req: NextRequest) {
               apptType,
               parent.id,
               notes,
+              cptCode,
+              modifiers,
             ],
           )
           children.push(child.rows[0])

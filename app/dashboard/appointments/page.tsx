@@ -6,6 +6,7 @@ import { CalendarDays, Plus, ChevronLeft, ChevronRight, Clock, Phone, User, Chec
 import { TelehealthButton } from '@/components/ehr/TelehealthButton'
 import { SessionTimerButton } from '@/components/ehr/SessionTimerButton'
 import { RecurrencePicker } from '@/components/ehr/RecurrencePicker'
+import { AppointmentCptPicker } from '@/components/ehr/AppointmentCptPicker'
 
 interface Appointment {
   id: string
@@ -19,6 +20,8 @@ interface Appointment {
   status: string
   notes: string
   reminder_sent: boolean
+  cpt_code?: string | null
+  modifiers?: string[] | null
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -58,6 +61,8 @@ export default function AppointmentsPage() {
     notes: '',
     // Wave 38 TS1
     recurrence: 'none',
+    // Wave 38 TS6
+    cpt_code: '' as string,
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -178,6 +183,8 @@ export default function AppointmentsPage() {
       duration_minutes: 50,
       appointment_type: 'in-person',
       notes: '',
+      recurrence: 'none',
+      cpt_code: '',
     })
   }
 
@@ -190,7 +197,9 @@ export default function AppointmentsPage() {
       appointment_time: appt.appointment_time.slice(0, 5),
       duration_minutes: appt.duration_minutes,
       appointment_type: appt.appointment_type,
+      cpt_code: appt.cpt_code ?? '',
       notes: appt.notes || '',
+      recurrence: 'none',
     })
     setShowModal(true)
   }
@@ -452,6 +461,15 @@ export default function AppointmentsPage() {
                     <option value="phone">Phone</option>
                   </select>
                 </div>
+              </div>
+              <div className="mb-3">
+                <AppointmentCptPicker
+                  value={form.cpt_code}
+                  onChange={(code) => setForm(f => ({ ...f, cpt_code: code ?? '' }))}
+                />
+                {form.appointment_type === 'telehealth' && (
+                  <p className="text-xs text-gray-500 mt-1">Modifier 95 will be auto-attached for telehealth.</p>
+                )}
               </div>
               <div>
                 
