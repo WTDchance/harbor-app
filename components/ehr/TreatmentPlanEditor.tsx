@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { Plus, Trash2, CheckCircle2 } from 'lucide-react'
 import { CodePicker } from './CodePicker'
 import { SmartCodePicker } from './SmartCodePicker'
+import { SmartGoalSuggestions } from './SmartGoalSuggestions'
 import { ICD10_CODES } from '@/lib/ehr/codes'
 
 type Goal = {
@@ -59,6 +60,15 @@ export function TreatmentPlanEditor({ initial, patientId }: { initial: Plan; pat
 
   function addGoal() {
     setPlan((p) => ({ ...p, goals: [...p.goals, { id: uid(), text: '', objectives: [] }] }))
+  }
+
+  function addSuggestedGoal(g: { text: string; objectives: { text: string; interventions: string[] }[] }) {
+    const newGoal: Goal = {
+      id: uid(),
+      text: g.text,
+      objectives: g.objectives.map(o => ({ id: uid(), text: o.text, interventions: o.interventions || [] })),
+    }
+    setPlan(p => ({ ...p, goals: [...p.goals, newGoal] }))
   }
 
   function updateGoal(id: string, patch: Partial<Goal>) {
@@ -164,6 +174,15 @@ export function TreatmentPlanEditor({ initial, patientId }: { initial: Plan; pat
         disabled={isLocked}
         patientId={patientId}
       />
+
+      {patientId && (
+        <SmartGoalSuggestions
+          patientId={patientId}
+          diagnoses={plan.diagnoses}
+          disabled={isLocked}
+          onAdd={addSuggestedGoal}
+        />
+      )}
 
       <div>
         <div className="flex items-center justify-between mb-2">
