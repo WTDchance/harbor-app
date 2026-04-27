@@ -550,3 +550,29 @@ END $$;
 ALTER TABLE practices ADD COLUMN IF NOT EXISTS signalwire_phone_sid TEXT;
 ALTER TABLE practices ADD COLUMN IF NOT EXISTS retell_agent_id      TEXT;
 ALTER TABLE practices ADD COLUMN IF NOT EXISTS retell_llm_id        TEXT;
+
+-- Wave 35: scaling indexes (applied to live RDS via seeder).
+-- All idempotent / column-existence-guarded.
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS retell_call_id TEXT;
+ALTER TABLE call_logs ADD COLUMN IF NOT EXISTS recording_url TEXT;
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_call_logs_retell_call_id
+  ON call_logs (retell_call_id) WHERE retell_call_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_patients_practice_lastname
+  ON patients (practice_id, last_name, first_name) WHERE deleted_at IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_patients_name_trgm
+  ON patients USING gin ((COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_intake_practice_patient_time
+  ON intake_forms (practice_id, patient_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_appts_practice_upcoming
+  ON appointments (practice_id, scheduled_for)
+  WHERE status IN ('scheduled', 'confirmed');
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_action_prefix
+  ON audit_logs (action text_pattern_ops, timestamp DESC);
