@@ -190,6 +190,10 @@ export type EhrAuditAction =
   // writes parsed fields back to the patient row. Append-only here to
   // minimise merge collision with Wave 41.
   | 'insurance_card.scanned'
+  | 'care_team.added'
+  | 'care_team.removed'
+  | 'care_team.updated'
+  | 'care_team.list'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
