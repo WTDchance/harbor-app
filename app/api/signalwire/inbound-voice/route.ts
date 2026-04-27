@@ -182,6 +182,7 @@ export async function POST(req: NextRequest) {
         agent_id: agentId,
         from_number: fromNumber,
         to_number: toNumber,
+        direction: 'inbound',
         retell_llm_dynamic_variables: callerCtx,
         metadata: { practice_id: practice.id, call_sid: callSid },
       }),
