@@ -190,6 +190,11 @@ export type EhrAuditAction =
   // writes parsed fields back to the patient row. Append-only here to
   // minimise merge collision with Wave 41.
   | 'insurance_card.scanned'
+  | 'telehealth.recording.started'
+  | 'telehealth.recording.stopped'
+  | 'telehealth.recording.downloaded'
+  | 'telehealth.recording.deleted'
+  | 'telehealth.recording.consent_missing'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
