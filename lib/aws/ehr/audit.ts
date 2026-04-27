@@ -231,6 +231,20 @@ export type EhrAuditAction =
   | 'telehealth.recording.downloaded'
   | 'telehealth.recording.deleted'
   | 'telehealth.recording.consent_missing'
+  // Wave 43 — insurance pre-authorization REQUEST workflow. Counterpart to
+  // the W40 insurance_authorization.* events (which fire once the payer has
+  // already said yes). preauth.* covers the request side: drafting the
+  // packet, submitting via fax/portal/email/mail/278, recording the payer's
+  // decision, and the auto-spawn of a W40 ehr_insurance_authorizations row
+  // when an approval is recorded with an auth number.
+  | 'preauth.create'
+  | 'preauth.update'
+  | 'preauth.view'
+  | 'preauth.list'
+  | 'preauth.submit'
+  | 'preauth.record_response'
+  | 'preauth.withdraw'
+  | 'preauth.resulted_in_auth'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
