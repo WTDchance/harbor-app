@@ -226,6 +226,8 @@ const ALLOWED_PATCH = [
   // self-declared. NEVER fed into AI prompts or CDS.
   'race', 'ethnicity', 'primary_language',
   'sexual_orientation', 'gender_identity', 'pronouns_self_describe',
+  // Wave 41 / T6 — sliding-fee tier assignment.
+  'fee_tier',
 ] as const
 
 // Columns that are TEXT[]; the loop below skips the val === ''

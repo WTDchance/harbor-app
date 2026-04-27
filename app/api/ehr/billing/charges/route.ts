@@ -7,6 +7,7 @@ import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { feeForCpt } from '@/lib/aws/billing/calc' // pure helper — no Supabase deps
+import { applySlidingFee } from '@/lib/aws/billing/sliding-fee'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -61,7 +62,25 @@ export async function POST(req: NextRequest) {
     [ctx.practiceId],
   ).catch(() => ({ rows: [] as any[] }))
   const schedule = practiceFee.rows[0]?.default_fee_schedule_cents ?? null
-  const fee = body.fee_cents ?? feeForCpt(body.cpt_code, schedule)
+  const baseFee = body.fee_cents ?? feeForCpt(body.cpt_code, schedule)
+
+  // Wave 41 / T6 — sliding-fee discount, if practice has it enabled
+  // and the patient is assigned a matching tier. No-op when off.
+  // Caller can opt out with body.skip_sliding_fee=true (e.g. when a
+  // therapist explicitly enters a fee_cents override and means it).
+  let fee = baseFee
+  let appliedTier: string | null = null
+  let appliedPct: number | null = null
+  if (!body.skip_sliding_fee) {
+    const sliding = await applySlidingFee({
+      practiceId: ctx.practiceId!,
+      patientId: body.patient_id,
+      baseCents: baseFee,
+    })
+    fee = sliding.adjustedCents
+    appliedTier = sliding.tierApplied
+    appliedPct = sliding.feePct
+  }
 
   const { rows } = await pool.query(
     `INSERT INTO ehr_charges (
@@ -87,7 +106,15 @@ export async function POST(req: NextRequest) {
     action: 'billing.charge.create',
     resourceType: 'ehr_charge',
     resourceId: charge.id,
-    details: { kind: 'charge_manual', cpt: charge.cpt_code, fee_cents: charge.fee_cents },
+    details: {
+      kind: 'charge_manual',
+      cpt: charge.cpt_code,
+      fee_cents: charge.fee_cents,
+      // Wave 41 / T6 — surface sliding-fee outcome on every charge audit.
+      base_fee_cents: baseFee,
+      sliding_fee_tier_applied: appliedTier,
+      sliding_fee_pct: appliedPct,
+    },
   })
   return NextResponse.json({ charge }, { status: 201 })
 }

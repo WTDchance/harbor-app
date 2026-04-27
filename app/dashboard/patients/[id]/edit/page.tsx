@@ -43,6 +43,13 @@ interface Patient {
   sexual_orientation: string | null
   gender_identity: string | null
   pronouns_self_describe: string | null
+  // Wave 41 / T6 sliding-fee tier assignment.
+  fee_tier: string | null
+}
+
+interface SlidingFeeConfig {
+  enabled: boolean
+  config: Array<{ name: string; fee_pct: number }>
 }
 
 // UCSF / OMB-aligned options. "Prefer not to disclose" is always present
@@ -105,6 +112,7 @@ export default function EditPatientPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [demoOpen, setDemoOpen] = useState(false)
+  const [slidingFee, setSlidingFee] = useState<SlidingFeeConfig | null>(null)
 
   async function load() {
     setLoading(true)
@@ -121,7 +129,13 @@ export default function EditPatientPage() {
     }
   }
 
-  useEffect(() => { void load() }, [patientId])
+  useEffect(() => {
+    void load()
+    ;(async () => {
+      const res = await fetch('/api/ehr/practice/sliding-fee', { credentials: 'include' })
+      if (res.ok) setSlidingFee(await res.json())
+    })()
+  }, [patientId])
 
   function update<K extends keyof Patient>(k: K, v: Patient[K]) {
     setP((prev) => prev ? { ...prev, [k]: v } : prev)
@@ -171,6 +185,8 @@ export default function EditPatientPage() {
         sexual_orientation: p.sexual_orientation ?? '',
         gender_identity: p.gender_identity ?? '',
         pronouns_self_describe: p.pronouns_self_describe ?? '',
+        // Wave 41 / T6 sliding-fee tier
+        fee_tier: p.fee_tier ?? '',
       }
       const res = await fetch(`/api/patients/${patientId}`, {
         method: 'PATCH',
@@ -323,6 +339,34 @@ export default function EditPatientPage() {
             </div>
           </div>
         </Card>
+
+        {/* Billing — sliding-fee tier assignment.
+            Card appears only when the practice has sliding fee enabled
+            AND has configured tiers. Otherwise hidden so it doesn't
+            clutter the form. */}
+        {slidingFee?.enabled && slidingFee.config.length > 0 && (
+          <Card title="Billing">
+            <Field label="Sliding-fee tier">
+              <select
+                value={p.fee_tier ?? ''}
+                onChange={(e) => update('fee_tier', e.target.value || null)}
+                className="ip"
+                style={{ minHeight: 44 }}
+              >
+                <option value="">No tier (full fee)</option>
+                {slidingFee.config.map((t) => (
+                  <option key={t.name} value={t.name}>
+                    {t.name} — patient pays {t.fee_pct}%
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Charges generated for this patient will be multiplied by the
+                tier's fee percentage. Leaving this blank bills at full fee.
+              </p>
+            </Field>
+          </Card>
+        )}
 
         {/* Demographics — collapsed by default */}
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
