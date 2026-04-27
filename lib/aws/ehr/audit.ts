@@ -116,6 +116,9 @@ export type EhrAuditAction =
   | 'discharge_summary.created'
   | 'discharge_summary.updated'
   | 'discharge_summary.completed'
+  | 'treatment_plan_review.viewed'
+  | 'treatment_plan_review.created'
+  | 'treatment_plan_review.cosigned'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
