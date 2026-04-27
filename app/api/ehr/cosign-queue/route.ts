@@ -59,12 +59,63 @@ export async function GET() {
 
   const { rows } = await pool.query(sql, args).catch(() => ({ rows: [] as any[] }))
 
+  // Wave 39 — also surface pending treatment-plan-review cosigns.
+  // Same auth scope as notes (admin sees the practice; supervisors see
+  // their own reviewees). Tolerant of the table not yet existing on
+  // this RDS — empty array fallback so the notes side keeps rendering.
+  let reviewSql: string
+  let reviewArgs: unknown[]
+  if (isAdmin) {
+    reviewSql = `
+      SELECT r.id, r.treatment_plan_id, r.patient_id,
+             r.reviewed_at, r.review_outcome, r.reviewed_by,
+             COALESCE(u.full_name, u.email) AS reviewed_by_name,
+             p.first_name AS patient_first, p.last_name AS patient_last
+        FROM ehr_treatment_plan_reviews r
+        LEFT JOIN users    u ON u.id = r.reviewed_by
+        LEFT JOIN patients p ON p.id = r.patient_id
+       WHERE r.practice_id    = $1
+         AND r.cosign_required = TRUE
+         AND r.cosigned_at     IS NULL
+       ORDER BY r.reviewed_at ASC
+       LIMIT 200
+    `
+    reviewArgs = [ctx.practiceId]
+  } else {
+    reviewSql = `
+      SELECT r.id, r.treatment_plan_id, r.patient_id,
+             r.reviewed_at, r.review_outcome, r.reviewed_by,
+             COALESCE(u.full_name, u.email) AS reviewed_by_name,
+             p.first_name AS patient_first, p.last_name AS patient_last
+        FROM ehr_treatment_plan_reviews r
+        JOIN users u ON u.id = r.reviewed_by
+        LEFT JOIN patients p ON p.id = r.patient_id
+       WHERE r.practice_id      = $1
+         AND r.cosign_required   = TRUE
+         AND r.cosigned_at       IS NULL
+         AND u.supervisor_user_id = $2
+       ORDER BY r.reviewed_at ASC
+       LIMIT 200
+    `
+    reviewArgs = [ctx.practiceId, ctx.user.id]
+  }
+  const { rows: reviewRows } = await pool.query(reviewSql, reviewArgs)
+    .catch(() => ({ rows: [] as any[] }))
+
   await auditEhrAccess({
     ctx,
     action: 'note.list',
     resourceType: 'cosign_queue',
-    details: { count: rows.length, scope: isAdmin ? 'admin_practice_wide' : 'supervisor_only' },
+    details: {
+      notes: rows.length,
+      treatment_plan_reviews: reviewRows.length,
+      scope: isAdmin ? 'admin_practice_wide' : 'supervisor_only',
+    },
   })
 
-  return NextResponse.json({ notes: rows, scope: isAdmin ? 'admin' : 'supervisor' })
+  return NextResponse.json({
+    notes: rows,
+    treatment_plan_reviews: reviewRows,
+    scope: isAdmin ? 'admin' : 'supervisor',
+  })
 }
