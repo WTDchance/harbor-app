@@ -33,6 +33,7 @@ import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard"
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard"
 import { AssessmentsCard } from "@/components/ehr/AssessmentsCard"
 import { ConsentsCard } from "@/components/ehr/ConsentsCard"
+import { BiopsychosocialIntakeCard } from "@/components/ehr/BiopsychosocialIntakeCard"
 import { MoodLogsCard } from "@/components/ehr/MoodLogsCard"
 import { HomeworkCard } from "@/components/ehr/HomeworkCard"
 import { BillingCard } from "@/components/ehr/BillingCard"
@@ -91,6 +92,7 @@ type PatientResp = {
 
 type SectionKey =
   | 'continuity' | 'trajectory' | 'treatment_plan' | 'safety_plan'
+  | 'biopsychosocial'
   | 'progress_notes' | 'assessments' | 'mood' | 'homework'
   | 'billing' | 'consents' | 'portal' | 'communications'
   | 'demographics' | 'history'
@@ -99,6 +101,7 @@ const ALL_SECTIONS: { key: SectionKey; label: string; icon: any; default_open: b
   { key: 'continuity',    label: 'Continuity',         icon: Sparkles,     default_open: true  },
   { key: 'trajectory',    label: 'Trajectory',         icon: Activity,     default_open: true  },
   { key: 'treatment_plan',label: 'Treatment Plan',     icon: ClipboardList,default_open: true  },
+  { key: 'biopsychosocial', label: 'Biopsychosocial',  icon: ClipboardList,default_open: true  },
   { key: 'safety_plan',   label: 'Safety Plan',        icon: AlertTriangle,default_open: false },
   { key: 'progress_notes',label: 'Progress Notes',     icon: FileText,     default_open: true  },
   { key: 'assessments',   label: 'Assessments',        icon: Heart,        default_open: false },
@@ -380,6 +383,8 @@ function SectionContent({ sectionKey, patientId, data }: { sectionKey: SectionKe
       return <TrajectoryBlock data={data} />
     case 'treatment_plan':
       return <TreatmentPlanCard patientId={patientId} />
+    case 'biopsychosocial':
+      return <BiopsychosocialIntakeCard patientId={patientId} />
     case 'safety_plan':
       return <SafetyPlanCard patientId={patientId} />
     case 'progress_notes':
