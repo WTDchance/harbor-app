@@ -183,6 +183,11 @@ export async function POST(req: NextRequest) {
         from_number: fromNumber,
         to_number: toNumber,
         direction: 'inbound',
+        // Retell needs telephony_identifier.twilio_call_sid to match
+        // the start.callSid that SignalWire's <Stream> sends on the
+        // WebSocket "start" frame. Without this match, Retell holds the
+        // call at call_status:'registered' and never bridges audio.
+        telephony_identifier: { twilio_call_sid: callSid || '' },
         retell_llm_dynamic_variables: callerCtx,
         metadata: { practice_id: practice.id, call_sid: callSid },
       }),
