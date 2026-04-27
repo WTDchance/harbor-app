@@ -222,7 +222,15 @@ const ALLOWED_PATCH = [
   'notes', 'address_line_1', 'city', 'state', 'postal_code',
   'pronouns', 'emergency_contact_name', 'emergency_contact_phone',
   'referral_source', 'reason_for_seeking', 'telehealth_preference',
+  // Wave 40 / P4 — SOGI/REL demographics. All optional, all
+  // self-declared. NEVER fed into AI prompts or CDS.
+  'race', 'ethnicity', 'primary_language',
+  'sexual_orientation', 'gender_identity', 'pronouns_self_describe',
 ] as const
+
+// Columns that are TEXT[]; the loop below skips the val === ''
+// empty-string-to-null coercion for these and accepts JS arrays as-is.
+const ARRAY_FIELDS = new Set(['race', 'ethnicity'])
 const REQUIRED_FIELDS = new Set(['first_name', 'last_name', 'phone'])
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -240,7 +248,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   for (const field of ALLOWED_PATCH) {
     if (!(field in body)) continue
     const val = body[field]
-    const final = !REQUIRED_FIELDS.has(field) && val === '' ? null : val
+    let final: unknown
+    if (ARRAY_FIELDS.has(field)) {
+      // Empty array means "user cleared the selection" -> store as NULL.
+      final = Array.isArray(val) && val.length > 0 ? val : null
+    } else {
+      final = !REQUIRED_FIELDS.has(field) && val === '' ? null : val
+    }
     args.push(final)
     sets.push(`${field} = $${args.length}`)
   }
