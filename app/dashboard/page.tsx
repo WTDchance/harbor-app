@@ -31,7 +31,7 @@ import Link from "next/link"
 import {
   Sparkles, RefreshCw, Calendar, Phone, Video, Clock,
   AlertTriangle, FileText, MessageSquare, ChevronRight,
-  CheckCircle2, Mic, ClipboardList, Activity, ArrowRight,
+  CheckCircle2, Mic, ClipboardList, Activity, ArrowRight, Target,
 } from "lucide-react"
 import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
 
@@ -51,10 +51,26 @@ type Appointment = {
 
 type AttentionItem = {
   id: string
-  kind: 'note_unsigned' | 'crisis' | 'unread_message' | 'consent_expiring' | 'eligibility_failed' | 'missed_call'
-  title: string
+  kind:
+    | 'assessment_overdue'
+    | 'treatment_plan_review'
+    | 'note_unsigned'
+    | 'appointment_missing_note'
+    // (legacy kinds kept so older clients don't break during deploy)
+    | 'crisis'
+    | 'unread_message'
+    | 'consent_expiring'
+    | 'eligibility_failed'
+    | 'missed_call'
+  /** New shape (Wave 38 M3): bold patient name. */
+  label?: string
+  /** Legacy field — falls back to label when missing. */
+  title?: string
   why: string
-  href: string
+  /** New shape (Wave 38 M3). */
+  action_url?: string
+  /** Legacy field — falls back to action_url when missing. */
+  href?: string
   patient_id?: string | null
   patient_name?: string | null
   severity: 'info' | 'warn' | 'urgent'
@@ -72,6 +88,7 @@ type ActivityItem = {
 type TodayData = {
   appointments: Appointment[]
   attention: AttentionItem[]
+  attention_overflow?: number
   activity: ActivityItem[]
   practice_name: string
   greeting: string
@@ -196,6 +213,11 @@ export default function TodayPage() {
               {data.attention.map(item => (
                 <AttentionRow key={item.id} item={item} />
               ))}
+              {data.attention_overflow && data.attention_overflow > 0 ? (
+                <div className="text-xs text-gray-500 px-1 italic">
+                  and {data.attention_overflow} more — refresh after working through these.
+                </div>
+              ) : null}
             </div>
           </div>
         )}
@@ -264,20 +286,27 @@ function PillStat({ label, value, tone }: { label: string; value: number; tone: 
 
 function AttentionRow({ item }: { item: AttentionItem }) {
   const tone = ATTENTION_TONES[item.severity]
-  const Icon = item.kind === 'crisis' ? AlertTriangle
+  const Icon =
+    item.kind === 'crisis' ? AlertTriangle
     : item.kind === 'note_unsigned' ? FileText
     : item.kind === 'unread_message' ? MessageSquare
     : item.kind === 'missed_call' ? Phone
+    : item.kind === 'assessment_overdue' ? ClipboardList
+    : item.kind === 'treatment_plan_review' ? Target
+    : item.kind === 'appointment_missing_note' ? Calendar
     : ClipboardList
+  // Wave 38 M3 — new shape uses label + action_url; legacy uses title + href.
+  const label = item.label || item.title || 'Needs attention'
+  const href = item.action_url || item.href || '#'
   return (
     <Link
-      href={item.href}
-      className={`flex items-center gap-3 ${tone.bg} ${tone.border} border rounded-xl px-4 py-3 hover:shadow-sm transition`}
+      href={href}
+      className={`flex items-center gap-3 ${tone.bg} ${tone.border} border rounded-xl px-4 py-3 hover:shadow-sm transition min-h-[56px]`}
     >
       <Icon className={`w-5 h-5 flex-shrink-0 ${tone.icon}`} />
       <div className="flex-1 min-w-0">
-        <div className={`text-sm font-medium ${tone.text}`}>{item.title}</div>
-        <div className="text-xs text-gray-600 mt-0.5">{item.why}</div>
+        <div className={`text-sm font-semibold ${tone.text} truncate`}>{label}</div>
+        <div className="text-xs text-gray-700 mt-0.5">{item.why}</div>
       </div>
       <ChevronRight className="w-4 h-4 text-gray-400 flex-shrink-0" />
     </Link>

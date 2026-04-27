@@ -33,9 +33,10 @@ export async function GET(_req: NextRequest) {
   const [
     practiceRow,
     appointments,
-    notesPending,
-    crisisAlerts,
-    unreadMessages,
+    overdueAssessments,
+    treatmentPlanReviews,
+    unsignedNotes,
+    apptsMissingNote,
     activity,
   ] = await Promise.all([
     pool.query(
@@ -62,30 +63,80 @@ export async function GET(_req: NextRequest) {
        ORDER BY a.scheduled_for ASC`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
+    // 1. Active patients with last assessment > 365 days (or never assessed
+    //    at all). "Active" = patient_status not in ('inactive','discharged')
+    //    and last_contact_at within the last 180 days, so we don't surface
+    //    stale leads or discharged patients. Annual reassessment is the
+    //    standard rhythm for outcomes-tracking practices.
     pool.query(
-      `SELECT id, patient_id, status, created_at,
-              (SELECT first_name || ' ' || last_name FROM patients WHERE id = ehr_progress_notes.patient_id) AS patient_name
-         FROM ehr_progress_notes
-        WHERE practice_id = $1 AND status = 'draft'
-        ORDER BY created_at DESC LIMIT 20`,
+      `SELECT p.id AS patient_id,
+              p.first_name || ' ' || p.last_name AS patient_name,
+              MAX(pa.completed_at) AS last_assessment_at
+         FROM patients p
+         LEFT JOIN patient_assessments pa
+           ON pa.patient_id = p.id AND pa.status = 'completed'
+        WHERE p.practice_id = $1
+          AND COALESCE(p.patient_status, 'active') NOT IN ('inactive','discharged','archived')
+          AND (p.last_contact_at IS NULL OR p.last_contact_at > NOW() - INTERVAL '180 days')
+        GROUP BY p.id, p.first_name, p.last_name
+       HAVING MAX(pa.completed_at) IS NULL
+           OR MAX(pa.completed_at) < NOW() - INTERVAL '365 days'
+        ORDER BY last_assessment_at NULLS FIRST
+        LIMIT 5`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
+
+    // 2. Treatment plans whose review_date is today/past, OR an active plan
+    //    whose review_date is NULL but it's been active >90 days (so the
+    //    therapist hasn't set a review cadence and it's overdue by default).
     pool.query(
-      `SELECT id, patient_id, severity, summary, created_at,
-              (SELECT first_name || ' ' || last_name FROM patients WHERE id = crisis_alerts.patient_id) AS patient_name
-         FROM crisis_alerts
-        WHERE practice_id = $1
-          AND created_at > NOW() - INTERVAL '7 days'
-        ORDER BY created_at DESC LIMIT 10`,
+      `SELECT tp.id AS plan_id, tp.patient_id, tp.review_date, tp.start_date,
+              p.first_name || ' ' || p.last_name AS patient_name
+         FROM ehr_treatment_plans tp
+         JOIN patients p ON p.id = tp.patient_id
+        WHERE tp.practice_id = $1
+          AND tp.status = 'active'
+          AND (
+            tp.review_date <= CURRENT_DATE
+            OR (tp.review_date IS NULL AND tp.created_at < NOW() - INTERVAL '90 days')
+          )
+        ORDER BY tp.review_date NULLS LAST, tp.created_at ASC
+        LIMIT 5`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
+
+    // 3. Unsigned progress notes drafted in the past 7 days.
     pool.query(
-      `SELECT id, patient_id, last_message_at,
-              (SELECT first_name || ' ' || last_name FROM patients WHERE id = ehr_message_threads.patient_id) AS patient_name
-         FROM ehr_message_threads
-        WHERE practice_id = $1
-          AND last_message_at > NOW() - INTERVAL '7 days'
-        ORDER BY last_message_at DESC LIMIT 10`,
+      `SELECT n.id AS note_id, n.patient_id, n.created_at,
+              p.first_name || ' ' || p.last_name AS patient_name
+         FROM ehr_progress_notes n
+         LEFT JOIN patients p ON p.id = n.patient_id
+        WHERE n.practice_id = $1
+          AND n.status = 'draft'
+          AND n.created_at > NOW() - INTERVAL '7 days'
+        ORDER BY n.created_at ASC
+        LIMIT 5`,
+      [practiceId],
+    ).catch(() => ({ rows: [] as any[] })),
+
+    // 4. Completed appointments missing a progress note. We give a 24h
+    //    grace window (don't nag the moment a session ends) but anything
+    //    past that with no linked note is a billing/audit liability.
+    pool.query(
+      `SELECT a.id AS appointment_id, a.patient_id, a.scheduled_for,
+              p.first_name || ' ' || p.last_name AS patient_name
+         FROM appointments a
+         LEFT JOIN patients p ON p.id = a.patient_id
+        WHERE a.practice_id = $1
+          AND a.status = 'completed'
+          AND a.scheduled_for < NOW() - INTERVAL '1 day'
+          AND a.scheduled_for > NOW() - INTERVAL '30 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM ehr_progress_notes n
+             WHERE n.appointment_id = a.id
+          )
+        ORDER BY a.scheduled_for ASC
+        LIMIT 5`,
       [practiceId],
     ).catch(() => ({ rows: [] as any[] })),
     pool.query(
@@ -121,53 +172,90 @@ export async function GET(_req: NextRequest) {
 
   const practiceName = practiceRow.rows[0]?.name || 'Your practice'
 
-  // Build attention items
-  const attention: any[] = []
+  // ── Smarter Needs-Attention (Wave 38 M3) ─────────────────────────────
+  // Priority order: overdue assessments → treatment-plan reviews → unsigned
+  // notes → completed appointments missing a progress note. Cap 5 visible;
+  // overflow surfaces as "and N more" in the UI.
+  const attentionAll: any[] = []
 
-  for (const c of crisisAlerts.rows) {
-    attention.push({
-      id: `crisis-${c.id}`,
-      kind: 'crisis',
-      title: `Crisis flag — ${c.patient_name || 'unknown patient'}`,
-      why: c.summary || 'Review safety plan and recent communications.',
-      href: c.patient_id ? `/dashboard/patients/${c.patient_id}` : '/dashboard/patients',
-      patient_id: c.patient_id,
-      patient_name: c.patient_name,
-      severity: 'urgent',
+  function fmtMonth(d: Date): string {
+    return d.toLocaleString(undefined, { month: 'short', year: 'numeric' })
+  }
+
+  // 1) Overdue assessments
+  for (const r of overdueAssessments.rows) {
+    const lastAt: Date | null = r.last_assessment_at ? new Date(r.last_assessment_at) : null
+    const why = lastAt
+      ? `Annual outcomes assessment overdue — last completed ${fmtMonth(lastAt)}.`
+      : 'No outcomes assessment on file. Send a PHQ-9 / GAD-7 to baseline.'
+    attentionAll.push({
+      id: `assess-${r.patient_id}`,
+      kind: 'assessment_overdue',
+      patient_id: r.patient_id,
+      patient_name: r.patient_name,
+      label: r.patient_name || 'Unnamed patient',
+      why,
+      action_url: `/dashboard/patients/${r.patient_id}#assessments`,
+      severity: lastAt ? 'warn' : 'info',
     })
   }
 
-  // Notes — group by age. Drafts >24h get warn, recent ones info
-  for (const n of notesPending.rows.slice(0, 5)) {
-    const ageHours = (Date.now() - new Date(n.created_at).getTime()) / 3_600_000
-    attention.push({
-      id: `note-${n.id}`,
+  // 2) Treatment-plan reviews due
+  for (const r of treatmentPlanReviews.rows) {
+    const reviewDate: Date | null = r.review_date ? new Date(r.review_date) : null
+    const why = reviewDate
+      ? `Treatment-plan review due ${reviewDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.`
+      : 'Treatment plan active >90 days with no review date set — schedule a review.'
+    attentionAll.push({
+      id: `plan-${r.plan_id}`,
+      kind: 'treatment_plan_review',
+      patient_id: r.patient_id,
+      patient_name: r.patient_name,
+      label: r.patient_name || 'Unnamed patient',
+      why,
+      action_url: `/dashboard/ehr/treatment-plans/${r.plan_id}`,
+      severity: 'warn',
+    })
+  }
+
+  // 3) Unsigned progress notes from past 7 days
+  for (const r of unsignedNotes.rows) {
+    const ageHours = (Date.now() - new Date(r.created_at).getTime()) / 3_600_000
+    const why = ageHours > 48
+      ? `Drafted ${Math.round(ageHours / 24)}d ago — sign to lock + release for billing.`
+      : ageHours > 24
+      ? 'Drafted yesterday. Sign to lock + release for billing.'
+      : 'Drafted today. Sign when ready.'
+    attentionAll.push({
+      id: `note-${r.note_id}`,
       kind: 'note_unsigned',
-      title: `Sign progress note — ${n.patient_name || 'unknown'}`,
-      why: ageHours > 48
-        ? `Drafted ${Math.round(ageHours / 24)}d ago — sign to release for billing.`
-        : ageHours > 24
-        ? 'Drafted yesterday. Sign to lock + release for billing.'
-        : 'Drafted today. Sign when ready.',
-      href: `/dashboard/ehr/notes/${n.id}`,
-      patient_id: n.patient_id,
-      patient_name: n.patient_name,
+      patient_id: r.patient_id,
+      patient_name: r.patient_name,
+      label: r.patient_name || 'Unnamed patient',
+      why,
+      action_url: `/dashboard/ehr/notes/${r.note_id}`,
       severity: ageHours > 48 ? 'warn' : 'info',
     })
   }
 
-  for (const m of unreadMessages.rows.slice(0, 5)) {
-    attention.push({
-      id: `msg-${m.id}`,
-      kind: 'unread_message',
-      title: `New message from ${m.patient_name || 'patient'}`,
-      why: 'Reply within one business day per practice policy.',
-      href: `/dashboard/ehr/messages?thread=${m.id}`,
-      patient_id: m.patient_id,
-      patient_name: m.patient_name,
-      severity: 'info',
+  // 4) Completed appointments missing a progress note
+  for (const r of apptsMissingNote.rows) {
+    const dt = new Date(r.scheduled_for)
+    const why = `Session ${dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} has no progress note. Required for billing.`
+    attentionAll.push({
+      id: `appt-${r.appointment_id}`,
+      kind: 'appointment_missing_note',
+      patient_id: r.patient_id,
+      patient_name: r.patient_name,
+      label: r.patient_name || 'Unnamed patient',
+      why,
+      action_url: `/dashboard/ehr/notes/new?patient_id=${r.patient_id}&appointment_id=${r.appointment_id}`,
+      severity: 'warn',
     })
   }
+
+  const attention = attentionAll.slice(0, 5)
+  const attention_overflow = Math.max(0, attentionAll.length - attention.length)
 
   return NextResponse.json({
     practice_name: practiceName,
@@ -194,8 +282,9 @@ export async function GET(_req: NextRequest) {
       description: a.description,
       occurred_at: a.occurred_at,
     })),
-    drafts_pending: notesPending.rows.length,
-    crisis_count: crisisAlerts.rows.length,
-    unread_messages: unreadMessages.rows.length,
+    drafts_pending: unsignedNotes.rows.length,
+    crisis_count: 0,
+    unread_messages: 0,
+    attention_overflow,
   })
 }
