@@ -7,6 +7,7 @@ import { TelehealthButton } from '@/components/ehr/TelehealthButton'
 import { SessionTimerButton } from '@/components/ehr/SessionTimerButton'
 import { RecurrencePicker } from '@/components/ehr/RecurrencePicker'
 import { AppointmentCptPicker } from '@/components/ehr/AppointmentCptPicker'
+import { WaiveFeeButton } from '@/components/ehr/WaiveFeeButton'
 
 interface Appointment {
   id: string
@@ -473,6 +474,11 @@ export default function AppointmentsPage() {
               </div>
               <div>
                 
+              {selectedAppt && (
+                <div className="mb-3">
+                  <WaiveFeeButton appointmentId={selectedAppt.id} />
+                </div>
+              )}
               {!selectedAppt && (
                 <div className="mb-3">
                   <RecurrencePicker
