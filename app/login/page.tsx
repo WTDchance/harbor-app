@@ -23,6 +23,9 @@ function LoginForm() {
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(initialError)
+  // Wave 38 TS3 — TOTP MFA challenge
+  const [mfaSession, setMfaSession] = useState<string | null>(null)
+  const [mfaCode, setMfaCode] = useState('')
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -35,12 +38,50 @@ function LoginForm() {
         body: JSON.stringify({ email, password, next }),
       })
       const data = await res.json().catch(() => ({}))
+      if (data?.challenge === 'SOFTWARE_TOKEN_MFA' && data?.session) {
+        // Show MFA step
+        setMfaSession(data.session)
+        setSubmitting(false)
+        return
+      }
+      if (data?.challenge === 'MFA_SETUP') {
+        // Need to enroll. Send them to the setup page after the cookies
+        // get set on the next sign-in.
+        setError('MFA setup required. Sign in again, then visit /settings/security/mfa-setup.')
+        setSubmitting(false)
+        return
+      }
       if (!res.ok) {
         setError(data?.error || 'Sign in failed. Check your email and password.')
         setSubmitting(false)
         return
       }
       // Success — server set cookies + told us where to go
+      const dest = data?.redirect || '/dashboard'
+      router.push(dest)
+      router.refresh()
+    } catch (err) {
+      setError('Network error. Please try again.')
+      setSubmitting(false)
+    }
+  }
+
+  async function onSubmitMfa(e: FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setSubmitting(true)
+    try {
+      const r = await fetch('/api/auth/mfa-challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session: mfaSession, email, code: mfaCode, next }),
+      })
+      const data = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        setError(prettyError(data?.error || 'MFA verification failed.'))
+        setSubmitting(false)
+        return
+      }
       const dest = data?.redirect || '/dashboard'
       router.push(dest)
       router.refresh()
@@ -69,6 +110,42 @@ function LoginForm() {
             </div>
           )}
 
+          {mfaSession ? (
+            <form onSubmit={onSubmitMfa} className="space-y-4">
+              <div>
+                <label htmlFor="mfa" className="block text-sm font-medium text-gray-700 mb-1">
+                  6-digit code from your authenticator app
+                </label>
+                <input
+                  id="mfa"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]{6}"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={e => setMfaCode(e.target.value.replace(/\D/g, ''))}
+                  required
+                  autoFocus
+                  className="w-full px-3.5 py-2.5 border border-gray-300 rounded-lg text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent tracking-widest text-center font-mono"
+                  placeholder="123456"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={submitting || mfaCode.length !== 6}
+                className="w-full py-2.5 bg-teal-600 hover:bg-teal-700 active:bg-teal-800 text-white font-medium rounded-lg transition disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2 min-h-[44px]"
+              >
+                {submitting ? (<><Loader2 className="w-4 h-4 animate-spin" /> Verifying…</>) : 'Verify'}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMfaSession(null); setMfaCode(''); setError(null); }}
+                className="w-full text-xs text-gray-500 hover:text-gray-700"
+              >
+                Cancel and start over
+              </button>
+            </form>
+          ) : (
           <form onSubmit={onSubmit} className="space-y-4">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">
@@ -123,6 +200,7 @@ function LoginForm() {
               )}
             </button>
           </form>
+          )}
 
           <div className="mt-6 pt-6 border-t border-gray-100 text-center">
             <p className="text-xs text-gray-500">

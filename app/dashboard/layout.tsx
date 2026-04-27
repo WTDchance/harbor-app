@@ -393,6 +393,26 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => { cancelled = true; };
   }, [router]);
 
+  // Wave 38 TS3 — nudge un-enrolled therapists into TOTP setup once the
+  // session is up. Patients are gated by role so this no-ops for them.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch('/api/auth/mfa-status')
+        if (!r.ok) return
+        const j = await r.json()
+        if (!cancelled && j?.required) {
+          if (typeof window !== 'undefined' &&
+              !window.location.pathname.startsWith('/settings/security/mfa-setup')) {
+            router.replace('/settings/security/mfa-setup')
+          }
+        }
+      } catch {}
+    })()
+    return () => { cancelled = true }
+  }, [router]);
+
   async function handleLogout() {
     window.location.href = "/api/auth/logout";
     return;

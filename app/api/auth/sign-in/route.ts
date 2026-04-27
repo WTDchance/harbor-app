@@ -59,7 +59,19 @@ export async function POST(req: NextRequest) {
 
   const auth = result.AuthenticationResult
   if (!auth?.IdToken || !auth.AccessToken) {
-    // Could be a challenge (NEW_PASSWORD_REQUIRED, MFA, etc.) — surface it
+    // Wave 38 TS3 — return MFA / new-password challenges to the client
+    // with the Cognito Session token so it can RespondToAuthChallenge.
+    if (result.ChallengeName === 'SOFTWARE_TOKEN_MFA' || result.ChallengeName === 'MFA_SETUP') {
+      return NextResponse.json(
+        {
+          challenge: result.ChallengeName,
+          session: result.Session,
+          email,
+          next,
+        },
+        { status: 200 },
+      )
+    }
     return NextResponse.json(
       { error: result.ChallengeName || 'AuthenticationFailed' },
       { status: 401 },
