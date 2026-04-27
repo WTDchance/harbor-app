@@ -6,7 +6,7 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
-import { sendSMS } from '@/lib/twilio'
+import { sendSMS } from '@/lib/aws/signalwire'
 import { sendReminderEmail } from '@/lib/reminder-email'
 import { checkSmsConsent } from '@/lib/sms-consent'
 
@@ -140,7 +140,12 @@ async function handleReminders(request: NextRequest) {
               const greeting = patient.first_name ? `Hi ${patient.first_name}!` : 'Hi!'
               const message = `${greeting} This is a reminder of your appointment with ${practiceName} tomorrow${timeDisplay}. Reply STOP to opt out.`
 
-              await sendSMS(patient.phone, message, practice.id)
+              const r = await sendSMS({
+                to: patient.phone,
+                body: message,
+                practiceId: practice.id,
+              })
+              if (!r.ok) throw new Error(`signalwire_${r.reason}`)
               smsSent++
               reminderSent = true
               console.log(`\u2713 SMS reminder sent to ${firstName}`)

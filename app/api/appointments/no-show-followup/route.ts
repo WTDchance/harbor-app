@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { sendSMS } from '@/lib/twilio'
+import { sendSMS } from '@/lib/aws/signalwire'
 
 // Days and time labels for human-readable messages
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -288,7 +288,12 @@ export async function POST(req: NextRequest) {
     // Send SMS
     let smsSent = false
     try {
-      await sendSMS(appt.patient_phone, message)
+      const r = await sendSMS({
+        to: appt.patient_phone,
+        body: message,
+        practiceId: practice.id,
+      })
+      if (!r.ok) throw new Error(`signalwire_${r.reason}`)
       smsSent = true
     } catch (smsError) {
       console.error('Failed to send no-show follow-up SMS:', smsError)

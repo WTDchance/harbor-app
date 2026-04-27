@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { sendSMS } from '@/lib/twilio'
+import { sendSMS } from '@/lib/aws/signalwire'
 
 const DEFAULT_PREP_TEMPLATE = "Hi {patient_name}, this is a reminder that you have an appointment with {provider_name} tomorrow at {time}. Is there anything specific you'd like to focus on in your session? (You don't need to reply — just wanted you to feel prepared.)"
 
@@ -80,7 +80,12 @@ export async function POST(req: NextRequest) {
           practice_name: practice.name
         })
 
-        await sendSMS(appt.patient_phone, message)
+        const r = await sendSMS({
+          to: appt.patient_phone,
+          body: message,
+          practiceId: practice.id,
+        })
+        if (!r.ok) throw new Error(`signalwire_${r.reason}`)
 
         await supabase
           .from('appointments')
