@@ -48,6 +48,7 @@ async function sendRemindersForDate(targetDate: Date, hoursAhead: number) {
     .from('appointments')
     .select(`
       id, scheduled_at, appointment_type, status,
+      telehealth_room_slug, video_provider, video_meeting_id,
       patients (first_name, last_name, phone, email),
       practices (name, ai_name, phone_number, notification_email)
     `)
@@ -92,9 +93,19 @@ async function sendRemindersForDate(targetDate: Date, hoursAhead: number) {
     const practiceName = practice?.name || 'us'
     const firstName = patient.first_name || 'there'
 
+    // Wave 38 TS2 — append telehealth link to SMS reminders for video sessions.
+    const apptAny = appt as any
+    const isTelehealth =
+      apptAny.video_provider === 'chime' ||
+      apptAny.video_provider === 'jitsi_public' ||
+      !!apptAny.telehealth_room_slug
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || ''
+    const meetUrl = isTelehealth && baseUrl ? `${baseUrl.replace(/\/$/, '')}/meet/${apptAny.id}` : ''
+    const meetSuffix = meetUrl ? ` Join here: ${meetUrl}` : ''
+
     const smsMessage = hoursAhead === 48
-      ? `Harbor: Hi ${firstName}! This is a reminder from ${practiceName} — you have an appointment in 2 days on ${apptTime}. Reply CONFIRM to confirm, CANCEL to cancel, or RESCHEDULE if you need a different time. Reply HERE when you arrive and we'll let your therapist know!`
-      : `Harbor: Hi ${firstName}! Quick reminder from ${practiceName} — your appointment is tomorrow at ${apptTime}. Reply CONFIRM, CANCEL, or RESCHEDULE. For in-person visits, reply HERE when you arrive and we'll notify your therapist. See you soon! — ${aiName}`
+      ? `Harbor: Hi ${firstName}! This is a reminder from ${practiceName} — you have an appointment in 2 days on ${apptTime}.${meetSuffix} Reply CONFIRM to confirm, CANCEL to cancel, or RESCHEDULE if you need a different time. Reply HERE when you arrive and we'll let your therapist know!`
+      : `Harbor: Hi ${firstName}! Quick reminder from ${practiceName} — your appointment is tomorrow at ${apptTime}.${meetSuffix} Reply CONFIRM, CANCEL, or RESCHEDULE. For in-person visits, reply HERE when you arrive and we'll notify your therapist. See you soon! — ${aiName}`
 
     let anyChannelSent = false
 

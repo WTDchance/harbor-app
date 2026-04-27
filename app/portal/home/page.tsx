@@ -15,6 +15,9 @@ type Appt = {
   appointment_type: string | null
   status: string
   telehealth_room_slug: string | null
+  video_provider: 'chime' | 'jitsi_public' | null
+  video_meeting_id: string | null
+  is_telehealth: boolean
 }
 type Consent = { id: string; consent_type: string; document_name: string | null; status: string; signed_at: string | null }
 type Goal = { id: string; text: string }
@@ -255,17 +258,25 @@ export default function PortalHome() {
                     }`}>{a.status}</span>
                   </div>
                 </div>
-                {a.telehealth_room_slug && (
+                {(a.video_provider === 'chime' || a.is_telehealth) ? (
+                  <a
+                    href={`/meet/${a.id}`}
+                    className="inline-flex items-center gap-1 text-xs bg-green-600 hover:bg-green-700 text-white px-2.5 py-1 rounded-md min-h-[44px]"
+                  >
+                    <Video className="w-3 h-3" />
+                    Join session
+                  </a>
+                ) : a.telehealth_room_slug ? (
                   <a
                     href={`https://meet.jit.si/${a.telehealth_room_slug}`}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-md"
+                    className="inline-flex items-center gap-1 text-xs bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-md min-h-[44px]"
                   >
                     <Video className="w-3 h-3" />
                     Join video
                   </a>
-                )}
+                ) : null}
               </li>
             ))}
           </ul>

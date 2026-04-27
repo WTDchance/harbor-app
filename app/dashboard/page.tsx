@@ -45,6 +45,9 @@ type Appointment = {
   appointment_type: string | null
   status: string
   telehealth_room_slug: string | null
+  video_provider?: 'chime' | 'jitsi_public' | null
+  video_meeting_id?: string | null
+  is_telehealth?: boolean
   note_status?: string | null
   intake_completed?: boolean
 }
@@ -323,11 +326,20 @@ function AppointmentCard({
   const time = new Date(appt.scheduled_for)
   const timeStr = time.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   const fullName = [appt.patient_first_name, appt.patient_last_name].filter(Boolean).join(' ') || 'Unnamed patient'
-  const isTelehealth = !!appt.telehealth_room_slug
+  const isTelehealth = !!appt.is_telehealth || !!appt.telehealth_room_slug || appt.video_provider === 'chime' || appt.video_provider === 'jitsi_public'
   const noteStatus = appt.note_status
 
   return (
     <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+      {isTelehealth && (
+        <Link
+          href={`/meet/${appt.id}`}
+          className="block bg-green-600 hover:bg-green-700 text-white text-sm text-center font-semibold py-2.5 min-h-[44px] inline-flex items-center justify-center gap-1.5"
+        >
+          <Video className="w-4 h-4" />
+          Join session
+        </Link>
+      )}
       <div className="px-4 py-3 flex items-center gap-3">
         <div className="text-center w-14 flex-shrink-0">
           <div className="text-xs text-gray-500 uppercase tracking-wide">{time.toLocaleString(undefined, { month: 'short' }).slice(0,3)}</div>

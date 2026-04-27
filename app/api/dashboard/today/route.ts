@@ -47,7 +47,7 @@ export async function GET(_req: NextRequest) {
       `SELECT
          a.id, a.patient_id, a.scheduled_for,
          a.duration_minutes, a.appointment_type, a.status,
-         a.telehealth_room_slug,
+         a.telehealth_room_slug, a.video_provider, a.video_meeting_id,
          p.first_name AS patient_first_name,
          p.last_name  AS patient_last_name,
          p.intake_completed,
@@ -270,6 +270,9 @@ export async function GET(_req: NextRequest) {
       appointment_type: a.appointment_type,
       status: a.status,
       telehealth_room_slug: a.telehealth_room_slug,
+      video_provider: a.video_provider,
+      video_meeting_id: a.video_meeting_id,
+      is_telehealth: !!a.telehealth_room_slug || a.video_provider === 'chime' || a.video_provider === 'jitsi_public' || /telehealth|video|virtual/i.test(a.appointment_type || ''),
       note_status: a.note_status,
       intake_completed: a.intake_completed,
     })),
