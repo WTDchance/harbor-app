@@ -196,3 +196,84 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
   return { subject, html, from: EMAIL_SUPPORT }
 }
+
+// Patient-facing no-show follow-up email — empathetic, no-blame.
+// Reply-To Support@. Honours practice phone/address in the footer.
+export function buildNoShowEmail(opts: {
+  practiceName: string
+  providerName?: string
+  patientName?: string
+  /** Optional reschedule destination — if omitted, falls back to "call us". */
+  rescheduleUrl?: string
+  practicePhone?: string
+  practiceAddress?: string
+}): { subject: string; html: string; text: string; from: string } {
+  const greeting = opts.patientName ? `Hi ${opts.patientName}` : 'Hi there'
+  const provider = opts.providerName || opts.practiceName
+  const subject = `We missed you — would you like to reschedule?`
+
+  const footerLines: string[] = [
+    `<p style="color:#666;font-size:12px;margin:0;font-weight:600">${opts.practiceName}</p>`,
+  ]
+  if (opts.practicePhone) {
+    footerLines.push(`<p style="color:#666;font-size:12px;margin:2px 0 0">${opts.practicePhone}</p>`)
+  }
+  if (opts.practiceAddress) {
+    footerLines.push(`<p style="color:#666;font-size:12px;margin:2px 0 0">${opts.practiceAddress}</p>`)
+  }
+  footerLines.push(
+    `<p style="color:#999;font-size:11px;margin:8px 0 0">` +
+      `Sent by Harbor · <a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://harborreceptionist.com'}/unsubscribe" style="color:#999;text-decoration:underline">Unsubscribe</a>` +
+    `</p>`,
+  )
+
+  const ctaBlock = opts.rescheduleUrl
+    ? `<div class="cta"><a href="${opts.rescheduleUrl}" class="button">Reschedule a session →</a></div>`
+    : opts.practicePhone
+      ? `<div class="cta"><a href="tel:${opts.practicePhone.replace(/[^+0-9]/g, '')}" class="button">Call ${opts.practicePhone}</a></div>`
+      : ''
+
+  const html = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f5f5f0; margin: 0; padding: 20px; color: #1f2937; }
+.container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+.header { background: #0d9488; padding: 24px 32px; color: white; }
+.header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+.body { padding: 32px; font-size: 15px; line-height: 1.7; color: #333; }
+.cta { text-align: center; margin: 28px 0; }
+.button { display: inline-block; background: #0d9488; color: white !important; padding: 14px 32px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 16px; }
+.note { font-size: 13px; color: #6b7280; margin-top: 20px; }
+.footer { padding: 20px 32px; background: #f9f9f7; font-size: 12px; color: #999; text-align: center; }
+</style></head>
+<body>
+<div class="container">
+  <div class="header"><h1>We missed you today</h1></div>
+  <div class="body">
+    <p>${greeting},</p>
+    <p>It looks like we didn't get to see you for your appointment with <strong>${provider}</strong> earlier. No worries at all — these things happen.</p>
+    <p>If you'd like to reschedule, we'd love to find a time that works better. ${opts.rescheduleUrl
+      ? `Tap the button below to pick from open slots, or just give us a call.`
+      : `Just give us a call and we'll find something that fits.`}</p>
+    ${ctaBlock}
+    <p class="note">No reply needed if you'd rather pause for now — this email is just a friendly check-in.</p>
+  </div>
+  <div class="footer">${footerLines.join('\n')}</div>
+</div>
+</body></html>`
+
+  const textLines = [
+    `${greeting},`,
+    ``,
+    `It looks like we didn't get to see you for your appointment with ${provider} earlier.`,
+    `No worries — these things happen.`,
+    ``,
+    `If you'd like to reschedule, we'd love to find a time that works better.`,
+  ]
+  if (opts.rescheduleUrl) textLines.push(``, `Reschedule: ${opts.rescheduleUrl}`)
+  if (opts.practicePhone) textLines.push(``, `Or call us: ${opts.practicePhone}`)
+  textLines.push(``, `— ${opts.practiceName}`)
+
+  return { subject, html, text: textLines.join('\n'), from: EMAIL_SUPPORT }
+}
+

@@ -104,6 +104,8 @@ export type EhrAuditAction =
   | 'patients.export'
   | 'patients.verify_identity'
   | 'admin.practice.decommission'
+  | 'no_show.email_sent'
+  | 'no_show.email_skipped'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
