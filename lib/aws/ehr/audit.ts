@@ -147,6 +147,12 @@ export type EhrAuditAction =
   | 'disclosure.list'
   | 'disclosure.update'
   | 'disclosure.accounting_generated'
+  | 'appointment.patient.added'
+  | 'appointment.patient.removed'
+  | 'appointment.patient.list'
+  | 'note.patient.added'
+  | 'note.patient.removed'
+  | 'note.patient.section_updated'
   // Wave 41 — 42 CFR Part 2 separate consent track.
   | 'part2_consent.create'
   | 'part2_consent.view'
