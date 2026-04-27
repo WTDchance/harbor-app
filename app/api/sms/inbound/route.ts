@@ -1,11 +1,14 @@
-// Twilio SMS inbound webhook handler
-// Receives incoming SMS messages and generates AI responses
+// Inbound SMS webhook (Wave 41 — ported off lib/twilio)
+// Accepts SignalWire LaML and Twilio LaML payloads (identical field names).
+// SignalWire dashboard config points here for the AI-receptionist features
+// (crisis detection + Claude responder). The bare /api/signalwire/inbound-sms
+// route handles STOP/START/HELP-only flows for numbers that don't opt in to AI.
 
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
 import { generateSMSResponse as claudeGenerateSMS, detectCrisisIndicators } from '@/lib/claude'
 import { getSmsReceptionistPrompt } from '@/lib/ai-prompts'
-import { generateSMSResponse as generateTwilioResponse, extractPhoneFromTwilioPayload } from '@/lib/twilio'
+import { generateSMSResponse as generateLaMLResponse, extractPhoneFromSignalWirePayload } from '@/lib/aws/signalwire'
 import {
   classifyInboundKeyword,
   recordOptOut,
@@ -33,7 +36,7 @@ export async function POST(request: NextRequest) {
     // Parse Twilio webhook payload
     const formData = await request.formData()
     const payload = Object.fromEntries(formData)
-    const { from, to, body, messageSid } = extractPhoneFromTwilioPayload(payload)
+    const { from, to, body, messageSid } = extractPhoneFromSignalWirePayload(payload)
 
     console.log(`💬 SMS received: ${from} -> ${to}`)
     console.log(`Message: ${body}`)
@@ -49,7 +52,7 @@ export async function POST(request: NextRequest) {
       console.error('❌ Could not find practice for number:', to)
       // Still return valid TwiML to Twilio
       return new NextResponse(
-        generateTwilioResponse("Sorry, we couldn't process your message."),
+        generateLaMLResponse("Sorry, we couldn't process your message."),
         {
           headers: { 'Content-Type': 'application/xml' },
         }
@@ -65,7 +68,7 @@ export async function POST(request: NextRequest) {
       await recordOptOut(practiceId, from, body.trim())
       const confirm = stopConfirmationMessage(practices.name)
       await logSMSMessage(practiceId, from, body, false)
-      return new NextResponse(generateTwilioResponse(confirm), {
+      return new NextResponse(generateLaMLResponse(confirm), {
         headers: { 'Content-Type': 'application/xml' },
       })
     }
@@ -73,7 +76,7 @@ export async function POST(request: NextRequest) {
       await clearOptOut(practiceId, from)
       const confirm = startConfirmationMessage(practices.name)
       await logSMSMessage(practiceId, from, body, false)
-      return new NextResponse(generateTwilioResponse(confirm), {
+      return new NextResponse(generateLaMLResponse(confirm), {
         headers: { 'Content-Type': 'application/xml' },
       })
     }
@@ -81,7 +84,7 @@ export async function POST(request: NextRequest) {
       const contact = (practices as any).contact_phone || (practices as any).owner_phone || null
       const help = helpMessage(practices.name, contact)
       await logSMSMessage(practiceId, from, body, false)
-      return new NextResponse(generateTwilioResponse(help), {
+      return new NextResponse(generateLaMLResponse(help), {
         headers: { 'Content-Type': 'application/xml' },
       })
     }
@@ -95,7 +98,7 @@ export async function POST(request: NextRequest) {
       // Still log the message
       await logSMSMessage(practiceId, from, body, true)
 
-      return new NextResponse(generateTwilioResponse(crisisResponse), {
+      return new NextResponse(generateLaMLResponse(crisisResponse), {
         headers: { 'Content-Type': 'application/xml' },
       })
     }
@@ -220,14 +223,14 @@ export async function POST(request: NextRequest) {
     console.log(`✓ Message logged and response generated`)
 
     // Return TwiML XML response to Twilio
-    return new NextResponse(generateTwilioResponse(aiResponse), {
+    return new NextResponse(generateLaMLResponse(aiResponse), {
       headers: { 'Content-Type': 'application/xml' },
     })
   } catch (error) {
     console.error('❌ SMS webhook error:', error)
     // Return error response
     return new NextResponse(
-      generateTwilioResponse('Sorry, we encountered an error. Please try again.'),
+      generateLaMLResponse('Sorry, we encountered an error. Please try again.'),
       {
         headers: { 'Content-Type': 'application/xml' },
         status: 200, // Twilio expects 200 even on error

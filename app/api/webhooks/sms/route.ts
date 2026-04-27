@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase'
+import { sendSMS as signalwireSendSMS } from '@/lib/aws/signalwire'
 
-async function sendSMS(to: string, body: string) {
-    const sid = process.env.TWILIO_ACCOUNT_SID!
-    const token = process.env.TWILIO_AUTH_TOKEN!
-    const from = process.env.TWILIO_PHONE_NUMBER!
-    await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages.json`, {
-          method: 'POST',
-          headers: {
-                  Authorization: `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`,
-                  'Content-Type': 'application/x-www-form-urlencoded',
-                },
-          body: new URLSearchParams({ Body: body, From: from, To: to }),
-        })
+// Wave 41 — Twilio→SignalWire port. Inbound CONFIRM/CANCEL handler now
+// posts replies through lib/aws/signalwire (LaML, Twilio-API-compat) so
+// the route stops importing twilio. Legacy callers may still POST here
+// from the Twilio dashboard during the cutover; the LaML payload field
+// names are identical so request parsing is unchanged.
+async function sendSMS(to: string, body: string, practiceId?: string | null) {
+    const r = await signalwireSendSMS({ to, body, practiceId: practiceId ?? null })
+    if (!r.ok) {
+      console.error('[webhooks/sms] signalwire send failed:', r.reason)
+    }
   }
 
 function fmtTime(t: string) {
@@ -35,18 +34,11 @@ export async function POST(req: NextRequest) {
           const messageSid = p.get('MessageSid') || ''
           const reply = messageBody.trim().toUpperCase()
 
-          // Find practice by matching TWILIO_PHONE_NUMBER or looking up by To field
-          const twilioPhoneNumber = process.env.TWILIO_PHONE_NUMBER
+          // Match the To-number to a practice. Multi-practice setups have
+          // each practice in `practices.phone_number` (or signalwire_number);
+          // single-practice envs hit the same code path.
           let practice = null
-
-          if (twilioPhoneNumber && to === twilioPhoneNumber) {
-            const { data } = await supabaseAdmin
-              .from('practices')
-              .select('id, name, phone_number')
-              .eq('phone_number', twilioPhoneNumber)
-              .single()
-            practice = data
-          } else {
+          {
             const { data } = await supabaseAdmin
               .from('practices')
               .select('id, name, phone_number')
@@ -110,7 +102,7 @@ export async function POST(req: NextRequest) {
                 })
 
           if (!appts?.length) {
-                  await sendSMS(from, "Thanks for your message! We couldn't find an upcoming appointment for your number. Please call us directly.")
+                  await sendSMS(from, "Thanks for your message! We couldn't find an upcoming appointment for your number. Please call us directly.", practice?.id ?? null)
                   if (practice) {
                     const { data: existingConversation } = await supabaseAdmin
                       .from('sms_conversations')
@@ -149,7 +141,7 @@ export async function POST(req: NextRequest) {
                           }).eq('id', appt.id)
 
                   const confirmMessage = `✓ Confirmed! See you ${fmtDate(appt.appointment_date)} at ${fmtTime(appt.appointment_time)} with ${practiceFromAppt?.name || 'your therapist'}. Reply CANCEL if plans change.`
-                  await sendSMS(from, confirmMessage)
+                  await sendSMS(from, confirmMessage, practice?.id ?? null)
 
                   if (practice) {
                     const { data: existingConversation } = await supabaseAdmin
@@ -184,7 +176,7 @@ export async function POST(req: NextRequest) {
                           }).eq('id', appt.id)
 
                   const cancelMessage = `Your appointment has been cancelled. Please call us to reschedule when you're ready.`
-                  await sendSMS(from, cancelMessage)
+                  await sendSMS(from, cancelMessage, practice?.id ?? null)
 
                   if (practice) {
                     const { data: existingConversation } = await supabaseAdmin
@@ -220,14 +212,16 @@ export async function POST(req: NextRequest) {
 
                   if (waitlist?.[0]?.patient_phone) {
                             const w = waitlist[0]
-                            await sendSMS(w.patient_phone,
-                                                    `Harbor: Hi ${w.patient_name.split(' ')[0]}! A slot just opened: ${fmtDate(appt.appointment_date)} at ${fmtTime(appt.appointment_time)} with ${practiceFromAppt?.name}. Call us to book!`
+                            await sendSMS(
+                                                    w.patient_phone,
+                                                    `Harbor: Hi ${w.patient_name.split(' ')[0]}! A slot just opened: ${fmtDate(appt.appointment_date)} at ${fmtTime(appt.appointment_time)} with ${practiceFromAppt?.name}. Call us to book!`,
+                                                    practiceFromAppt?.id ?? null,
                                                   )
                             await supabaseAdmin.from('waitlist').update({ status: 'notified' }).eq('id', w.id)
                           }
                 } else {
                   const helpMessage = `Reply CONFIRM to confirm your appointment or CANCEL to cancel. Need help? Please call us directly.`
-                  await sendSMS(from, helpMessage)
+                  await sendSMS(from, helpMessage, practice?.id ?? null)
 
                   if (practice) {
                     const { data: existingConversation } = await supabaseAdmin
