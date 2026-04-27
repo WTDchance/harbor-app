@@ -226,6 +226,11 @@ export type EhrAuditAction =
   | 'portal.scheduling.book'
   | 'portal.scheduling.availability'
   | 'public.scheduling.inquiry'
+  | 'telehealth.recording.started'
+  | 'telehealth.recording.stopped'
+  | 'telehealth.recording.downloaded'
+  | 'telehealth.recording.deleted'
+  | 'telehealth.recording.consent_missing'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
