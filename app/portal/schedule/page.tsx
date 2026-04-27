@@ -1,127 +1,189 @@
-// app/portal/schedule/page.tsx — patient requests an appointment.
-
 'use client'
+
+// Wave 43 / T0 — patient-facing booking page. Reads availability +
+// books slots via the W42 T1 endpoints. Phone-first, ≥44px tap
+// targets. 401 bounces to /portal/login.
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { ChevronLeft, Calendar, Plus, Trash2 } from 'lucide-react'
+import { Calendar, ChevronLeft, Check, AlertCircle } from 'lucide-react'
 
-type Window = { date: string; start: string; end: string }
-type Request = {
-  id: string; preferred_windows: Window[]; patient_note: string | null
-  therapist_note: string | null; duration_minutes: number
-  appointment_type: string; status: string; created_at: string
-  responded_at: string | null
+interface VisitType {
+  key: string
+  label: string
+  duration_minutes: number
+  modality: string
 }
+interface Slot { start: string; end: string }
 
 export default function PortalSchedulePage() {
   const router = useRouter()
-  const [requests, setRequests] = useState<Request[] | null>(null)
-  const [windows, setWindows] = useState<Window[]>([{ date: '', start: '09:00', end: '17:00' }])
-  const [note, setNote] = useState('')
-  const [submitting, setSubmitting] = useState(false)
+  const [enabled, setEnabled] = useState<boolean | null>(null)
+  const [visitTypes, setVisitTypes] = useState<VisitType[]>([])
+  const [selectedVisit, setSelectedVisit] = useState<string>('')
+  const [slots, setSlots] = useState<Slot[]>([])
+  const [picked, setPicked] = useState<Slot | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [booking, setBooking] = useState(false)
+  const [bookedAt, setBookedAt] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  async function load() {
-    const res = await fetch('/api/portal/scheduling')
-    if (res.status === 401) { router.replace('/portal/login'); return }
-    const json = await res.json()
-    setRequests(json.requests || [])
-  }
-  useEffect(() => { load() /* eslint-disable-line */ }, [])
+  useEffect(() => {
+    (async () => {
+      // Pull config first (visit types live on /me).
+      const meRes = await fetch('/api/portal/me', { credentials: 'include' })
+      if (meRes.status === 401) { router.replace('/portal/login'); return }
+      const me = await meRes.json().catch(() => null)
+      const cfg = me?.scheduling_config ?? {}
+      setEnabled(!!cfg.enabled)
+      const vts: VisitType[] = cfg.visit_types ?? []
+      setVisitTypes(vts)
+      if (vts.length > 0) setSelectedVisit(vts[0].key)
+      setLoading(false)
+    })()
+  }, [router])
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    const cleaned = windows.filter((w) => w.date)
-    if (cleaned.length === 0) { alert('Pick at least one date'); return }
-    setSubmitting(true)
+  useEffect(() => {
+    if (!selectedVisit) return
+    setSlots([]); setPicked(null); setError(null)
+    fetch(`/api/portal/schedule/availability?visit_type=${encodeURIComponent(selectedVisit)}`, { credentials: 'include' })
+      .then((r) => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then((data) => setSlots(data.slots ?? []))
+      .catch((err) => setError(err.message))
+  }, [selectedVisit])
+
+  async function book() {
+    if (!picked) return
+    setBooking(true); setError(null)
     try {
-      const res = await fetch('/api/portal/scheduling', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ preferred_windows: cleaned, note: note || null }),
+      const res = await fetch('/api/portal/schedule/book', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visit_type: selectedVisit, start: picked.start }),
       })
-      if (!res.ok) throw new Error((await res.json()).error || 'Failed')
-      setWindows([{ date: '', start: '09:00', end: '17:00' }])
-      setNote('')
-      await load()
-    } catch (err) { alert(err instanceof Error ? err.message : 'Failed') }
-    finally { setSubmitting(false) }
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        setError(data?.error?.message || `Booking failed (${res.status})`)
+        if (data?.error?.code === 'slot_taken') {
+          // Refresh availability so the patient sees the new state.
+          const r = await fetch(`/api/portal/schedule/availability?visit_type=${encodeURIComponent(selectedVisit)}`, { credentials: 'include' })
+          if (r.ok) setSlots((await r.json()).slots ?? [])
+          setPicked(null)
+        }
+        return
+      }
+      setBookedAt(picked.start)
+    } finally {
+      setBooking(false)
+    }
+  }
+
+  if (loading) {
+    return <main className="flex items-center justify-center min-h-[60vh]"><div className="w-6 h-6 border-2 border-teal-600 border-t-transparent rounded-full animate-spin" /></main>
+  }
+
+  if (enabled === false) {
+    return (
+      <main className="max-w-2xl mx-auto px-4 py-8">
+        <Link href="/portal/home" className="inline-flex items-center gap-1 text-sm text-teal-700" style={{ minHeight: 44 }}>
+          <ChevronLeft className="w-4 h-4" /> Back
+        </Link>
+        <h1 className="text-2xl font-semibold mt-3">Booking</h1>
+        <p className="text-sm text-gray-600 mt-3">
+          Online booking isn't enabled for your therapist's practice. Reach out by phone or message
+          and they'll get you scheduled.
+        </p>
+      </main>
+    )
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-8">
-      <Link href="/portal/home" className="inline-flex items-center gap-1 text-sm text-teal-700 hover:text-teal-900 mb-4">
-        <ChevronLeft className="w-4 h-4" />
-        Back to portal
+    <main className="max-w-2xl mx-auto px-4 py-6">
+      <Link href="/portal/home" className="inline-flex items-center gap-1 text-sm text-teal-700" style={{ minHeight: 44 }}>
+        <ChevronLeft className="w-4 h-4" /> Back to portal
       </Link>
-      <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-2 mb-2">
+      <h1 className="text-2xl font-semibold text-gray-900 mt-3 flex items-center gap-2">
         <Calendar className="w-6 h-6 text-teal-600" />
-        Request an appointment
+        Book a session
       </h1>
-      <p className="text-sm text-gray-500 mb-4">
-        Tell your therapist which days and times work for you. They&apos;ll confirm with a specific slot.
-      </p>
 
-      <form onSubmit={submit} className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
-        {windows.map((w, i) => (
-          <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center">
-            <input type="date" value={w.date}
-              onChange={(e) => { const n = [...windows]; n[i].date = e.target.value; setWindows(n) }}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm" />
-            <input type="time" value={w.start}
-              onChange={(e) => { const n = [...windows]; n[i].start = e.target.value; setWindows(n) }}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm" />
-            <span className="text-xs text-gray-500">to</span>
-            <input type="time" value={w.end}
-              onChange={(e) => { const n = [...windows]; n[i].end = e.target.value; setWindows(n) }}
-              className="border border-gray-200 rounded-lg px-2 py-1.5 text-sm" />
-            {windows.length > 1 && (
-              <button type="button" onClick={() => setWindows(windows.filter((_, j) => j !== i))}
-                className="col-span-4 justify-self-end text-xs text-gray-400 hover:text-red-600">
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        ))}
-        <button type="button" onClick={() => setWindows([...windows, { date: '', start: '09:00', end: '17:00' }])}
-          className="text-xs text-teal-700 hover:text-teal-900 inline-flex items-center gap-1 font-medium">
-          <Plus className="w-3 h-3" />
-          Add another window
-        </button>
-        <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3}
-          placeholder="Anything your therapist should know (e.g. Zoom vs. in-person, topic)…"
-          className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-        <div className="flex justify-end">
-          <button type="submit" disabled={submitting}
-            className="inline-flex items-center gap-1.5 text-sm bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg disabled:opacity-50">
-            {submitting ? 'Sending…' : 'Send request'}
-          </button>
-        </div>
-      </form>
-
-      {requests && requests.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-sm font-semibold text-gray-700 mb-2">Your requests</h2>
-          <div className="space-y-2">
-            {requests.map((r) => (
-              <div key={r.id} className="bg-white border border-gray-200 rounded-xl p-3">
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <div className="text-sm font-medium text-gray-900">
-                    {r.preferred_windows[0]?.date} {r.preferred_windows.length > 1 && ` +${r.preferred_windows.length - 1}`}
-                  </div>
-                  <span className={`text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
-                    r.status === 'approved' ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                    : r.status === 'declined' ? 'bg-red-50 text-red-800 border-red-200'
-                    : 'bg-amber-50 text-amber-800 border-amber-200'
-                  }`}>{r.status}</span>
-                </div>
-                {r.patient_note && <div className="text-xs text-gray-600">{r.patient_note}</div>}
-                {r.therapist_note && <div className="text-xs text-teal-800 mt-1">Therapist: {r.therapist_note}</div>}
+      {bookedAt && (
+        <div className="mt-4 p-4 rounded-xl bg-green-50 border border-green-200">
+          <div className="flex items-start gap-2">
+            <Check className="w-5 h-5 text-green-700 mt-0.5" />
+            <div>
+              <div className="font-semibold text-green-900">Booked!</div>
+              <div className="text-sm text-green-800 mt-0.5">
+                {new Date(bookedAt).toLocaleString(undefined, { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
               </div>
-            ))}
+              <Link href="/portal/home" className="inline-block mt-3 px-4 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg" style={{ minHeight: 44 }}>
+                Done
+              </Link>
+            </div>
           </div>
         </div>
       )}
-    </div>
+
+      {!bookedAt && (
+        <>
+          {visitTypes.length > 0 && (
+            <div className="mt-4">
+              <label className="block text-xs font-medium text-gray-700 mb-2">Visit type</label>
+              <div className="flex gap-2 flex-wrap">
+                {visitTypes.map((v) => (
+                  <button key={v.key} onClick={() => setSelectedVisit(v.key)}
+                    className={`px-3 py-2 text-sm rounded-lg border ${selectedVisit === v.key ? 'bg-teal-600 text-white border-teal-600' : 'bg-white border-gray-200'}`}
+                    style={{ minHeight: 44 }}>
+                    {v.label} · {v.duration_minutes} min
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-800 flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />{error}
+            </div>
+          )}
+
+          <h2 className="text-sm font-semibold text-gray-700 mt-6 mb-2">Available times</h2>
+          {slots.length === 0 ? (
+            <p className="text-sm text-gray-500">No openings in the next few weeks. Try a different visit type or reach out to your therapist.</p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {slots.slice(0, 60).map((s) => {
+                const isPicked = picked?.start === s.start
+                const d = new Date(s.start)
+                return (
+                  <button key={s.start} onClick={() => setPicked(s)}
+                    className={`px-3 py-3 text-sm rounded-lg border text-left ${isPicked ? 'bg-teal-600 text-white border-teal-600' : 'bg-white border-gray-200 hover:border-teal-300'}`}
+                    style={{ minHeight: 44 }}>
+                    <div className="font-medium">{d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+                    <div className={`text-xs ${isPicked ? 'text-teal-50' : 'text-gray-500'}`}>{d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}</div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
+
+          {picked && (
+            <div className="fixed bottom-0 inset-x-0 bg-white border-t border-gray-200 p-3 z-30" style={{ paddingBottom: 'env(safe-area-inset-bottom, 12px)' }}>
+              <div className="max-w-2xl mx-auto flex items-center justify-between gap-2">
+                <div className="text-sm text-gray-700">
+                  <span className="text-gray-500 text-xs block">Selected</span>
+                  {new Date(picked.start).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                </div>
+                <button onClick={book} disabled={booking}
+                  className="px-5 py-2 text-sm font-medium text-white bg-teal-600 rounded-lg disabled:opacity-60" style={{ minHeight: 44 }}>
+                  {booking ? 'Booking…' : 'Confirm booking'}
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </main>
   )
 }

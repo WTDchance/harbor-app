@@ -231,6 +231,10 @@ export type EhrAuditAction =
   | 'telehealth.recording.downloaded'
   | 'telehealth.recording.deleted'
   | 'telehealth.recording.consent_missing'
+  | 'portal.scheduling.page_viewed'
+  | 'public.scheduling.inquiry_page_viewed'
+  | 'telehealth.recording.playback_url_generated'
+  | 'chime.recording_webhook.received'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

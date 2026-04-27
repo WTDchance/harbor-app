@@ -32,6 +32,7 @@ import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard"
 import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard"
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard"
 import { StanleyBrownPlanEditor } from "@/components/ehr/StanleyBrownPlanEditor"
+import { CareTeamChips } from "@/components/CareTeamChips" 
 import { CrisisSafetyPlanBanner } from "@/components/ehr/CrisisSafetyPlanBanner"
 import { AssessmentsCard } from "@/components/ehr/AssessmentsCard"
 import { ConsentsCard } from "@/components/ehr/ConsentsCard"
@@ -251,6 +252,10 @@ export default function PatientDetailPage() {
             <ExportPatientButton patientId={patientId} />
           </div>
         </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-6 -mt-2 mb-2">
+        <CareTeamChips patientId={patientId} />
       </div>
 
       {/* Body */}

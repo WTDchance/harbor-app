@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useParams } from 'next/navigation'
 import { Mic, MicOff, Video, VideoOff, PhoneOff, Loader2 } from 'lucide-react'
+import { RecordingsList } from '@/components/meet/RecordingsList'
 
 type JoinResponse = {
   Meeting: any
@@ -207,6 +208,9 @@ export default function MeetingPage() {
       {error && (
         <div className="px-4 py-2 bg-red-900/50 text-red-200 text-sm">{error}</div>
       )}
+      <div className="px-4 py-3 border-t border-gray-800">
+        <RecordingsList appointmentId={apptId} />
+      </div>
       <audio ref={audioRef} className="hidden" />
     </div>
   )

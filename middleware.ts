@@ -50,6 +50,7 @@ const PUBLIC_API_PREFIXES = [
   '/api/voice/',
   '/api/twilio/',
   '/api/stedi/',                // Wave 41 — Stedi 835 ERA + 837 claim webhooks
+  '/api/chime/',                // Wave 43 — Chime Media Pipelines lifecycle webhook
   '/api/schedule/',             // Wave 42 — public new-patient inquiry                // Wave 41 — Stedi 835 ERA + 837 claim webhooks
                                 // (HMAC verified at route level)               // deprecation stubs — keep public so
                                 // stale Twilio dashboards see the
