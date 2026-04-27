@@ -14,6 +14,9 @@ type PendingNote = {
   created_at: string
   signed_at: string | null
   patient_id: string
+  signed_by_name?: string | null
+  patient_first?: string | null
+  patient_last?: string | null
 }
 
 export default function SupervisionPage() {
@@ -23,13 +26,12 @@ export default function SupervisionPage() {
   useEffect(() => {
     (async () => {
       try {
-        // Reuse the list endpoint with a filter
-        const res = await fetch('/api/ehr/notes?status=signed&requires_cosign=1')
+        // Wave 38 TS9 — dedicated supervisor queue endpoint scopes to
+        // notes whose authoring users have me as their supervisor.
+        const res = await fetch('/api/ehr/cosign-queue')
         if (!res.ok) { setNotes([]); return }
         const json = await res.json()
-        // Client-side filter for pending cosign since the list API doesn't yet surface it:
-        const pending = (json.notes || []).filter((n: any) => n.requires_cosign === true && !n.cosigned_at)
-        setNotes(pending)
+        setNotes(json.notes || [])
       } finally { setLoading(false) }
     })()
   }, [])

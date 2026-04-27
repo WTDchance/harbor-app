@@ -88,17 +88,36 @@ export async function POST(
       )
     }
 
-    // Authority gate. Schema gap above — admin-only on AWS until the
-    // proper supervisor auth pattern lands.
+    // Authority gate. Wave 38 / TS9 introduced users.supervisor_user_id
+    // so we can resolve the actual supervisor of the note's signing user.
+    // Admin email retains override capability for ops support.
     const adminEmails = (process.env.ADMIN_EMAIL || 'chancewonser@gmail.com')
       .split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
     const callerIsAdmin = adminEmails.includes(ctx.session.email.toLowerCase())
-    if (!callerIsAdmin) {
+
+    // Resolve the supervisor relationship: who supervises the user that
+    // signed the note? If that supervisor === ctx.user.id, the cosign is
+    // authorized.
+    let cosignAuthority: 'supervisor' | 'admin_override' | 'none' = 'none'
+    if (note.signed_by) {
+      const supRes = await client.query(
+        `SELECT supervisor_user_id, requires_supervision
+           FROM users WHERE id = $1 LIMIT 1`,
+        [note.signed_by],
+      )
+      const sup = supRes.rows[0]
+      if (sup && sup.supervisor_user_id && sup.supervisor_user_id === ctx.user.id) {
+        cosignAuthority = 'supervisor'
+      }
+    }
+    if (cosignAuthority === 'none' && callerIsAdmin) cosignAuthority = 'admin_override'
+
+    if (cosignAuthority === 'none') {
       await client.query('ROLLBACK'); client.release()
       return NextResponse.json(
         {
           error: 'Not authorized to co-sign this note',
-          hint: 'Supervisor co-sign authority is admin-only on AWS pending the supervisor-relationship schema follow-up. See lib/aws/cancellation-fill notes for context.',
+          hint: 'You must be the configured supervisor of the signing clinician (users.supervisor_user_id) to cosign this note.',
         },
         { status: 403 },
       )
@@ -111,6 +130,7 @@ export async function POST(
           SET cosigned_at = $1,
               cosigned_by = $2,
               cosign_hash = $3,
+              cosign_status = 'cosigned',
               updated_at = NOW()
         WHERE id = $4 AND practice_id = $5 AND cosigned_at IS NULL
         RETURNING *`,
@@ -131,13 +151,15 @@ export async function POST(
 
     await auditEhrAccess({
       ctx,
-      action: 'note.cosign',
+      action: cosignAuthority === 'supervisor' ? 'note.supervisor_cosigned' : 'note.cosign',
       resourceId: id,
       details: {
         kind: 'cosign',
         signed_by: note.signed_by,
         hash,
-        authority: 'admin_override', // Honest about the gap.
+        authority: cosignAuthority,
+        supervisor_user_id: ctx.user.id,
+        supervisor_name: ctx.user?.full_name ?? ctx.session?.email ?? null,
       },
     })
 
