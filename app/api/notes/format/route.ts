@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import Anthropic from '@anthropic-ai/sdk'
+import { createMessage } from '@/lib/aws/llm'
 
 const FORMAT_PROMPTS: Record<string, string> = {
   soap: `You are a clinical documentation assistant for a licensed therapist. Reformat the following dictated session note into a professional SOAP note with these exact sections:
@@ -53,10 +53,9 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
     const systemPrompt = FORMAT_PROMPTS[format] || FORMAT_PROMPTS.soap
 
-    const message = await client.messages.create({
+    const message = await createMessage({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 1024,
       messages: [{ role: 'user', content: `Please reformat this dictated session note:\n\n${transcript}` }],

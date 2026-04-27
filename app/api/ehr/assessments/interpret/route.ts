@@ -17,7 +17,7 @@
 // columns, added in Wave 17 schema bump). Wrapped in try/catch so DBs
 // without the columns still return text.
 
-import Anthropic from '@anthropic-ai/sdk'
+import { createMessage } from '@/lib/aws/llm'
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
@@ -64,10 +64,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'patient_id and assessment_type required' }, { status: 400 })
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) {
-    return NextResponse.json({ error: 'Anthropic API not configured' }, { status: 500 })
-  }
+  // LLM provider wrapped by lib/aws/llm — Bedrock by default.
 
   const inst = getInstrument(instrumentId)
   if (!inst) {
@@ -169,8 +166,7 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  const client = new Anthropic({ apiKey })
-  const resp = await client.messages.create({
+  const resp = await createMessage({
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
     temperature: 0.2,
@@ -179,7 +175,7 @@ export async function POST(req: NextRequest) {
   })
 
   const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .filter(b => b.type === 'text')
     .map((b) => b.text)
     .join('')
     .trim()

@@ -12,7 +12,7 @@
 // GET — returns cached suggestions (last 24h) or generates fresh
 // POST — force regeneration
 
-import Anthropic from '@anthropic-ai/sdk'
+import { createMessage } from '@/lib/aws/llm'
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
@@ -126,8 +126,8 @@ async function saveCache(patientId: string, practiceId: string, suggestions: Arr
 }
 
 async function generate(patientId: string, practiceId: string, userEmail: string) {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('Anthropic API not configured')
+  // LLM provider is wrapped by lib/aws/llm — bedrock by default, fallback to direct API.
+  // We don't pre-check apiKey here because Bedrock uses task IAM not a key.
 
   const cap = await checkAiRateLimit(practiceId, 'ai.suggested_diagnoses.%')
   if (!cap.allowed) {
@@ -135,8 +135,7 @@ async function generate(patientId: string, practiceId: string, userEmail: string
   }
 
   const userMessage = await loadPatientContext(practiceId, patientId)
-  const client = new Anthropic({ apiKey })
-  const resp = await client.messages.create({
+  const resp = await createMessage({
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
     system: SYSTEM_PROMPT,

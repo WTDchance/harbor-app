@@ -5,10 +5,8 @@
 // can review, edit, and sign. Never auto-sign — the therapist is always the
 // author of record.
 
-import Anthropic from '@anthropic-ai/sdk'
+import { createMessage } from '@/lib/aws/llm'
 
-const apiKey = process.env.ANTHROPIC_API_KEY || ''
-const client = apiKey ? new Anthropic({ apiKey }) : null
 
 export type DraftSoap = {
   title: string
@@ -69,11 +67,9 @@ export async function draftNoteFromTranscript(args: {
     last_name?: string | null
   }
 }): Promise<DraftSoap> {
-  if (!client) {
-    throw new Error(
-      'Anthropic API key not configured. Set ANTHROPIC_API_KEY to enable AI-drafted notes.',
-    )
-  }
+  // LLM provider check is delegated to lib/aws/llm — Bedrock by default,
+  // falls back to ANTHROPIC_API_KEY if set. Either way createMessage
+  // throws clearly if neither path is available.
 
   const meta = args.callMetadata ?? {}
   const metaLines: string[] = []
@@ -93,7 +89,7 @@ export async function draftNoteFromTranscript(args: {
     `Transcript:\n${args.transcript.trim()}`,
   ].join('\n')
 
-  const resp = await client.messages.create({
+  const resp = await createMessage({
     model: 'claude-sonnet-4-6',
     max_tokens: 2000,
     temperature: 0.2,
@@ -108,7 +104,7 @@ export async function draftNoteFromTranscript(args: {
   })
 
   const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .filter(b => b.type === 'text')
     .map((b) => b.text)
     .join('')
     .trim()
@@ -203,11 +199,9 @@ export async function draftNoteFromBrief(args: {
   }
   history?: HistoryContext
 }): Promise<DraftSoap> {
-  if (!client) {
-    throw new Error(
-      'Anthropic API key not configured. Set ANTHROPIC_API_KEY to enable AI-drafted notes.',
-    )
-  }
+  // LLM provider check is delegated to lib/aws/llm — Bedrock by default,
+  // falls back to ANTHROPIC_API_KEY if set. Either way createMessage
+  // throws clearly if neither path is available.
 
   const brief = args.brief.trim()
   if (brief.length < 4) throw new Error('Brief is too short.')
@@ -241,7 +235,7 @@ export async function draftNoteFromBrief(args: {
 
   const userMessage = parts.join('\n')
 
-  const resp = await client.messages.create({
+  const resp = await createMessage({
     model: 'claude-sonnet-4-6',
     max_tokens: 2000,
     temperature: 0.3,
@@ -256,7 +250,7 @@ export async function draftNoteFromBrief(args: {
   })
 
   const text = resp.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .filter(b => b.type === 'text')
     .map((b) => b.text)
     .join('')
     .trim()
