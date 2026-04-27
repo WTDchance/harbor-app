@@ -43,6 +43,7 @@ import { BillingCard } from "@/components/ehr/BillingCard"
 import { PortalLinkCard } from "@/components/ehr/PortalLinkCard"
 import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes"
 import { ExportPatientButton } from "@/components/ehr/ExportPatientButton"
+import { InsuranceCardScanner } from "@/components/ehr/InsuranceCardScanner"
 
 type PatientResp = {
   patient: {
@@ -565,16 +566,44 @@ function CommsBlock({ data }: { data: PatientResp }) {
 
 function DemographicsBlock({ data }: { data: PatientResp }) {
   const p = data.patient
+  const [scannerOpen, setScannerOpen] = useState(false)
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
-      <Field label="Phone" value={p.phone} icon={<Phone className="w-3 h-3" />} />
-      <Field label="Email" value={p.email} icon={<Mail className="w-3 h-3" />} />
-      <Field label="Pronouns" value={p.pronouns} />
-      <Field label="DOB" value={p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : null} />
-      <Field label="Address" value={p.address} />
-      <Field label="Emergency contact" value={p.emergency_contact_name ? `${p.emergency_contact_name}${p.emergency_contact_phone ? ' · ' + p.emergency_contact_phone : ''}` : null} />
-      <Field label="Referral source" value={p.referral_source} />
-      <Field label="Insurance" value={p.insurance_provider} />
+    <div className="space-y-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-2 text-sm">
+        <Field label="Phone" value={p.phone} icon={<Phone className="w-3 h-3" />} />
+        <Field label="Email" value={p.email} icon={<Mail className="w-3 h-3" />} />
+        <Field label="Pronouns" value={p.pronouns} />
+        <Field label="DOB" value={p.date_of_birth ? new Date(p.date_of_birth).toLocaleDateString() : null} />
+        <Field label="Address" value={p.address} />
+        <Field label="Emergency contact" value={p.emergency_contact_name ? `${p.emergency_contact_name}${p.emergency_contact_phone ? ' · ' + p.emergency_contact_phone : ''}` : null} />
+        <Field label="Referral source" value={p.referral_source} />
+        <div className="py-1.5">
+          <div className="text-xs text-gray-500 uppercase tracking-wide flex items-center gap-1">Insurance</div>
+          <div className="text-gray-900 flex items-center gap-2">
+            <span>{p.insurance_provider || <span className="text-gray-400">—</span>}</span>
+            <button
+              type="button"
+              onClick={() => setScannerOpen(o => !o)}
+              className="text-xs text-blue-600 hover:text-blue-800 underline"
+              style={{ minHeight: 32 }}
+            >
+              {scannerOpen ? 'Close' : 'Update from card'}
+            </button>
+          </div>
+        </div>
+      </div>
+      {scannerOpen && (
+        <InsuranceCardScanner
+          patientId={p.id}
+          onSaved={() => {
+            setScannerOpen(false)
+            // Patient row updates land via the PATCH inside the component;
+            // a hard reload picks them up without rewiring SWR keys.
+            if (typeof window !== 'undefined') window.location.reload()
+          }}
+          onCancel={() => setScannerOpen(false)}
+        />
+      )}
     </div>
   )
 }

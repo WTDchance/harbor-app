@@ -15,6 +15,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeft, ChevronDown, ChevronRight, Save, Shield } from 'lucide-react'
+import { InsuranceCardScanner } from '@/components/ehr/InsuranceCardScanner'
 
 interface Patient {
   id: string
@@ -280,7 +281,17 @@ export default function EditPatientPage() {
 
         {/* Insurance */}
         <Card title="Insurance">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <InsuranceCardScannerToggle
+            patientId={params.id as string}
+            onSaved={(_id, fields) => {
+              // Mirror parsed values into the form so the therapist can
+              // tweak before hitting Save on the rest of the form.
+              if (fields.payer_name) update('insurance_provider', fields.payer_name)
+              if (fields.member_id) update('insurance_member_id', fields.member_id)
+              if (fields.group_number) update('insurance_group_number', fields.group_number)
+            }}
+          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
             <Field label="Provider">
               <input value={p.insurance_provider ?? ''} onChange={(e) => update('insurance_provider', e.target.value)}
                      className="ip" style={{ minHeight: 44 }} />
@@ -479,5 +490,39 @@ function CheckboxGroup({
         })}
       </div>
     </div>
+  )
+}
+
+// Compact toggle wrapper — collapses the scanner to a single 44px button
+// when not in use so the Insurance card stays clean on the form.
+function InsuranceCardScannerToggle({
+  patientId,
+  onSaved,
+}: {
+  patientId: string
+  onSaved: (scanId: string, fields: Record<string, string | undefined>) => void
+}) {
+  const [open, setOpen] = useState(false)
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="w-full text-sm text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg px-3 py-2 flex items-center justify-center gap-2"
+        style={{ minHeight: 44 }}
+      >
+        Update from card (camera)
+      </button>
+    )
+  }
+  return (
+    <InsuranceCardScanner
+      patientId={patientId}
+      onSaved={(id, fields) => {
+        onSaved(id, fields)
+        setOpen(false)
+      }}
+      onCancel={() => setOpen(false)}
+    />
   )
 }

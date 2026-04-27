@@ -150,8 +150,6 @@ export function InsuranceCardScanner({ patientId, onSaved, onCancel }: Props) {
         // string clears the column.
         if (k in edited) patch[col] = (edited[k] ?? '').trim() || null
       }
-      patch['insurance_card_scan_id' as keyof typeof patch] = scan.scan_id
-
       const res = await fetch(`/api/patients/${patientId}`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
