@@ -165,8 +165,10 @@ export async function POST(req: NextRequest) {
   if (!agentId || !retellApiKey) {
     return rejectTwiML('retell_not_configured')
   }
+  // Wave 27p — corrected to /v2/register-phone-call (the un-versioned path 404s)
+  // and surface non-2xx loudly so future regressions don't silently drop dynamic vars.
   try {
-    await fetch('https://api.retellai.com/register-phone-call', {
+    const resp = await fetch('https://api.retellai.com/v2/register-phone-call', {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${retellApiKey}`,
@@ -180,6 +182,14 @@ export async function POST(req: NextRequest) {
         metadata: { practice_id: practice.id, call_sid: callSid },
       }),
     })
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '')
+      console.error(
+        '[signalwire/inbound-voice] register-call HTTP',
+        resp.status,
+        body.slice(0, 200),
+      )
+    }
   } catch (err) {
     console.error('[signalwire/inbound-voice] register-call failed:', (err as Error).message)
     // Not fatal — the LaML below still streams to the same agent_id

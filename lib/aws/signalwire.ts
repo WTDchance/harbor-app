@@ -23,6 +23,14 @@ import { pool } from '@/lib/aws/db'
 
 const PROJECT_ID = process.env.SIGNALWIRE_PROJECT_ID || ''
 const TOKEN = process.env.SIGNALWIRE_TOKEN || ''
+
+// Wave 27p — LaML signature signing key. SignalWire's webhook signature uses
+// the LaML "Signing Key" (PSK_…), which is DIFFERENT from the project token
+// (PT_…) used for REST basic-auth. Falls back to TOKEN for backward compat
+// (and so the dev container that only sets SIGNALWIRE_TOKEN keeps working).
+function signingKey(): string {
+  return process.env.SIGNALWIRE_SIGNING_KEY || process.env.SIGNALWIRE_TOKEN || ''
+}
 const SPACE_URL = process.env.SIGNALWIRE_SPACE_URL || ''
 const FROM_NUMBER = process.env.SIGNALWIRE_FROM_NUMBER || ''
 
@@ -153,7 +161,7 @@ export function computeWebhookSignature(args: {
   for (const k of sortedKeys) {
     buf += k + (args.formParams[k] ?? '')
   }
-  const hmac = createHmac('sha1', TOKEN).update(buf).digest('base64')
+  const hmac = createHmac('sha1', signingKey()).update(buf).digest('base64')
   return { buf, hmac }
 }
 
@@ -162,7 +170,7 @@ export function validateInboundWebhook(args: {
   formParams: Record<string, string>
   signatureHeader: string | null | undefined
 }): boolean {
-  if (!TOKEN) return false
+  if (!signingKey()) return false
   if (!args.signatureHeader) return false
   if (process.env.SIGNALWIRE_VALIDATE_INBOUND === 'false') return true
 

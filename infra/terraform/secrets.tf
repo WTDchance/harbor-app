@@ -166,3 +166,38 @@ resource "aws_ssm_parameter" "retell_llm_id" {
   tags        = local.common_tags
   lifecycle { ignore_changes = [value] }
 }
+
+
+# -----------------------------------------------------------------------------
+# Wave 27o — SignalWire signature-validation bypass switch (debug only).
+# -----------------------------------------------------------------------------
+# Plain String SSM param (not a secret). When this is "false" the inbound
+# voice + sms route handlers SKIP the HMAC check and emit a [SW-DEBUG]
+# diagnostic log line. Value is set/rotated out-of-band via:
+#   aws ssm put-parameter --name /harbor-staging/api-keys/signalwire-validate-inbound \
+#                          --value false --type String --overwrite
+# Defaults to "true" via app code if the env var is missing.
+resource "aws_ssm_parameter" "signalwire_validate_inbound" {
+  name        = "/${local.name_prefix}/api-keys/signalwire-validate-inbound"
+  description = "SignalWire inbound signature validation toggle. 'false' bypasses HMAC + enables [SW-DEBUG] logging. Wave 27o."
+  type        = "String"
+  value       = "true"
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+
+# Wave 27p — SignalWire LaML signing key. SignalWire's webhook signature is
+# HMAC-SHA1(LaMLAuthToken, URL+sortedKVs); the LaML auth token is DISTINCT
+# from the project token (PT…) used for REST basic-auth. The dashboard calls
+# this the "Signing Key" (PSK_… prefix). Loaded as SIGNALWIRE_SIGNING_KEY at
+# runtime — see lib/aws/signalwire.ts::validateInboundWebhook.
+resource "aws_ssm_parameter" "signalwire_signing_key" {
+  name        = "/${local.name_prefix}/api-keys/signalwire-signing-key"
+  description = "SignalWire LaML signing key (PSK_… prefix). Used as HMAC key for inbound-webhook signature verification. Distinct from signalwire-token (the PT_ project token used for REST basic-auth)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}

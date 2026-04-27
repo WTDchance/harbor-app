@@ -68,6 +68,10 @@ locals {
     { name = "RETELL_API_KEY",            valueFrom = aws_ssm_parameter.retell_api_key.arn },
     { name = "RETELL_AGENT_ID",           valueFrom = aws_ssm_parameter.retell_agent_id.arn },
     { name = "RETELL_LLM_ID",             valueFrom = aws_ssm_parameter.retell_llm_id.arn },
+    # Wave 27p — LaML signing key (HMAC key for inbound webhook signature).
+    { name = "SIGNALWIRE_SIGNING_KEY",    valueFrom = aws_ssm_parameter.signalwire_signing_key.arn },
+    # Wave 27o — debug toggle ("true"/"false"). Plain String SSM param.
+    { name = "SIGNALWIRE_VALIDATE_INBOUND", valueFrom = aws_ssm_parameter.signalwire_validate_inbound.arn },
   ]
 }
 
