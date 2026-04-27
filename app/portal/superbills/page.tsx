@@ -36,6 +36,8 @@ export default function PortalSuperbillsPage() {
         Itemized receipts you can submit to your insurance for out-of-network reimbursement.
       </p>
 
+      <GenerateSuperbillBox />
+
       {items === null ? (
         <p className="text-sm text-gray-500">Loading…</p>
       ) : items.length === 0 ? (
@@ -71,6 +73,42 @@ export default function PortalSuperbillsPage() {
       <p className="text-xs text-gray-400 mt-4">
         Tip: print or save these as PDF from your browser, then upload to your insurance company&apos;s website or app.
       </p>
+    </div>
+  )
+}
+
+function GenerateSuperbillBox() {
+  const today = new Date().toISOString().slice(0, 10)
+  const firstOfMonth = today.slice(0, 8) + '01'
+  const [from, setFrom] = useState(firstOfMonth)
+  const [to, setTo] = useState(today)
+  return (
+    <div className="bg-white border border-teal-200 rounded-xl p-4 mb-6">
+      <div className="text-sm font-medium text-gray-900 mb-2">Generate a new superbill</div>
+      <p className="text-xs text-gray-500 mb-3">Pick a date range — we&apos;ll produce a PDF you can save or email to your insurer.</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">From</label>
+          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-gray-700 mb-1">To</label>
+          <input type="date" value={to} onChange={(e) => setTo(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+        </div>
+      </div>
+      <div className="mt-3 flex justify-end">
+        <a
+          href={`/api/portal/superbill/pdf?from=${from}&to=${to}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg"
+        >
+          <Download className="w-4 h-4" />
+          Generate PDF
+        </a>
+      </div>
     </div>
   )
 }

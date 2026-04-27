@@ -360,10 +360,20 @@ function SuperbillModal({ patientId, onClose }: { patientId: string; onClose: ()
             target="_blank"
             rel="noopener noreferrer"
             onClick={onClose}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-teal-300 hover:bg-teal-50 text-teal-700 text-sm font-medium rounded-lg"
+          >
+            <FileDown className="w-4 h-4" />
+            Print HTML
+          </a>
+          <a
+            href={`/api/ehr/billing/superbill/pdf?patient_id=${encodeURIComponent(patientId)}&from=${from}&to=${to}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={onClose}
             className="inline-flex items-center gap-2 px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg"
           >
             <FileDown className="w-4 h-4" />
-            Generate
+            Download PDF
           </a>
         </div>
       </div>
