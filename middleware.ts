@@ -34,6 +34,7 @@ const PUBLIC_API_PREFIXES = [
   '/api/cron/',
   '/api/admin/',
   '/api/stripe/webhook',
+  '/api/ehr/billing/stripe-webhook',
   '/api/vapi/webhook',          // legacy carrier — kept for inbound webhook compat
   '/api/sms/',
   '/api/signup',

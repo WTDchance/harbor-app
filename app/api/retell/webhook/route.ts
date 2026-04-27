@@ -76,8 +76,9 @@ export async function POST(req: NextRequest) {
       severity: 'warn',
       details: { event: body?.event, call_id: body?.call?.call_id ?? null },
     })
-    // Don't hard-reject — log + continue. Tightens to 401 once the
-    // dashboard confirms our API key has the webhook badge.
+    // Hard-reject on bad/missing signature. Anyone can otherwise spoof
+    // call lifecycle events and forge call_logs rows.
+    return NextResponse.json({ error: 'invalid_signature' }, { status: 401 })
   }
 
   const event: string = body?.event ?? ''
