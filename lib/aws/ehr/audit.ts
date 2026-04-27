@@ -152,6 +152,8 @@ export type EhrAuditAction =
   | 'insurance_authorization.view'
   | 'insurance_authorization.list'
   | 'insurance_authorization.used'
+  | 'admin.audit_log.viewed'
+  | 'admin.audit_log.exported'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
