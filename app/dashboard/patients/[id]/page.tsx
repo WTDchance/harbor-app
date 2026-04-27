@@ -31,6 +31,8 @@ import {
 import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard"
 import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard"
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard"
+import { StanleyBrownPlanEditor } from "@/components/ehr/StanleyBrownPlanEditor"
+import { CrisisSafetyPlanBanner } from "@/components/ehr/CrisisSafetyPlanBanner"
 import { AssessmentsCard } from "@/components/ehr/AssessmentsCard"
 import { ConsentsCard } from "@/components/ehr/ConsentsCard"
 import { BiopsychosocialIntakeCard } from "@/components/ehr/BiopsychosocialIntakeCard"
@@ -59,6 +61,7 @@ type PatientResp = {
     referral_source: string | null
     reason_for_seeking: string | null
     notes: string | null
+    risk_level: 'none' | 'low' | 'moderate' | 'high' | 'crisis' | null
     created_at: string
   }
   intake_status: string
@@ -261,6 +264,9 @@ export default function PatientDetailPage() {
           </div>
         )}
 
+        {/* Wave 38 / TS10 — high-risk + no-safety-plan banner. */}
+        <CrisisSafetyPlanBanner patientId={patientId} riskLevel={data.patient.risk_level} />
+
         {/* AI Synthesis (the moat) */}
         <PatientAISummaryCard patientId={patientId} />
 
@@ -386,7 +392,7 @@ function SectionContent({ sectionKey, patientId, data }: { sectionKey: SectionKe
     case 'biopsychosocial':
       return <BiopsychosocialIntakeCard patientId={patientId} />
     case 'safety_plan':
-      return <SafetyPlanCard patientId={patientId} />
+      return <StanleyBrownPlanEditor patientId={patientId} />
     case 'progress_notes':
       return <PatientProgressNotes patientId={patientId} />
     case 'assessments':

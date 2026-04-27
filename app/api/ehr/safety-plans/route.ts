@@ -63,13 +63,17 @@ export async function POST(req: NextRequest) {
        warning_signs, internal_coping, distraction_people_places,
        support_contacts, professional_contacts,
        means_restriction, reasons_for_living,
+       section_1_warning_signs, section_2_internal_coping,
+       section_3_distraction_contacts, section_4_help_contacts,
+       section_5_professionals_agencies, section_6_means_restriction,
        status, created_by
      ) VALUES (
        $1, $2,
        $3::text[], $4::text[], $5::text[],
        $6::jsonb, $7::jsonb,
        $8, $9::text[],
-       $10, $11
+       $10, $11, $12, $13, $14, $15,
+       $16, $17
      ) RETURNING *`,
     [
       ctx.practiceId, body.patient_id,
@@ -78,6 +82,12 @@ export async function POST(req: NextRequest) {
       JSON.stringify(Array.isArray(body.professional_contacts) ? body.professional_contacts : []),
       body.means_restriction ?? null,
       arr(body.reasons_for_living),
+      body.section_1_warning_signs ?? null,
+      body.section_2_internal_coping ?? null,
+      body.section_3_distraction_contacts ?? null,
+      body.section_4_help_contacts ?? null,
+      body.section_5_professionals_agencies ?? null,
+      body.section_6_means_restriction ?? null,
       wantActive ? 'active' : body.status,
       ctx.user.id,
     ],

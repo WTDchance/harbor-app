@@ -12,6 +12,13 @@ const UPDATABLE = new Set([
   'warning_signs', 'internal_coping', 'distraction_people_places',
   'support_contacts', 'professional_contacts', 'means_restriction',
   'reasons_for_living', 'status',
+  // Wave 38 / TS10 — Stanley-Brown 6-section text fields
+  'section_1_warning_signs',
+  'section_2_internal_coping',
+  'section_3_distraction_contacts',
+  'section_4_help_contacts',
+  'section_5_professionals_agencies',
+  'section_6_means_restriction',
 ])
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
