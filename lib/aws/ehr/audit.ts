@@ -104,6 +104,10 @@ export type EhrAuditAction =
   | 'patients.export'
   | 'patients.verify_identity'
   | 'admin.practice.decommission'
+  | 'mental_status_exam.viewed'
+  | 'mental_status_exam.created'
+  | 'mental_status_exam.updated'
+  | 'mental_status_exam.completed'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
