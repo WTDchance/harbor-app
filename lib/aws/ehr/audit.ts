@@ -154,6 +154,13 @@ export type EhrAuditAction =
   | 'insurance_authorization.used'
   | 'admin.audit_log.viewed'
   | 'admin.audit_log.exported'
+  | 'external_provider.create'
+  | 'external_provider.update'
+  | 'external_provider.view'
+  | 'external_provider.list'
+  | 'external_provider.delete'
+  | 'patient.external_provider.link'
+  | 'patient.external_provider.unlink'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
