@@ -48,7 +48,7 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-6">
-        <TreatmentPlanEditor initial={plan} />
+        <TreatmentPlanEditor initial={plan} patientId={plan.patient_id} />
       </div>
     </div>
   )

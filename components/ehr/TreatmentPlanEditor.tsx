@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Plus, Trash2, CheckCircle2 } from 'lucide-react'
 import { CodePicker } from './CodePicker'
+import { SmartCodePicker } from './SmartCodePicker'
 import { ICD10_CODES } from '@/lib/ehr/codes'
 
 type Goal = {
@@ -31,7 +32,7 @@ type Plan = {
 
 function uid(): string { return Math.random().toString(36).slice(2, 10) }
 
-export function TreatmentPlanEditor({ initial }: { initial: Plan }) {
+export function TreatmentPlanEditor({ initial, patientId }: { initial: Plan; patientId?: string }) {
   const router = useRouter()
   const [plan, setPlan] = useState<Plan>({
     ...initial,
@@ -154,13 +155,14 @@ export function TreatmentPlanEditor({ initial }: { initial: Plan }) {
         />
       </div>
 
-      <CodePicker
+      <SmartCodePicker
         label="Working diagnoses (ICD-10)"
-        hint="provisional is fine"
+        hint="AI suggests top 3 based on patient's intake + assessments"
         options={ICD10_CODES}
         value={plan.diagnoses}
         onChange={(v) => setField('diagnoses', v)}
         disabled={isLocked}
+        patientId={patientId}
       />
 
       <div>
