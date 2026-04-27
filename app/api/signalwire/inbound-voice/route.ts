@@ -18,7 +18,6 @@ import { pool } from '@/lib/aws/db'
 import {
   validateInboundWebhook,
   publicWebhookUrl,
-  laMLConnectToRetell,
   signalwireConfigured,
   computeWebhookSignature,
 } from '@/lib/aws/signalwire'
@@ -159,77 +158,24 @@ export async function POST(req: NextRequest) {
     }
   } catch {}
 
-  // Register the call with Retell so the agent inherits dynamic vars
-  const agentId = process.env.RETELL_AGENT_ID || ''
-  const retellApiKey = process.env.RETELL_API_KEY || ''
-  if (!agentId || !retellApiKey) {
-    return rejectTwiML('retell_not_configured')
-  }
-  // Wave 27p — /v2/register-phone-call returns a call_id; the wss URL we hand
-  // SignalWire MUST embed that call_id (wss://api.retellai.com/audio-websocket/<id>)
-  // so Retell's server can attach the registered dynamic_variables. The previous
-  // code threw the response away and built the wss URL from agent_id alone,
-  // which silently 2-second-disconnected every call.
-  let retellCallId = ''
-  try {
-    const resp = await fetch('https://api.retellai.com/v2/register-phone-call', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${retellApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        agent_id: agentId,
-        from_number: fromNumber,
-        to_number: toNumber,
-        direction: 'inbound',
-        // Retell needs telephony_identifier.twilio_call_sid to match
-        // the start.callSid that SignalWire's <Stream> sends on the
-        // WebSocket "start" frame. Without this match, Retell holds the
-        // call at call_status:'registered' and never bridges audio.
-        telephony_identifier: { twilio_call_sid: callSid || '' },
-        retell_llm_dynamic_variables: callerCtx,
-        metadata: { practice_id: practice.id, call_sid: callSid },
-      }),
-    })
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '')
-      console.error(
-        '[signalwire/inbound-voice] register-call HTTP',
-        resp.status,
-        body.slice(0, 200),
-      )
-    } else {
-      const j = (await resp.json().catch(() => ({}))) as { call_id?: string }
-      retellCallId = j.call_id ?? ''
-      if (!retellCallId) {
-        console.error('[signalwire/inbound-voice] register-call 2xx but no call_id in response')
-      }
-    }
-  } catch (err) {
-    console.error('[signalwire/inbound-voice] register-call failed:', (err as Error).message)
-  }
-
-  if (!retellCallId) {
-    await auditSystemEvent({
-      action: 'signalwire.inbound_voice.retell_register_failed',
-      severity: 'error',
-      practiceId: practice.id,
-      details: { from: fromNumber, to: toNumber, callSid, agent_id: agentId },
-    })
-    return rejectTwiML('retell_register_failed')
-  }
-
+  // Wave 27s — use SignalWire <Dial><Sip> to bridge the inbound call to
+  // Retell's SBC. The phone number is imported into Retell via
+  // /import-phone-number with the bound inbound agent, so Retell's SBC
+  // recognises +15414075195 on the SIP URI and connects it to the
+  // Harbor Receptionist agent. This replaces the deprecated
+  // register-phone-call + audio-websocket flow.
   await auditSystemEvent({
     action: 'signalwire.inbound_voice.routed',
     severity: 'info',
     practiceId: practice.id,
-    details: { from: fromNumber, to: toNumber, callSid, agent_id: agentId, call_id: retellCallId },
+    details: { from: fromNumber, to: toNumber, callSid, dial_sip: `sip:${toNumber}@sip.retellai.com` },
   })
 
-  const twiml = laMLConnectToRetell({
-    callId: retellCallId,
-    callMetadata: { practice_id: practice.id, call_sid: callSid || '' },
-  })
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Dial answerOnBridge="true">
+    <Sip>sip:${toNumber}@sip.retellai.com</Sip>
+  </Dial>
+</Response>`
   return new NextResponse(twiml, { status: 200, headers: TWIML_HEADERS })
 }
