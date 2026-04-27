@@ -33,6 +33,7 @@ import {
   AlertTriangle, FileText, MessageSquare, ChevronRight,
   CheckCircle2, Mic, ClipboardList, Activity, ArrowRight,
 } from "lucide-react"
+import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
 
 type Appointment = {
   id: string
@@ -93,6 +94,9 @@ export default function TodayPage() {
   const [brief, setBrief] = useState<string | null>(null)
   const [briefLoading, setBriefLoading] = useState(false)
   const [briefError, setBriefError] = useState<string | null>(null)
+  // M1 — drawer state lives at the page level so we can render a single
+  // overlay that any AppointmentCard can open.
+  const [drawerPatient, setDrawerPatient] = useState<{ id: string; name: string | null } | null>(null)
 
   async function load() {
     try {
@@ -208,7 +212,11 @@ export default function TodayPage() {
           ) : (
             <div className="space-y-2">
               {data.appointments.map(a => (
-                <AppointmentCard key={a.id} appt={a} />
+                <AppointmentCard
+                  key={a.id}
+                  appt={a}
+                  onOpenSummary={(id, name) => setDrawerPatient({ id, name })}
+                />
               ))}
             </div>
           )}
@@ -229,6 +237,13 @@ export default function TodayPage() {
         )}
 
       </div>
+
+      <PatientSummaryDrawer
+        open={!!drawerPatient}
+        patientId={drawerPatient?.id ?? null}
+        patientName={drawerPatient?.name ?? null}
+        onClose={() => setDrawerPatient(null)}
+      />
     </div>
   )
 }
@@ -269,7 +284,13 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   )
 }
 
-function AppointmentCard({ appt }: { appt: Appointment }) {
+function AppointmentCard({
+  appt,
+  onOpenSummary,
+}: {
+  appt: Appointment
+  onOpenSummary: (patientId: string, patientName: string | null) => void
+}) {
   const time = new Date(appt.scheduled_for)
   const timeStr = time.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
   const fullName = [appt.patient_first_name, appt.patient_last_name].filter(Boolean).join(' ') || 'Unnamed patient'
@@ -300,13 +321,15 @@ function AppointmentCard({ appt }: { appt: Appointment }) {
         </div>
       </div>
       <div className="border-t border-gray-100 grid grid-cols-3 divide-x divide-gray-100">
-        <Link
-          href={`/dashboard/patients/${appt.patient_id}#continuity`}
-          className="px-3 py-2.5 text-xs text-center text-gray-700 hover:bg-gray-50 inline-flex items-center justify-center gap-1.5"
+        <button
+          type="button"
+          onClick={() => onOpenSummary(appt.patient_id, fullName)}
+          className="px-3 py-2.5 text-xs text-center text-gray-700 hover:bg-gray-50 inline-flex items-center justify-center gap-1.5 min-h-[44px]"
+          aria-label={`Open pre-session summary for ${fullName}`}
         >
           <Sparkles className="w-3 h-3 text-teal-600" />
-          Pre-session
-        </Link>
+          Summary
+        </button>
         <Link
           href={`/dashboard/ehr/notes/new?patient_id=${appt.patient_id}&appointment_id=${appt.id}`}
           className="px-3 py-2.5 text-xs text-center text-gray-700 hover:bg-gray-50 inline-flex items-center justify-center gap-1.5"
