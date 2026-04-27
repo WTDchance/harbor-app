@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase-server'
-import { sendSMS } from '@/lib/twilio'
+import { sendSMS } from '@/lib/aws/signalwire'
 import { detectCrisis } from '@/lib/crisis-phrases'
 
 export async function POST(req: NextRequest) {
@@ -52,8 +52,16 @@ export async function POST(req: NextRequest) {
       ].join('\n')
 
       try {
-        await sendSMS(alertPhone, alertMsg)
-        alertSent = true
+        const r = await sendSMS({
+          to: alertPhone,
+          body: alertMsg,
+          practiceId: practice?.id ?? null,
+        })
+        if (r.ok) {
+          alertSent = true
+        } else {
+          console.error('Failed to send crisis SMS alert:', r.reason)
+        }
       } catch (smsError) {
         console.error('Failed to send crisis SMS alert:', smsError)
       }
