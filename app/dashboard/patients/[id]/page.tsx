@@ -23,7 +23,7 @@ import { useRouter, useParams } from "next/navigation"
 import Link from "next/link"
 import {
   ChevronDown, ChevronRight, Edit3, Phone, Mail, Calendar,
-  AlertTriangle, FileText, Activity, MessageSquare, DollarSign,
+  AlertTriangle, ShieldAlert, FileText, Activity, MessageSquare, DollarSign,
   Sparkles, RefreshCw, ExternalLink, ArrowLeft, Settings as SettingsIcon,
   Heart, ClipboardList, Briefcase,
 } from "lucide-react"
@@ -35,6 +35,7 @@ import { StanleyBrownPlanEditor } from "@/components/ehr/StanleyBrownPlanEditor"
 import { CrisisSafetyPlanBanner } from "@/components/ehr/CrisisSafetyPlanBanner"
 import { AssessmentsCard } from "@/components/ehr/AssessmentsCard"
 import { ConsentsCard } from "@/components/ehr/ConsentsCard"
+import { Part2ConsentsCard } from "@/components/ehr/Part2ConsentsCard"
 import { BiopsychosocialIntakeCard } from "@/components/ehr/BiopsychosocialIntakeCard"
 import { MoodLogsCard } from "@/components/ehr/MoodLogsCard"
 import { HomeworkCard } from "@/components/ehr/HomeworkCard"
@@ -98,7 +99,7 @@ type SectionKey =
   | 'continuity' | 'trajectory' | 'treatment_plan' | 'safety_plan'
   | 'biopsychosocial'
   | 'progress_notes' | 'assessments' | 'mood' | 'homework'
-  | 'billing' | 'consents' | 'portal' | 'communications'
+  | 'billing' | 'consents' | 'part2_consents' | 'portal' | 'communications'
   | 'demographics' | 'history'
 
 const ALL_SECTIONS: { key: SectionKey; label: string; icon: any; default_open: boolean }[] = [
@@ -113,6 +114,7 @@ const ALL_SECTIONS: { key: SectionKey; label: string; icon: any; default_open: b
   { key: 'homework',      label: 'Homework',           icon: Briefcase,    default_open: false },
   { key: 'billing',       label: 'Billing',            icon: DollarSign,   default_open: false },
   { key: 'consents',      label: 'Consents',           icon: FileText,     default_open: false },
+  { key: 'part2_consents',label: '42 CFR Part 2 Consents', icon: ShieldAlert,  default_open: false },
   { key: 'portal',        label: 'Patient Portal',     icon: ExternalLink, default_open: false },
   { key: 'communications',label: 'Communications',     icon: MessageSquare,default_open: false },
   { key: 'demographics',  label: 'Demographics',       icon: SettingsIcon, default_open: false },
@@ -407,6 +409,8 @@ function SectionContent({ sectionKey, patientId, data }: { sectionKey: SectionKe
       return <BillingCard patientId={patientId} />
     case 'consents':
       return <ConsentsCard patientId={patientId} />
+    case 'part2_consents':
+      return <Part2ConsentsCard patientId={patientId} />
     case 'portal':
       return <PortalLinkCard patientId={patientId} />
     case 'communications':
