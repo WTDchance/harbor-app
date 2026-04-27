@@ -1,6 +1,6 @@
 // Admin Health Check API.
 //
-// GET — runs live checks against harbor_app, vapi, twilio, the database.
+// GET — runs live checks against harbor_app, retell, signalwire, the database.
 //       Auth: either ?secret=HEALTH_CHECK_SECRET (cron) OR an admin session
 //       (requireAdminSession via the Cognito ID-token cookie).
 //
@@ -16,7 +16,7 @@ import { pool } from '@/lib/aws/db'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const SERVICES = ['harbor_app', 'vapi', 'twilio', 'database'] as const
+const SERVICES = ['harbor_app', 'retell', 'signalwire', 'database'] as const
 type ServiceName = typeof SERVICES[number]
 
 interface CheckResult {
@@ -51,33 +51,34 @@ async function checkHarborApp(): Promise<CheckResult> {
   }
 }
 
-async function checkVapi(): Promise<CheckResult> {
+async function checkRetell(): Promise<CheckResult> {
   const start = Date.now()
-  const apiKey = process.env.VAPI_API_KEY
-  if (!apiKey) {
+  const apiKey = process.env.RETELL_API_KEY
+  const agentId = process.env.RETELL_AGENT_ID
+  if (!apiKey || !agentId) {
     return {
-      service: 'vapi', status: 'down', response_ms: 0,
-      error_message: 'VAPI_API_KEY not configured', metadata: null,
+      service: 'retell', status: 'down', response_ms: 0,
+      error_message: 'RETELL_API_KEY / RETELL_AGENT_ID not configured', metadata: null,
     }
   }
   try {
-    const res = await fetch('https://api.vapi.ai/assistant/0fc849bf-41a2-46e2-8d72-bb236a5cc8d2', {
+    const res = await fetch(`https://api.retellai.com/get-agent/${agentId}`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10000),
     })
     const ms = Date.now() - start
     if (res.ok) {
-      const data = await res.json() as { name?: string; id?: string }
+      const data = await res.json() as { agent_name?: string; agent_id?: string; voice_id?: string }
       return {
-        service: 'vapi',
+        service: 'retell',
         status: ms > 5000 ? 'degraded' : 'healthy',
         response_ms: ms,
         error_message: null,
-        metadata: { assistant_name: data.name, assistant_id: data.id },
+        metadata: { agent_name: data.agent_name, agent_id: data.agent_id, voice_id: data.voice_id },
       }
     }
     return {
-      service: 'vapi',
+      service: 'retell',
       status: res.status === 429 ? 'degraded' : 'down',
       response_ms: ms,
       error_message: `HTTP ${res.status}`,
@@ -85,45 +86,52 @@ async function checkVapi(): Promise<CheckResult> {
     }
   } catch (err) {
     return {
-      service: 'vapi', status: 'down', response_ms: Date.now() - start,
+      service: 'retell', status: 'down', response_ms: Date.now() - start,
       error_message: (err as Error).message || 'Request failed', metadata: null,
     }
   }
 }
 
-async function checkTwilio(): Promise<CheckResult> {
+async function checkSignalWire(): Promise<CheckResult> {
   const start = Date.now()
-  const sid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-  if (!sid || !token) {
+  const projectId = process.env.SIGNALWIRE_PROJECT_ID
+  const token = process.env.SIGNALWIRE_TOKEN
+  const space = process.env.SIGNALWIRE_SPACE_URL
+  if (!projectId || !token || !space) {
     return {
-      service: 'twilio', status: 'down', response_ms: 0,
-      error_message: 'Twilio credentials not configured', metadata: null,
+      service: 'signalwire', status: 'down', response_ms: 0,
+      error_message: 'SignalWire credentials not configured', metadata: null,
     }
   }
   try {
-    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${sid}.json`, {
-      headers: { Authorization: 'Basic ' + Buffer.from(`${sid}:${token}`).toString('base64') },
+    const auth = 'Basic ' + Buffer.from(`${projectId}:${token}`).toString('base64')
+    const res = await fetch(`https://${space}/api/laml/2010-04-01/Accounts/${projectId}.json`, {
+      headers: { Authorization: auth },
       signal: AbortSignal.timeout(10000),
     })
     const ms = Date.now() - start
     if (res.ok) {
-      const data = await res.json() as { status?: string; friendly_name?: string }
+      const data = await res.json() as { status?: string; friendly_name?: string; type?: string }
+      const isActive = data.status === 'active'
       return {
-        service: 'twilio',
-        status: data.status === 'active' ? (ms > 5000 ? 'degraded' : 'healthy') : 'degraded',
+        service: 'signalwire',
+        status: isActive ? (ms > 5000 ? 'degraded' : 'healthy') : 'degraded',
         response_ms: ms,
-        error_message: data.status !== 'active' ? `Account status: ${data.status}` : null,
-        metadata: { account_status: data.status, friendly_name: data.friendly_name },
+        error_message: isActive ? null : `Account status: ${data.status}`,
+        metadata: {
+          account_status: data.status,
+          friendly_name: data.friendly_name,
+          account_type: data.type,
+        },
       }
     }
     return {
-      service: 'twilio', status: 'down', response_ms: ms,
+      service: 'signalwire', status: 'down', response_ms: ms,
       error_message: `HTTP ${res.status}`, metadata: null,
     }
   } catch (err) {
     return {
-      service: 'twilio', status: 'down', response_ms: Date.now() - start,
+      service: 'signalwire', status: 'down', response_ms: Date.now() - start,
       error_message: (err as Error).message || 'Request failed', metadata: null,
     }
   }
@@ -150,7 +158,7 @@ async function checkDatabase(): Promise<CheckResult> {
 }
 
 async function runAllChecks(): Promise<CheckResult[]> {
-  return Promise.all([checkHarborApp(), checkVapi(), checkTwilio(), checkDatabase()])
+  return Promise.all([checkHarborApp(), checkRetell(), checkSignalWire(), checkDatabase()])
 }
 
 export async function GET(req: NextRequest) {

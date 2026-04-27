@@ -67,13 +67,22 @@ type HistoryData = {
 
 const SERVICE_LABELS: Record<string, string> = {
   harbor_app: "Harbor App",
-  vapi: "Vapi (Voice AI)",
-  twilio: "Twilio (Phone)",
-  supabase: "Supabase (Database)",
+  retell: "Retell (Voice AI)",
+  signalwire: "SignalWire (Carrier)",
+  database: "RDS (Database)",
+  // Keep legacy keys around so historical incidents from the Vapi/Twilio
+  // era still render with a label rather than the raw service code.
+  vapi: "Vapi (legacy)",
+  twilio: "Twilio (legacy)",
+  supabase: "Supabase (legacy)",
 }
 
 const SERVICE_ICONS: Record<string, string> = {
   harbor_app: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+  retell: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
+  signalwire: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
+  database: "M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4",
+  // Legacy fallbacks so any old persisted incidents still get an icon
   vapi: "M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z",
   twilio: "M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z",
   supabase: "M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4",
