@@ -139,6 +139,13 @@ export type EhrAuditAction =
   | 'admin.roi_lead.list'
   | 'admin.roi_lead.update'
   | 'admin.support_ticket.list'
+  | 'external_provider.create'
+  | 'external_provider.update'
+  | 'external_provider.view'
+  | 'external_provider.list'
+  | 'external_provider.delete'
+  | 'patient.external_provider.link'
+  | 'patient.external_provider.unlink'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
