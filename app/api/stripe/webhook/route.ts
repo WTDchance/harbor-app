@@ -135,14 +135,28 @@ async function handleCheckoutCompleted(session: any): Promise<void> {
     console.error('[stripe/webhook] practice update failed:', err.message)
   })
 
-  // TODO(bucket-1 — SignalWire/Retell carrier swap):
-  //   * purchase phone number via SignalWire (replaces purchaseTwilioNumber)
-  //   * create Retell agent (replaces createVapiAssistant)
-  //   * link the number to the agent (replaces linkVapiPhoneNumber)
-  // Until that wave lands, practices that come through the card-upfront
-  // checkout flow land in status='active' but without a phone number.
-  // Dashboard-side signups that don't trigger this webhook aren't affected.
-  console.warn(`[stripe/webhook] CARRIER PROVISIONING SKIPPED (Bucket 1) for practice ${practiceId}`)
+  // Wave 29 — kick off carrier provisioning (SignalWire number purchase
+  // + Retell agent clone + binding). Runs synchronously inside the
+  // webhook handler. If it fails, the practice stays at provisioning_state
+  // 'provisioning_failed' and admin can retry via /api/admin/provision-practice.
+  let provisionedNumber: string | null = null
+  try {
+    const { provisionPractice } = await import('@/lib/aws/provisioning/provision-practice')
+    const result = await provisionPractice({
+      practiceId,
+      preferredAreaCode: undefined, // Could derive from practice.phone area code in a follow-up
+    })
+    provisionedNumber = result.signalwirePhoneNumber
+    console.log(
+      `[stripe/webhook] provisioning complete for ${practiceId}: ${provisionedNumber}, agent=${result.retellAgentId}`,
+    )
+  } catch (err) {
+    console.error(
+      `[stripe/webhook] provisioning failed for ${practiceId}:`,
+      (err as Error).message,
+    )
+    // Don't return — still send welcome email (admin will retry provisioning)
+  }
 
   // Welcome email — SES via Wave 5. owner_email is canonical.
   if (practice.owner_email) {
@@ -151,7 +165,7 @@ async function handleCheckoutCompleted(session: any): Promise<void> {
         to: practice.owner_email,
         practiceName: practice.name,
         aiName: 'Ellie',
-        phoneNumber: 'pending — your phone line will be activated shortly',
+        phoneNumber: provisionedNumber || 'pending — your phone line will be activated shortly',
         foundingMember: !!practice.founding_member,
       })
     } catch (err) {
@@ -163,8 +177,8 @@ async function handleCheckoutCompleted(session: any): Promise<void> {
     session_id: sessionId,
     customer_id: customerId,
     subscription_id: subscriptionId,
-    carrier_provisioning: 'deferred_bucket_1',
-  }, 'warn')
+    provisioned_phone_number: provisionedNumber,
+  }, provisionedNumber ? 'info' : 'warn')
 }
 
 async function handleSubscriptionCreated(subscription: any): Promise<void> {

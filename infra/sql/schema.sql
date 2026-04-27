@@ -545,3 +545,8 @@ END $$;
 -- =============================================================================
 -- End of schema.
 -- =============================================================================
+
+-- Wave 29: provisioning columns (retell agent + llm + signalwire SID)
+ALTER TABLE practices ADD COLUMN IF NOT EXISTS signalwire_phone_sid TEXT;
+ALTER TABLE practices ADD COLUMN IF NOT EXISTS retell_agent_id      TEXT;
+ALTER TABLE practices ADD COLUMN IF NOT EXISTS retell_llm_id        TEXT;
