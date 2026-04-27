@@ -1,25 +1,60 @@
 // components/ehr/StanleyBrownPlanEditor.tsx
 //
-// Wave 38 / TS10 — Stanley-Brown structured Safety Plan scaffold.
+// Wave 38 / TS10 — Stanley-Brown structured Safety Plan editor.
 //
-// Six free-text sections matching the published 6-step model. No helper
-// or hint text is rendered inside the sections — the therapist fills
-// these in collaboratively with the patient. Placeholder is empty for
-// every textarea by design (helper/prompt text deferred to a focused
-// follow-up task where the published guidance will be supplied verbatim).
+// Six free-text sections matching the published 6-step model, each with
+// a verbatim helper prompt from the published guidance rendered as
+// muted/italic placeholder text on the textarea. The placeholder is
+// visually distinct from real content (gray + italic) and disappears
+// the moment the therapist starts typing. The therapist fills in each
+// section collaboratively with the patient.
 
 'use client'
 
 import { useEffect, useState } from 'react'
 import { ShieldAlert, Save, Check } from 'lucide-react'
 
-const SECTIONS: Array<{ key: string; label: string }> = [
-  { key: 'section_1_warning_signs',          label: '1. Warning Signs' },
-  { key: 'section_2_internal_coping',        label: '2. Internal Coping Strategies' },
-  { key: 'section_3_distraction_contacts',   label: '3. Social Contacts and Settings That Provide Distraction' },
-  { key: 'section_4_help_contacts',          label: '4. People I Can Ask for Help' },
-  { key: 'section_5_professionals_agencies', label: '5. Professionals and Agencies I Can Contact' },
-  { key: 'section_6_means_restriction',      label: '6. Making the Environment Safer' },
+// Wave 38 / TS10 follow-up — verbatim helper prompts from the published
+// Stanley-Brown 6-step model are surfaced as placeholder/helper text on
+// each section's textarea. Placeholder copy is grayed out and disappears
+// when the therapist starts typing real content.
+const SECTIONS: Array<{ key: string; label: string; placeholder: string }> = [
+  {
+    key: 'section_1_warning_signs',
+    label: 'Step 1 — Warning Signs',
+    placeholder:
+      "Examples: feeling hopeless, thinking 'I can't do this anymore', drinking alone, isolating from family, feeling rejected, anniversary of a loss.",
+  },
+  {
+    key: 'section_2_internal_coping',
+    label: 'Step 2 — Internal Coping Strategies',
+    placeholder:
+      'Examples: take a walk, listen to music I love, take a hot shower, exercise, watch a comforting movie, journal, do a craft, pet the dog.',
+  },
+  {
+    key: 'section_3_distraction_contacts',
+    label: 'Step 3 — People and Social Settings That Provide Distraction',
+    placeholder:
+      "List 1-2 people I can call or visit (not therapists) and 1-2 places I can go where I'm around other people: coffee shop, library, gym, religious community, park.",
+  },
+  {
+    key: 'section_4_help_contacts',
+    label: 'Step 4 — People I Can Ask for Help',
+    placeholder:
+      'Name and phone number of 2-3 people. These are people I can be honest with about my feelings, not just distractions.',
+  },
+  {
+    key: 'section_5_professionals_agencies',
+    label: 'Step 5 — Professionals and Agencies I Can Contact During a Crisis',
+    placeholder:
+      'My therapist (name + after-hours line). My psychiatrist if I have one. 988 Suicide & Crisis Lifeline (call or text 988). Local emergency room. 911 if I cannot keep myself safe.',
+  },
+  {
+    key: 'section_6_means_restriction',
+    label: 'Step 6 — Making the Environment Safer',
+    placeholder:
+      'Means restriction. Remove or secure firearms (give to a trusted person, lock in a gun safe, hand to local police for storage). Secure medications (lock box, give to family member). Remove sharp objects from immediate access. Plan for what happens if I have urges — who removes the means and how fast.',
+  },
 ]
 
 type Plan = Record<string, any> & {
@@ -94,16 +129,25 @@ export function StanleyBrownPlanEditor({ patientId }: { patientId: string }) {
           </span>
         </h2>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-4">
         {SECTIONS.map((s) => (
-          <div key={s.key}>
-            <label className="block text-sm font-medium text-gray-900 mb-1">{s.label}</label>
+          // Each section is its own block, ≥44px tap target on mobile.
+          <div key={s.key} className="min-h-[44px]">
+            <label
+              htmlFor={`sb-${s.key}`}
+              className="block text-sm font-medium text-gray-900 mb-1"
+            >
+              {s.label}
+            </label>
             <textarea
+              id={`sb-${s.key}`}
               rows={3}
               value={draft[s.key] ?? ''}
               onChange={(e) => setDraft((d) => ({ ...d, [s.key]: e.target.value }))}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-red-500 focus:border-transparent"
-              placeholder=""
+              // Muted gray placeholder so the prompt is visually distinct
+              // from real content. Disappears as soon as the user types.
+              placeholder={s.placeholder}
+              className="w-full min-h-[88px] border border-gray-200 rounded-lg px-3 py-2 text-sm placeholder:text-gray-400 placeholder:italic focus:ring-2 focus:ring-red-500 focus:border-transparent"
             />
           </div>
         ))}
