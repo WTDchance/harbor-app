@@ -316,6 +316,12 @@ export type EhrAuditAction =
   // submissions timeline are all visible).
   | 'invoice.detail_viewed'
   | 'invoice.list_viewed'
+  // Wave 47 — Reception product split. Public REST API key lifecycle.
+  // Plaintext key is only ever shown once at create-time; the audit row
+  // records the key_prefix + key_id for forensic linkage without storing
+  // the secret material.
+  | 'reception_api_key.created'
+  | 'reception_api_key.revoked'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
