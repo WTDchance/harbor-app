@@ -62,6 +62,48 @@ export async function POST(req: NextRequest) {
   }
   const end = new Date(start.getTime() + duration * 60_000)
 
+  // W44 T3 — minor patient self-booking gate. If the portal session
+  // patient is a minor (DOB-derived: under 18) AND no parent/guardian
+  // relationship row exists with is_minor_consent=true on this patient,
+  // refuse the booking. Parents bookings on a minor's behalf go through
+  // the parent's own portal session against their own patient record;
+  // a future enhancement adds a 'book for minor' affordance against
+  // the parent's authority list, out of scope here.
+  const ageRow = await pool.query(
+    `SELECT dob FROM patients WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+    [sess.patientId, sess.practiceId],
+  )
+  if (ageRow.rows[0]?.dob) {
+    const dob = new Date(ageRow.rows[0].dob)
+    if (!Number.isNaN(dob.getTime())) {
+      const ageMs = Date.now() - dob.getTime()
+      const ageYears = ageMs / (365.25 * 86_400_000)
+      if (ageYears < 18) {
+        const consentRow = await pool.query(
+          `SELECT 1 FROM ehr_patient_relationships
+            WHERE practice_id = $1 AND patient_id = $2
+              AND relationship IN ('parent','guardian')
+              AND is_minor_consent = TRUE
+            LIMIT 1`,
+          [sess.practiceId, sess.patientId],
+        ).catch(() => ({ rows: [] as any[] }))
+        if (consentRow.rows.length === 0) {
+          return NextResponse.json(
+            {
+              error: {
+                code: 'minor_requires_guardian',
+                message:
+                  'A parent or guardian needs to book on your behalf. ' +
+                  'Please ask them to contact our office.',
+              },
+            },
+            { status: 403 },
+          )
+        }
+      }
+    }
+  }
+
   // Race-safe slot check.
   const conflict = await pool.query(
     `SELECT id FROM appointments
