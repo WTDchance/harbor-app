@@ -231,6 +231,8 @@ export type EhrAuditAction =
   | 'telehealth.recording.downloaded'
   | 'telehealth.recording.deleted'
   | 'telehealth.recording.consent_missing'
+  | 'user_layout.updated'
+  | 'user_layout.reset_to_default'
   | 'signals.ingested'
   | 'predictions.computed'
   | 'prediction.viewed'
