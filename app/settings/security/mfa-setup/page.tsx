@@ -18,6 +18,7 @@ export default function MfaSetupPage() {
   const [loading, setLoading] = useState(true)
   const [secret, setSecret] = useState<string | null>(null)
   const [otpUri, setOtpUri] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [code, setCode] = useState('')
   const [verifying, setVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -32,6 +33,7 @@ export default function MfaSetupPage() {
         if (!r.ok) throw new Error(j.error || 'failed')
         setSecret(j.secret)
         setOtpUri(j.otpauth_uri)
+        setQrDataUrl(j.qr_data_url || null)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not start MFA setup')
       } finally {
@@ -88,15 +90,19 @@ export default function MfaSetupPage() {
               <li>Enter the 6-digit code your app shows to confirm setup.</li>
             </ol>
 
-            {otpUri && (
+            {qrDataUrl ? (
               <div className="flex justify-center">
                 <img
                   alt="MFA QR code"
                   className="w-48 h-48 border border-gray-200 rounded-lg bg-white"
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=192x192&data=${encodeURIComponent(otpUri)}`}
+                  src={qrDataUrl}
                 />
               </div>
-            )}
+            ) : otpUri ? (
+              <div className="text-xs text-gray-500 text-center px-4">
+                QR rendering unavailable. Add the secret manually below.
+              </div>
+            ) : null}
 
             <div className="bg-gray-50 border border-gray-200 rounded-lg p-2 text-xs flex items-center justify-between gap-2">
               <code className="font-mono break-all">{secret}</code>

@@ -16,6 +16,7 @@ import {
   SetUserMFAPreferenceCommand,
   GetUserCommand,
 } from '@aws-sdk/client-cognito-identity-provider'
+import QRCode from 'qrcode'
 import { ACCESS_COOKIE } from '@/lib/aws/cognito'
 
 export const runtime = 'nodejs'
@@ -47,7 +48,26 @@ export async function GET(_req: NextRequest) {
   const issuer = encodeURIComponent('Harbor')
   const account = encodeURIComponent(email)
   const otpauth_uri = `otpauth://totp/${issuer}:${account}?secret=${r.SecretCode}&issuer=${issuer}&algorithm=SHA1&digits=6&period=30`
-  return NextResponse.json({ secret: r.SecretCode, otpauth_uri })
+
+  // Generate the QR locally as a data URL so the secret never leaves our
+  // infrastructure. The previous client-side <img src=api.qrserver.com> call
+  // (a) leaked the TOTP secret + user email to a third party we don't have
+  // a BAA with, and (b) failed to render whenever that third-party endpoint
+  // was unreachable. Using the already-bundled `qrcode` npm package keeps it
+  // inline + HIPAA-clean.
+  let qr_data_url: string | null = null
+  try {
+    qr_data_url = await QRCode.toDataURL(otpauth_uri, {
+      width: 256,
+      margin: 1,
+      errorCorrectionLevel: 'M',
+    })
+  } catch {
+    // Fall back to text-only display if QR encoding fails for any reason.
+    qr_data_url = null
+  }
+
+  return NextResponse.json({ secret: r.SecretCode, otpauth_uri, qr_data_url })
 }
 
 export async function POST(req: NextRequest) {
