@@ -61,6 +61,12 @@ export default function MeetingPage() {
       }
       setRole(j.role)
 
+      // W47 T1 — stamp therapist_joined_meeting_at so the patient
+      // waiting room can auto-redirect on its next poll.
+      if (j.role === 'therapist') {
+        fetch(`/api/ehr/appointments/${apptId}/therapist-joined`, { method: 'POST' }).catch(() => {})
+      }
+
       const logger = new ConsoleLogger('Harbor', LogLevel.WARN)
       const deviceController = new DefaultDeviceController(logger)
       const config = new MeetingSessionConfiguration(j.Meeting, j.Attendee)

@@ -37,6 +37,7 @@ import {
 import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
 import TodayPredictionsSection from "@/components/predictions/TodayPredictionsSection"
 import ClinicalTasksList from "@/components/tasks/ClinicalTasksList"
+import WaitingRoomsWidget from "@/components/today/widgets/WaitingRooms"
 
 type Appointment = {
   id: string
@@ -232,6 +233,9 @@ export default function TodayPage() {
             </div>
           </div>
         )}
+
+        {/* Waiting room (W47 T1) — hides itself when nobody is waiting */}
+        <WaitingRoomsWidget />
 
         {/* Predictions (W45 T6) */}
         <TodayPredictionsSection />
