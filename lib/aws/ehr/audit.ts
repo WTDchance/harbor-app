@@ -245,6 +245,15 @@ export type EhrAuditAction =
   | 'preauth.record_response'
   | 'preauth.withdraw'
   | 'preauth.resulted_in_auth'
+  // Wave 41 / T5 patch — Stedi 277CA acknowledgment + claim
+  // resubmission/cancellation lifecycle. claim.acknowledgment_received
+  // fires when the 277CA webhook updates a submission row (severity
+  // warn if rejected). claim.resubmitted and claim.cancelled fire from
+  // the resubmit/cancel-claim endpoints; both reference the
+  // ehr_claim_submissions row id of the new submission.
+  | 'claim.acknowledgment_received'
+  | 'claim.resubmitted'
+  | 'claim.cancelled'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

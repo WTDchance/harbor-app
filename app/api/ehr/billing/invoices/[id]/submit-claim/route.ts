@@ -23,6 +23,7 @@ import {
   validateClaimContext,
   type ClaimSubmitContext,
 } from '@/lib/aws/stedi/claim-submit-validate'
+import { generatePcn, validateStediBodyChars } from '@/lib/ehr/stedi-pcn'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -145,10 +146,17 @@ export async function POST(
   }
 
   // Build a Stedi 837 payload. Minimal valid shape — Stedi fills in
-  // most envelope details. Use invoice.id as the control_number /
-  // patientControlNumber so the 835 auto-match in T4 can find this
-  // invoice via claim_reference.
+  // most envelope details.
+  //
+  // PCN (patientControlNumber) is a 17-char X12-Basic-charset id we
+  // generate per submission and persist on ehr_claim_submissions.pcn.
+  // The W41 T4 ERA auto-match keys off ehr_invoices.id via the
+  // submission row's invoice_id column, NOT off the PCN — so changing
+  // the PCN format doesn't break that linkage.
+  // controlNumber here is the X12 ISA envelope control number (still
+  // 9-digit numeric). Distinct from PCN.
   const controlNumber = newControlNumber()
+  const pcn = generatePcn()
   const payload = {
     controlNumber,
     tradingPartnerServiceId: payerId837,
@@ -173,7 +181,7 @@ export async function POST(
     },
     claimInformation: {
       claimFilingCode: 'CI',
-      patientControlNumber: invoice.id, // <- T4 auto-matches against ehr_invoices.id
+      patientControlNumber: pcn, // 17-char X12 Basic charset; persisted on ehr_claim_submissions.pcn
       claimChargeAmount: (validationCtx.invoice.total_cents / 100).toFixed(2),
       placeOfServiceCode: '11',
       claimFrequencyCode: '1',
@@ -191,6 +199,28 @@ export async function POST(
       })),
     },
     priorAuthorizationNumber: validationCtx.authorization?.auth_number ?? undefined,
+  }
+
+  // Reserved-delimiter check on string values of the 837 JSON body.
+  // Stedi returns 400 if `~ * : ^` appear; we 422 with the field path
+  // so the caller can clean the source data.
+  const charIssues = validateStediBodyChars(payload)
+  if (charIssues.length > 0) {
+    return NextResponse.json(
+      {
+        error: {
+          code: 'reserved_delimiter_in_body',
+          message:
+            'X12 reserved delimiter found in claim body. Strip ~ * : ^ from the offending field(s) and retry.',
+        },
+        issues: charIssues.map((i) => ({
+          field: i.path,
+          message: `Field contains reserved delimiter ${JSON.stringify(i.char)}.`,
+          snippet: i.snippet,
+        })),
+      },
+      { status: 422 },
+    )
   }
 
   // Submit to Stedi.
@@ -228,16 +258,16 @@ export async function POST(
   const { rows } = await pool.query(
     `INSERT INTO ehr_claim_submissions
        (practice_id, invoice_id, submitted_by_user_id,
-        payer_id_837, payer_name, control_number,
+        payer_id_837, payer_name, control_number, pcn,
         request_payload_json, response_payload_json,
         stedi_submission_id, http_status, is_accepted, rejection_reason, status)
-     VALUES ($1, $2, $3, $4, $5, $6,
-             $7::jsonb, $8::jsonb,
-             $9, $10, $11, $12, $13)
+     VALUES ($1, $2, $3, $4, $5, $6, $7,
+             $8::jsonb, $9::jsonb,
+             $10, $11, $12, $13, $14)
      RETURNING *`,
     [
       ctx.practiceId, invoice.id, ctx.user.id,
-      payerId837, invoice.insurance_provider, controlNumber,
+      payerId837, invoice.insurance_provider, controlNumber, pcn,
       JSON.stringify(payload), JSON.stringify(stediResponse ?? {}),
       stediSubmissionId, httpStatus, isAccepted, rejectionReason, submissionStatus,
     ],
@@ -264,6 +294,7 @@ export async function POST(
       invoice_id: invoice.id,
       payer_id_837: payerId837,
       control_number: controlNumber,
+      pcn,
       http_status: httpStatus,
       is_accepted: isAccepted,
     },
