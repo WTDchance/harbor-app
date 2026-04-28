@@ -409,7 +409,7 @@ export async function auditSystemEvent(params: {
   resourceType?: string
   resourceId?: string | null
   practiceId?: string | null
-  severity?: 'info' | 'warn' | 'error'
+  severity?: 'info' | 'warn' | 'warning' | 'error' | 'critical'
 }): Promise<void> {
   try {
     await pool.query(
@@ -430,3 +430,33 @@ export async function auditSystemEvent(params: {
     console.error('[audit] system insert failed:', (err as Error).message)
   }
 }
+
+// =============================================================================
+// Wave 45 — Retell call-transcript signal extraction audit actions.
+//
+// auditSystemEvent.action is a free-form string (mirrors the existing
+// 'retell.call.started', 'retell.call.ended', 'retell.call.analyzed' rows)
+// so these are documented here rather than added to the EhrAuditAction
+// union. Use the constants below at call sites for grep-ability.
+//
+// PHI rule (Wave 41 T0): the details payload of these audit rows MUST NOT
+// contain patient names, phone numbers, transcripts, or message content.
+// patient_id + call_id + practice_id only; everything else is sanitised
+// to counts, booleans, and ranges. The signal extractor itself never
+// passes transcript text into details.
+// =============================================================================
+
+export const RETELL_SIGNAL_AUDIT_ACTIONS = {
+  /** Every successful call-transcript signal extraction (info severity). */
+  EXTRACTED: 'retell.signal.extracted',
+  /**
+   * Crisis flag raised by the extractor (critical severity).
+   * Triggers the W37-style therapist-SMS handoff in the webhook. Never
+   * messages the patient. Logged once per call_id.
+   */
+  CRISIS_FLAGGED: 'retell.signal.crisis_flagged',
+} as const
+
+export type RetellSignalAuditAction =
+  (typeof RETELL_SIGNAL_AUDIT_ACTIONS)[keyof typeof RETELL_SIGNAL_AUDIT_ACTIONS]
+
