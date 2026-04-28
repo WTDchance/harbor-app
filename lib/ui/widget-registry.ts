@@ -17,6 +17,7 @@ export type WidgetId =
   | 'todays_schedule'
   | 'recent_activity'
   | 'engagement_trends'
+  | 'mood_heatmap'
 
 export interface WidgetMeta {
   id: WidgetId
@@ -48,6 +49,9 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetMeta> = {
   engagement_trends: { id: 'engagement_trends', name: 'Engagement trends',
                        description: 'Caseload-wide engagement score trend.',
                        default_on: false },
+  mood_heatmap:    { id: 'mood_heatmap',    name: 'Mood check-ins',
+                     description: 'Caseload-wide 30-day mood heatmap from W46 T5 daily check-ins.',
+                     default_on: false },
 }
 
 /** Application-wide default widget order. Used when a user has no

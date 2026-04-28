@@ -339,6 +339,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  // W47 T0 — saved sidebar module order from W46 T6 user prefs.
+  // null = inherit (don't reorder); non-null = reorder visible items
+  // by this list, items not in the list keep their original position
+  // after the listed ones.
+  const [savedSidebarOrder, setSavedSidebarOrder] = useState<string[] | null>(null);
   const COLLAPSED_KEY = 'harbor_dashboard_sidebar_collapsed';
 
   useEffect(() => {
@@ -390,7 +395,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         if (!cancelled) router.replace("/login/aws");
       }
     })();
-    return () => { cancelled = true; };
+    // W47 T0 — load saved sidebar module order from /api/ehr/me/layout.
+  // Keeps the existing visibility logic intact; just reorders.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch('/api/ehr/me/layout')
+        if (!res.ok) return
+        const j = await res.json()
+        const userPref = Array.isArray(j.user_pref_sidebar) ? j.user_pref_sidebar : null
+        const practiceDefault = Array.isArray(j.practice_default_sidebar) ? j.practice_default_sidebar : null
+        if (userPref && userPref.length > 0) setSavedSidebarOrder(userPref)
+        else if (practiceDefault && practiceDefault.length > 0) setSavedSidebarOrder(practiceDefault)
+      } catch { /* keep default */ }
+    })()
+  }, [])
+
+  return () => { cancelled = true; };
   }, [router]);
 
   // Wave 38 TS3 — nudge un-enrolled therapists into TOTP setup once the
@@ -508,6 +529,50 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             items.push(EHR_PREFERENCES_NAV)
             // Bottom — Settings
             items.push(...NAV.slice(-1))
+
+            // W47 T0 — reorder by user's saved sidebar pref. Map a
+            // small set of href prefixes to the SidebarModuleId values
+            // so this works without changing the legacy NAV item shape.
+            if (savedSidebarOrder && savedSidebarOrder.length > 0) {
+              const ID_TO_HREF_PREFIX: Record<string, string> = {
+                today:    '/dashboard',
+                patients: '/dashboard/patients',
+                schedule: '/dashboard/calendar',
+                inbox:    '/dashboard/messages',
+                caseload: '/dashboard/ehr/caseload',
+                notes:    '/dashboard/ehr/notes',
+                tasks:    '/dashboard/ehr/tasks',
+                groups:   '/dashboard/ehr/group-sessions',
+                billing:  '/dashboard/ehr/billing',
+                reports:  '/dashboard/ehr/reports',
+                audit:    '/dashboard/ehr/audit',
+                settings: '/dashboard/settings',
+              }
+              const orderedHrefs = savedSidebarOrder
+                .map((id) => ID_TO_HREF_PREFIX[id])
+                .filter(Boolean)
+
+              const indexOfHref = (href: string): number => {
+                for (let i = 0; i < orderedHrefs.length; i++) {
+                  // Exact match wins, then prefix match. Items beyond
+                  // the saved list (e.g. EHR_OUTCOMES_NAV) get -1 and
+                  // sort to the end with stable ordering preserved.
+                  if (href === orderedHrefs[i]) return i
+                }
+                for (let i = 0; i < orderedHrefs.length; i++) {
+                  if (href.startsWith(orderedHrefs[i] + '/')) return i + 0.5
+                }
+                return Number.POSITIVE_INFINITY
+              }
+
+              items.sort((a: any, b: any) => {
+                const ai = indexOfHref(a.href)
+                const bi = indexOfHref(b.href)
+                if (ai === Number.POSITIVE_INFINITY && bi === Number.POSITIVE_INFINITY) return 0
+                return ai - bi
+              })
+            }
+
             return items
           })().map((item: typeof NAV[number]) => {
             const active = isActive(item);

@@ -37,6 +37,8 @@ import {
 import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
 import TodayPredictionsSection from "@/components/predictions/TodayPredictionsSection"
 import ClinicalTasksList from "@/components/tasks/ClinicalTasksList"
+import WidgetRenderer from "@/components/today/WidgetRenderer"
+import { resolveWidgetLayout, DEFAULT_WIDGET_LAYOUT, type WidgetId } from "@/lib/ui/widget-registry"
 
 type Appointment = {
   id: string
@@ -119,9 +121,27 @@ export default function TodayPage() {
   const [data, setData] = useState<TodayData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [brief, setBrief] = useState<string | null>(null)
-  const [briefLoading, setBriefLoading] = useState(false)
-  const [briefError, setBriefError] = useState<string | null>(null)
+  const [widgetIds, setWidgetIds] = useState<WidgetId[]>(DEFAULT_WIDGET_LAYOUT)
+
+  // W47 T0 — load the user's saved widget layout. Falls back to
+  // the application default if the API fails.
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch('/api/ehr/me/layout')
+        if (!res.ok) return
+        const j = await res.json()
+        const userPref = Array.isArray(j.user_pref_widgets) ? j.user_pref_widgets : null
+        const practiceDefault = Array.isArray(j.practice_default_widgets) ? j.practice_default_widgets : null
+        setWidgetIds(resolveWidgetLayout(userPref, practiceDefault))
+        // Audit the consume so we have a per-user signal for layout
+        // adoption — feeds Wave 48 onboarding refinement.
+        fetch('/api/ehr/me/layout/consumed', { method: 'POST' }).catch(() => {})
+      } catch {
+        // keep defaults
+      }
+    })()
+  }, [])
   // M1 — drawer state lives at the page level so we can render a single
   // overlay that any AppointmentCard can open.
   const [drawerPatient, setDrawerPatient] = useState<{ id: string; name: string | null } | null>(null)
@@ -138,23 +158,6 @@ export default function TodayPage() {
     } finally { setLoading(false) }
   }
   useEffect(() => { load() /* eslint-disable-line */ }, [])
-
-  async function loadBrief() {
-    setBriefLoading(true)
-    setBriefError(null)
-    try {
-      const r = await fetch('/api/dashboard/ai-brief')
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}))
-        throw new Error(j.error || `HTTP ${r.status}`)
-      }
-      const j = await r.json()
-      setBrief(j.brief || j.summary || '')
-    } catch (err) {
-      setBriefError(err instanceof Error ? err.message : 'Failed to load brief')
-    } finally { setBriefLoading(false) }
-  }
-  useEffect(() => { loadBrief() /* eslint-disable-line */ }, [])
 
   if (loading) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center text-gray-500">Loading your day…</div>
@@ -189,99 +192,76 @@ export default function TodayPage() {
 
       <div className="max-w-5xl mx-auto px-4 py-5 space-y-5">
 
-        {/* AI Morning Brief */}
-        <div className="bg-gradient-to-br from-teal-50 via-white to-teal-50 border border-teal-200 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-full bg-teal-600 flex items-center justify-center text-white">
-                <Sparkles className="w-3.5 h-3.5" />
-              </div>
-              <span className="text-sm font-semibold text-teal-900">Your day in 90 seconds</span>
-            </div>
-            <button
-              onClick={loadBrief}
-              disabled={briefLoading}
-              className="inline-flex items-center gap-1 text-xs text-teal-700 hover:text-teal-900 disabled:opacity-50"
-              aria-label="Regenerate brief"
-            >
-              <RefreshCw className={`w-3 h-3 ${briefLoading ? 'animate-spin' : ''}`} />
-            </button>
-          </div>
-          {briefLoading && <p className="text-sm text-teal-800 italic">Reading your practice…</p>}
-          {briefError && <p className="text-sm text-amber-800 italic">{briefError}</p>}
-          {brief && !briefLoading && (
-            <p className="text-sm text-gray-800 leading-relaxed whitespace-pre-wrap">{brief}</p>
-          )}
-        </div>
-
-        {/* Needs attention */}
-        {data.attention.length > 0 && (
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2 px-1">
-              Needs your attention
-            </h2>
-            <div className="space-y-2">
-              {data.attention.map(item => (
-                <AttentionRow key={item.id} item={item} />
-              ))}
-              {data.attention_overflow && data.attention_overflow > 0 ? (
-                <div className="text-xs text-gray-500 px-1 italic">
-                  and {data.attention_overflow} more — refresh after working through these.
+        {/* W47 T0 — render in the order the user has saved on /dashboard/settings/layout. */}
+        <WidgetRenderer
+          ids={widgetIds}
+          inlineSlots={{
+            // The brief widget is fully replaced by the standalone
+            // AIBrief widget (no shared state with the page).
+            needs_attention: data.attention.length > 0 ? (
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2 px-1">
+                  Needs your attention
+                </h2>
+                <div className="space-y-2">
+                  {data.attention.map(item => (
+                    <AttentionRow key={item.id} item={item} />
+                  ))}
+                  {data.attention_overflow && data.attention_overflow > 0 ? (
+                    <div className="text-xs text-gray-500 px-1 italic">
+                      and {data.attention_overflow} more — refresh after working through these.
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          </div>
-        )}
-
-        {/* Predictions (W45 T6) */}
-        <TodayPredictionsSection />
-
-        {/* Tasks (W46 T3) */}
-        <div className="space-y-2">
-          <ClinicalTasksList
-            title="Tasks"
-            dueWithin="7d"
-            maxItems={6}
-            showCreate={false}
-          />
-        </div>
-
-
-        {/* Today's schedule */}
-        <div>
-          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2 px-1">
-            Today's schedule
-          </h2>
-          {data.appointments.length === 0 ? (
-            <div className="bg-white border border-gray-200 rounded-xl p-6 text-center text-sm text-gray-500">
-              No appointments today. Take a breath.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {data.appointments.map(a => (
-                <AppointmentCard
-                  key={a.id}
-                  appt={a}
-                  onOpenSummary={(id, name) => setDrawerPatient({ id, name })}
+              </div>
+            ) : null,
+            predictions: <TodayPredictionsSection />,
+            tasks_today: (
+              <div className="space-y-2">
+                <ClinicalTasksList
+                  title="Tasks"
+                  dueWithin="7d"
+                  maxItems={6}
+                  showCreate={false}
                 />
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Recent activity */}
-        {data.activity.length > 0 && (
-          <div>
-            <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2 px-1">
-              Recent activity
-            </h2>
-            <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
-              {data.activity.slice(0, 10).map(a => (
-                <ActivityRow key={a.id} item={a} />
-              ))}
-            </div>
-          </div>
-        )}
+              </div>
+            ),
+            todays_schedule: (
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2 px-1">
+                  Today's schedule
+                </h2>
+                {data.appointments.length === 0 ? (
+                  <div className="bg-white border border-gray-200 rounded-xl p-6 text-center text-sm text-gray-500">
+                    No appointments today. Take a breath.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {data.appointments.map(a => (
+                      <AppointmentCard
+                        key={a.id}
+                        appt={a}
+                        onOpenSummary={(id, name) => setDrawerPatient({ id, name })}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ),
+            recent_activity: data.activity.length > 0 ? (
+              <div>
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-2 px-1">
+                  Recent activity
+                </h2>
+                <div className="bg-white border border-gray-200 rounded-xl divide-y divide-gray-100">
+                  {data.activity.slice(0, 10).map(a => (
+                    <ActivityRow key={a.id} item={a} />
+                  ))}
+                </div>
+              </div>
+            ) : null,
+          }}
+        />
 
       </div>
 
