@@ -28,6 +28,7 @@ import {
   Heart, ClipboardList, Briefcase,
 } from "lucide-react"
 
+import PatientHeaderPredictions from '@/components/predictions/PatientHeaderPredictions'
 import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard"
 import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard"
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard"
@@ -282,6 +283,9 @@ export default function PatientDetailPage() {
 
         {/* AI Synthesis (the moat) */}
         <PatientAISummaryCard patientId={patientId} />
+
+        {/* W45 T6 — predictions header strip */}
+        <PatientHeaderPredictions patientId={patientId} />
 
         {/* Quick context strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
