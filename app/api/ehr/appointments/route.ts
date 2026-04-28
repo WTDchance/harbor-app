@@ -22,6 +22,8 @@ import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { findActiveAuth, computeWarning, consumeAuthSession } from '@/lib/aws/ehr/authorizations'
 import { presetToRrule, parseRrule, expand, tzOffsetMinutes } from '@/lib/aws/ehr/recurrence'
+import { computeNoShow, NO_SHOW_MODEL_VERSION } from '@/lib/aws/ehr/predictions/no-show'
+import { upsertPrediction } from '@/lib/aws/ehr/predictions/upsert'
 import { usFederalHolidays, mergeHolidayLists, type HolidayInfo } from '@/lib/aws/ehr/holidays'
 
 export const runtime = 'nodejs'
@@ -314,6 +316,28 @@ export async function POST(req: NextRequest) {
         resourceId: parent.id,
         details: { holiday_count: holidayCount, total_occurrences: 1 + children.length },
       })
+    }
+
+    // W45 T3 — compute no-show prediction for the parent appointment +
+    // every materialized child. Best-effort: failures don't block the
+    // booking. Predictions land in ehr_patient_predictions and surface
+    // on the Today screen + patient detail page (W45 T6).
+    const apptsToScore = [parent, ...children]
+    for (const a of apptsToScore) {
+      try {
+        const ns = await computeNoShow(ctx.practiceId, patientId, a.id)
+        await upsertPrediction({
+          practice_id: ctx.practiceId,
+          patient_id: patientId,
+          appointment_id: a.id,
+          kind: 'no_show',
+          score: ns.score,
+          factors: ns.factors,
+          model_version: NO_SHOW_MODEL_VERSION,
+        })
+      } catch (err) {
+        console.error('[appointments] no-show predict failed:', a.id, (err as Error).message)
+      }
     }
 
     return NextResponse.json(
