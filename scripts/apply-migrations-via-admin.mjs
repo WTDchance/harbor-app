@@ -40,7 +40,10 @@ console.log(`Applying ${files.length} migrations to ${baseUrl} via /api/admin/ru
 console.log(files.map((f) => `  - ${f}`).join('\n'))
 console.log()
 
-const cookieHeader = cookie.includes('=') ? cookie : `harbor_access=${cookie}`
+// Prepend harbor_access= unless the user already included it. JWTs commonly
+// end with '=' base64 padding, so a naive cookie.includes('=') check misfires.
+const trimmed = cookie.trim()
+const cookieHeader = trimmed.startsWith('harbor_access=') ? trimmed : `harbor_access=${trimmed}`
 
 let totalOk = 0, totalSkip = 0, totalFail = 0
 
