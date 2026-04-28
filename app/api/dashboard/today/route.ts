@@ -267,10 +267,12 @@ export async function GET(_req: NextRequest) {
         WHERE s.practice_id = $1
           AND s.acknowledgment_status = 'rejected'
           AND NOT EXISTS (
+            -- Any newer submission on the same invoice means this rejection
+            -- has already been actioned (resubmitted or cancelled).
             SELECT 1 FROM ehr_claim_submissions s2
-             WHERE s2.original_submission_id = s.id
-                OR s2.original_submission_id = COALESCE(s.original_submission_id, s.id)
-                OR s2.invoice_id = s.invoice_id AND s2.submitted_at > s.submitted_at
+             WHERE s2.practice_id  = s.practice_id
+               AND s2.invoice_id   = s.invoice_id
+               AND s2.submitted_at > s.submitted_at
           )`,
       [practiceId],
     ).catch(() => ({ rows: [{ rejected_count: 0 }] as any[] })),

@@ -21,7 +21,6 @@
 // the 277CA assigned a PCCN). Medicare vs non-Medicare is the
 // `stedi_payers.is_medicare` flag.
 
-import type { PoolClient } from 'pg'
 import { pool } from '@/lib/aws/db'
 import { generatePcn, validateStediBodyChars } from '@/lib/ehr/stedi-pcn'
 import { isMedicarePayer } from '@/lib/ehr/stedi-medicare'
