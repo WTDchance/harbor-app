@@ -29,6 +29,7 @@ import {
 } from "lucide-react"
 
 import PatientHeaderPredictions from '@/components/predictions/PatientHeaderPredictions'
+import PatientFlagsStrip from '@/components/flags/PatientFlagsStrip'
 import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard"
 import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard"
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard"
@@ -286,6 +287,9 @@ export default function PatientDetailPage() {
 
         {/* W45 T6 — predictions header strip */}
         <PatientHeaderPredictions patientId={patientId} />
+
+        {/* W47 T4 — patient flag chips */}
+        <PatientFlagsStrip patientId={patientId} />
 
         {/* Quick context strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
