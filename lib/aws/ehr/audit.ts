@@ -343,6 +343,9 @@ export type PortalAuditAction =
   | 'billing.superbill.snapshot_integrity_failure'
   | 'portal.hsa_receipt.list'
   | 'portal.hsa_receipt.download'
+  | 'portal.insurance_card.uploaded'
+  | 'portal.insurance_card.reviewed'
+  | 'portal.insurance_card.confirmed'
 
 /**
  * Audit a portal patient action. Mirrors auditEhrAccess() but takes a
