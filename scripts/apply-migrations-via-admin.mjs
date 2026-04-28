@@ -20,11 +20,17 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-const cookie = process.env.HARBOR_ADMIN_COOKIE
+let cookie = process.env.HARBOR_ADMIN_COOKIE
 if (!cookie) {
-  console.error('Abort: HARBOR_ADMIN_COOKIE env var required.')
-  console.error('  Copy harbor_access cookie from https://lab.harboroffice.ai/admin (DevTools > Application > Cookies).')
-  process.exit(2)
+  // Interactive fallback — prompt the user to paste the cookie.
+  const readline = await import('node:readline')
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false })
+  process.stdout.write('Paste your harbor_access cookie value, then press Enter:\n> ')
+  cookie = await new Promise((resolve) => rl.once('line', (line) => { rl.close(); resolve(line) }))
+  if (!cookie || !cookie.trim()) {
+    console.error('Abort: no cookie provided.')
+    process.exit(2)
+  }
 }
 
 const baseUrl = (process.env.HARBOR_BASE_URL || 'https://lab.harboroffice.ai').replace(/\/$/, '')
