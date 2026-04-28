@@ -41,6 +41,7 @@ export async function GET(_req: NextRequest) {
     activity,
     highRiskPatients,
     stalePreauthRequests,
+    rejectedClaims,
   ] = await Promise.all([
     pool.query(
       `SELECT name FROM practices WHERE id = $1 LIMIT 1`,
@@ -255,6 +256,25 @@ export async function GET(_req: NextRequest) {
       [practiceId],
     ).catch(() => ({ rows: [{ stale_count: 0 }] as any[] })),
 
+    // Wave 41 / T5 patch — claims rejected by 277CA acknowledgment that
+    // haven't been resubmitted yet. Linked to the resubmission flow on
+    // the invoice detail page; if non-zero, the today screen surfaces a
+    // Needs-Attention tile so the therapist sees rejections before
+    // payer aging clocks them.
+    pool.query(
+      `SELECT COUNT(*)::int AS rejected_count
+         FROM ehr_claim_submissions s
+        WHERE s.practice_id = $1
+          AND s.acknowledgment_status = 'rejected'
+          AND NOT EXISTS (
+            SELECT 1 FROM ehr_claim_submissions s2
+             WHERE s2.original_submission_id = s.id
+                OR s2.original_submission_id = COALESCE(s.original_submission_id, s.id)
+                OR s2.invoice_id = s.invoice_id AND s2.submitted_at > s.submitted_at
+          )`,
+      [practiceId],
+    ).catch(() => ({ rows: [{ rejected_count: 0 }] as any[] })),
+
   ])
 
   const practiceName = practiceRow.rows[0]?.name || 'Your practice'
@@ -389,6 +409,23 @@ export async function GET(_req: NextRequest) {
       label: `${stalePre} pre-auth request${stalePre === 1 ? '' : 's'} awaiting response`,
       why: `${stalePre === 1 ? 'A request has been' : 'Requests have been'} pending > 14 days. Chase the payer or close the loop.`,
       action_url: `/dashboard/preauth-requests`,
+      severity: 'warn',
+    })
+  }
+
+  // 7) Wave 41 T5 patch — claims rejected by 277CA awaiting resubmission.
+  const rejected = Number(rejectedClaims.rows[0]?.rejected_count ?? 0)
+  if (rejected > 0) {
+    attentionAll.push({
+      id: `claims-rejected-${rejected}`,
+      kind: 'claim_rejected_resubmit',
+      patient_id: null,
+      patient_name: null,
+      label: `${rejected} claim${rejected === 1 ? '' : 's'} rejected — review and resubmit`,
+      why: rejected === 1
+        ? 'A claim was rejected by the payer. Open the invoice to fix and resubmit.'
+        : 'Claims were rejected by the payer. Open each invoice to fix and resubmit.',
+      action_url: `/dashboard/billing/invoices?submission_status=rejected`,
       severity: 'warn',
     })
   }
