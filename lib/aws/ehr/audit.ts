@@ -232,6 +232,8 @@ export type EhrAuditAction =
   | 'telehealth.recording.deleted'
   | 'telehealth.recording.consent_missing'
   | 'productivity_report.viewed'
+  | 'billing_reconciliation.viewed'
+  | 'billing_reconciliation.exported'
   | 'patient_document.uploaded'
   | 'patient_document.viewed'
   | 'patient_document.downloaded'
