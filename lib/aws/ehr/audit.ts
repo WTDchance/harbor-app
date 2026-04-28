@@ -244,6 +244,8 @@ export type EhrAuditAction =
   | 'reengagement.patient_flagged'
   | 'reengagement.outreach_sent'
   | 'reengagement.outreach_failed'
+  | 'hsa_receipt.generated'
+  | 'hsa_receipt.downloaded'
   // Wave 43 — insurance pre-authorization REQUEST workflow. Counterpart to
   // the W40 insurance_authorization.* events (which fire once the payer has
   // already said yes). preauth.* covers the request side: drafting the
@@ -333,6 +335,8 @@ export type PortalAuditAction =
   | 'billing.superbill.snapshot_created'
   | 'billing.superbill.snapshot_replayed'
   | 'billing.superbill.snapshot_integrity_failure'
+  | 'portal.hsa_receipt.list'
+  | 'portal.hsa_receipt.download'
 
 /**
  * Audit a portal patient action. Mirrors auditEhrAccess() but takes a
