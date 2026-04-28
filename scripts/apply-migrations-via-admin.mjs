@@ -84,7 +84,17 @@ const res = await fetch(`${baseUrl}/api/admin/run-migration`, {
 })
 
 if (res.status === 401 || res.status === 403) {
-  console.error(`FAIL: ${res.status} — cookie expired or not admin. Re-copy harbor_access from DevTools and rerun this script.`)
+  let bodyText = ''
+  try { bodyText = await res.text() } catch {}
+  console.error(`FAIL: ${res.status} — auth rejected.`)
+  console.error(`Server response: ${bodyText.slice(0, 500)}`)
+  console.error('')
+  console.error('Diagnosis hints:')
+  console.error('  • If response says "unauthorized": cookie is missing/expired/malformed. Re-copy harbor_access.')
+  console.error('  • If response says "forbidden" or "admin required": your account is not in the ADMIN_EMAIL allowlist on staging.')
+  console.error('  • If response says nothing useful, the cookie may have been truncated when pasted.')
+  console.error('')
+  console.error(`Cookie length sent: ${cookieHeader.length} chars (a healthy harbor_access cookie value alone is typically 700-1100 chars).`)
   process.exit(2)
 }
 
