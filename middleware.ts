@@ -52,6 +52,11 @@ const PUBLIC_API_PREFIXES = [
   '/api/stedi/',                // Wave 41 — Stedi 835 ERA + 837 claim webhooks
   '/api/chime/',                // Wave 43 — Chime Media Pipelines lifecycle webhook
   '/api/schedule/',             // Wave 42 — public new-patient inquiry                // Wave 41 — Stedi 835 ERA + 837 claim webhooks
+  '/api/reception/',            // Wave 47 — public Reception REST API.
+                                // /api/reception/v1/* is API-key gated at the
+                                // route level via withReceptionAuth.
+                                // /api/reception/signup is a public unauth
+                                // POST that creates a reception_only practice.
                                 // (HMAC verified at route level)               // deprecation stubs — keep public so
                                 // stale Twilio dashboards see the
                                 // 'this number has moved' TwiML.
