@@ -89,5 +89,50 @@ export async function requireEhrApiSession(): Promise<ApiAuthContext | NextRespo
   if (!ctx.practice || ctx.practice.ehr_enabled !== true) {
     return NextResponse.json({ error: 'ehr_not_enabled' }, { status: 403 })
   }
+  // W48 T6 — reception_only practices must not access EHR endpoints
+  // even if ehr_enabled is set somewhere upstream. ehr_full / ehr_only
+  // / both all pass; only reception_only is rejected.
+  const tier = (ctx.practice as any).product_tier ?? 'ehr_full'
+  if (tier === 'reception_only') {
+    return NextResponse.json(
+      {
+        error: 'product_tier_mismatch',
+        message: 'Your practice is on the Reception Only tier. Upgrade to access EHR features.',
+        current_tier: tier,
+      },
+      { status: 403 },
+    )
+  }
+  return ctx
+}
+
+/**
+ * W48 T6 — reusable tier guard. Pass an allowlist of product_tier
+ * values; returns 403 product_tier_mismatch if the current practice's
+ * tier isn't in it. Use for endpoints that only make sense for a
+ * specific tier (e.g. Reception-only billing dashboards, EHR-specific
+ * features that aren't covered by requireEhrApiSession).
+ *
+ * Usage:
+ *   const ctx = await requireProductTier(['reception_only', 'both'])
+ *   if (ctx instanceof NextResponse) return ctx
+ */
+export async function requireProductTier(
+  allowedTiers: Array<'ehr_full' | 'reception_only' | 'ehr_only' | 'both'>,
+): Promise<ApiAuthContext | NextResponse> {
+  const ctx = await requireApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  const tier = (ctx.practice as any)?.product_tier ?? 'ehr_full'
+  if (!allowedTiers.includes(tier as any)) {
+    return NextResponse.json(
+      {
+        error: 'product_tier_mismatch',
+        message: `This endpoint is only available on the ${allowedTiers.join(' / ')} tier(s). Your practice is on ${tier}.`,
+        current_tier: tier,
+        allowed_tiers: allowedTiers,
+      },
+      { status: 403 },
+    )
+  }
   return ctx
 }
