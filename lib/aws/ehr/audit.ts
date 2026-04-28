@@ -275,6 +275,12 @@ export type EhrAuditAction =
   | 'chime.recording_webhook.received'
   | 'recurrence.dst_adjusted'
   | 'recurrence.holiday_exception_flagged'
+  // Wave 43 — invoice-detail UI for the Stedi claim resubmit/cancel actions
+  // landed in W41 T5. Tracks every server-render of the EHR-side invoice
+  // list and detail pages (PHI access — patient name, payer, charges,
+  // submissions timeline are all visible).
+  | 'invoice.detail_viewed'
+  | 'invoice.list_viewed'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
