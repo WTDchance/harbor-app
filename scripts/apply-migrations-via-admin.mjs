@@ -4,17 +4,24 @@
  * endpoint POST /api/admin/run-migration. No DATABASE_URL, no AWS creds —
  * just an admin Cognito session cookie.
  *
+ * v2 (Wave 44 fix): all statements from all migration files are bundled
+ * into a SINGLE POST request, so the cookie is only authenticated ONCE.
+ * Eliminates the mid-run cookie-expiry problem of v1 which made one
+ * request per migration file.
+ *
  * Usage:
  *   1. Sign in to https://lab.harboroffice.ai/admin in your browser as an admin user.
  *   2. Open DevTools (F12) → Application → Cookies → https://lab.harboroffice.ai
- *   3. Copy the `harbor_access` cookie value (long JWT-looking string).
+ *   3. Copy the `harbor_access` cookie value.
  *   4. Run:
- *        HARBOR_ADMIN_COOKIE="<paste the value here>" node scripts/apply-migrations-via-admin.mjs
+ *        HARBOR_ADMIN_COOKIE="<paste>" node scripts/apply-migrations-via-admin.mjs
+ *      ...or just run the script and paste at the prompt.
  *
- *   Optional: HARBOR_BASE_URL=https://other.host node scripts/...  (defaults to staging)
+ *   Easiest: run the wrapper at scripts/run-migrations.ps1 which prompts
+ *   for the cookie and handles the env var for you.
  *
- * Idempotent — the admin endpoint accepts each statement individually and
- * tolerates "already exists" errors per-statement (logged but not fatal).
+ * Idempotent — already-applied statements report "skipped" rather than
+ * failing the run, so it is safe to re-execute.
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
@@ -22,7 +29,6 @@ import { join } from 'node:path'
 
 let cookie = process.env.HARBOR_ADMIN_COOKIE
 if (!cookie) {
-  // Interactive fallback — prompt the user to paste the cookie.
   const readline = await import('node:readline')
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false })
   process.stdout.write('Paste your harbor_access cookie value, then press Enter:\n> ')
@@ -39,66 +45,73 @@ if (/harborreceptionist\.com/i.test(baseUrl)) {
   process.exit(2)
 }
 
-const dir = 'supabase/migrations'
-const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
-
-console.log(`Applying ${files.length} migrations to ${baseUrl} via /api/admin/run-migration:`)
-console.log(files.map((f) => `  - ${f}`).join('\n'))
-console.log()
-
-// Prepend harbor_access= unless the user already included it. JWTs commonly
-// end with '=' base64 padding, so a naive cookie.includes('=') check misfires.
 const trimmed = cookie.trim()
 const cookieHeader = trimmed.startsWith('harbor_access=') ? trimmed : `harbor_access=${trimmed}`
 
-let totalOk = 0, totalSkip = 0, totalFail = 0
+const dir = 'supabase/migrations'
+const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
+
+console.log(`Bundling all statements from ${files.length} migration files into one request:`)
+console.log(files.map((f) => `  - ${f}`).join('\n'))
+console.log()
+
+// Collect all statements from all files, preserving order. Track file
+// boundaries so we can attribute results back to each file in the report.
+const allStatements = []
+const fileBoundaries = [] // { file, start, count }
 
 for (const file of files) {
   const sql = readFileSync(join(dir, file), 'utf8')
     .split('\n')
     .filter((l) => !l.trim().startsWith('--'))
     .join('\n')
+  const stmts = sql.split(/;\s*\n/).map((s) => s.trim()).filter((s) => s.length > 0)
+  fileBoundaries.push({ file, start: allStatements.length, count: stmts.length })
+  allStatements.push(...stmts)
+}
 
-  const statements = sql
-    .split(/;\s*\n/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
+console.log(`Total statements: ${allStatements.length}. Posting to ${baseUrl}/api/admin/run-migration ...`)
+console.log('(Cookie is authenticated once at the start; mid-run expiry is no longer possible.)')
+console.log()
 
-  if (statements.length === 0) {
-    console.log(`  SKIP ${file}: no statements`)
-    continue
-  }
+const res = await fetch(`${baseUrl}/api/admin/run-migration`, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/json',
+    cookie: cookieHeader,
+  },
+  body: JSON.stringify({ statements: allStatements }),
+})
 
-  const res = await fetch(`${baseUrl}/api/admin/run-migration`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      cookie: cookieHeader,
-    },
-    body: JSON.stringify({ statements }),
-  })
+if (res.status === 401 || res.status === 403) {
+  console.error(`FAIL: ${res.status} — cookie expired or not admin. Re-copy harbor_access from DevTools and rerun this script.`)
+  process.exit(2)
+}
 
-  if (res.status === 401 || res.status === 403) {
-    console.error(`  FAIL ${file}: ${res.status} — cookie expired or not admin. Re-copy harbor_access and retry.`)
-    process.exit(2)
-  }
+let body
+try {
+  body = await res.json()
+} catch {
+  console.error(`FAIL: ${res.status} — non-JSON response from server`)
+  process.exit(1)
+}
 
-  let body
-  try {
-    body = await res.json()
-  } catch {
-    console.error(`  FAIL ${file}: ${res.status} — non-JSON response`)
-    totalFail += statements.length
-    continue
-  }
+const results = body.results || []
+if (results.length !== allStatements.length) {
+  console.warn(`Note: server returned ${results.length} results for ${allStatements.length} statements. Reporting may be partial.`)
+}
 
+// Tally per-file
+let totalOk = 0, totalSkip = 0, totalFail = 0
+for (const { file, start, count } of fileBoundaries) {
   let ok = 0, skip = 0, fail = 0
-  for (const r of body.results || []) {
+  for (let i = start; i < start + count && i < results.length; i++) {
+    const r = results[i]
     if (r.ok) ok++
     else {
-      const msg = String(r.error || '').toLowerCase()
-      if (msg.includes('already exists') || msg.includes('duplicate')) skip++
-      else { fail++; console.log(`    FAIL: ${(r.error || '').split('\n')[0]}`) }
+      const m = String(r.error || '').toLowerCase()
+      if (m.includes('already exists') || m.includes('duplicate')) skip++
+      else { fail++; console.log(`    FAIL [${file}]: ${(r.error || '').split('\n')[0]}`) }
     }
   }
   totalOk += ok
@@ -110,7 +123,7 @@ for (const file of files) {
 
 console.log(`\n=== Summary: ${totalOk} applied, ${totalSkip} skipped, ${totalFail} failed ===`)
 if (totalFail > 0) {
-  console.log('Re-running is safe — already-applied statements skip cleanly.')
+  console.log('Re-running is safe — already-applied statements will skip cleanly.')
   process.exit(1)
 }
 process.exit(0)
