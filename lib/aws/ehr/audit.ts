@@ -237,6 +237,8 @@ export type EhrAuditAction =
   | 'clinical_task.reassigned'
   | 'user_layout.updated'
   | 'user_layout.reset_to_default'
+  | 'therapist_scorecards.viewed'
+  | 'therapist_scorecards.exported'
   | 'patient_timeline.viewed'
   | 'patient_timeline.filtered'
   | 'patient.since_last_session.summary_generated'
