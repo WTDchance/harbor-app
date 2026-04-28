@@ -91,7 +91,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   await auditSystemEvent({
     action: 'vapi.call_diag_fix.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: { ua: req.headers.get('user-agent') ?? null },
   }).catch(() => {})
 

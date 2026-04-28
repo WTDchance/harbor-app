@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
   if (!verifyHmac(raw, sig)) {
     await auditSystemEvent({
       action: 'era.received',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'signature_invalid_or_secret_missing' },
     })
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
   if (!practiceId) {
     await auditSystemEvent({
       action: 'era.received',
-      severity: 'error',
+      severity: 'warning',
       details: { outcome: 'no_practice_id_on_webhook' },
     })
     return NextResponse.json({ error: 'practice_id required' }, { status: 400 })

@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   if (!verifyHmac(raw, sig)) {
     await auditSystemEvent({
       action: 'chime.recording_webhook.received',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'signature_invalid_or_secret_missing' },
     })
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
   if (!pipelineId) {
     await auditSystemEvent({
       action: 'chime.recording_webhook.received',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'no_pipeline_id_in_payload' },
     })
     return NextResponse.json({ error: 'no pipeline_id' }, { status: 400 })
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
   if (cur.rows.length === 0) {
     await auditSystemEvent({
       action: 'chime.recording_webhook.received',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'no_matching_recording', pipeline_id: pipelineId, state: stateRaw },
     })
     return NextResponse.json({ ok: true, matched: false })

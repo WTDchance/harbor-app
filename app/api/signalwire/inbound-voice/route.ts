@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
   if (!sigOk && process.env.SIGNALWIRE_VALIDATE_INBOUND !== 'false') {
     await auditSystemEvent({
       action: 'signalwire.inbound_voice.bad_signature',
-      severity: 'warn',
+      severity: 'warning',
       details: { from: formParams.From, to: formParams.To, callSid: formParams.CallSid },
     })
     return new NextResponse('forbidden', { status: 403 })
@@ -113,7 +113,7 @@ export async function POST(req: NextRequest) {
   if (!practice) {
     await auditSystemEvent({
       action: 'signalwire.inbound_voice.unknown_number',
-      severity: 'warn',
+      severity: 'warning',
       details: { from: fromNumber, to: toNumber, callSid },
     })
     return rejectTwiML('unknown_practice')

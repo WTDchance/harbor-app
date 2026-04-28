@@ -16,7 +16,7 @@ import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 export async function GET(req: NextRequest) {
   await auditSystemEvent({
     action: 'twilio.available_numbers.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: {
       method: 'GET',
       ua: req.headers.get('user-agent') ?? null,

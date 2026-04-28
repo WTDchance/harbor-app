@@ -409,7 +409,7 @@ export async function auditSystemEvent(params: {
   resourceType?: string
   resourceId?: string | null
   practiceId?: string | null
-  severity?: 'info' | 'warn' | 'warning' | 'error' | 'critical'
+  severity?: 'info' | 'warning' | 'critical'
 }): Promise<void> {
   try {
     await pool.query(

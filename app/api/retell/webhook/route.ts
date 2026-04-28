@@ -307,7 +307,7 @@ export async function POST(req: NextRequest) {
   if (!sigOk) {
     await auditSystemEvent({
       action: 'retell.webhook.unverified_signature',
-      severity: 'warn',
+      severity: 'warning',
       details: { event: body?.event, call_id: body?.call?.call_id ?? null },
     })
     // Hard-reject on bad/missing signature. Anyone can otherwise spoof
@@ -347,7 +347,7 @@ export async function POST(req: NextRequest) {
   if (expectedAgentId && agentId && agentId !== expectedAgentId) {
     await auditSystemEvent({
       action: 'retell.webhook.unknown_agent',
-      severity: 'warn',
+      severity: 'warning',
       details: { event, agent_id: agentId, expected_agent_id: expectedAgentId },
     })
     return NextResponse.json({ ok: true, ignored: 'unknown_agent' })
@@ -419,7 +419,7 @@ export async function POST(req: NextRequest) {
       }
       await auditSystemEvent({
         action: event === 'call_ended' ? 'retell.call.ended' : 'retell.call.analyzed',
-        severity: customAnalysis?.crisis_signals ? 'warn' : 'info',
+        severity: customAnalysis?.crisis_signals ? 'warning' : 'info',
         practiceId,
         details: {
           call_id: callId,

@@ -24,7 +24,7 @@ export async function GET(req: NextRequest) {
         error_count: result.errors.length,
         duration_ms: result.durationMs,
       },
-      severity: result.errors.length ? 'warn' : 'info',
+      severity: result.errors.length ? 'warning' : 'info',
     }).catch(() => {})
     return NextResponse.json(result)
   } catch (err) {

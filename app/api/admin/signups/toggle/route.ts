@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
   auditSystemEvent({
     action: 'admin.signups_enabled.toggle',
     details: { signups_enabled: enabled, by: ctx.session.email },
-    severity: 'warn',
+    severity: 'warning',
   }).catch(() => {})
 
   console.log(`[admin/signups/toggle] ${ctx.session.email} set signups_enabled=${enabled}`)

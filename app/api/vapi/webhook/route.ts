@@ -37,7 +37,7 @@ async function handle(req: NextRequest, method: string) {
 
   await auditSystemEvent({
     action: 'vapi.webhook.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: {
       method,
       message_type: messageType,

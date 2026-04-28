@@ -78,7 +78,7 @@ export async function POST(req: NextRequest) {
   if (!sigOk) {
     await auditSystemEvent({
       action: 'retell.inbound_webhook.unverified_signature',
-      severity: 'warn',
+      severity: 'warning',
       details: { event: body?.event ?? null },
     })
     // Continue — log + serve. Tighten to 401 once webhook badge confirmed.

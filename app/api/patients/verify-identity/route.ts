@@ -131,7 +131,7 @@ export async function POST(req: NextRequest) {
 
     await auditSystemEvent({
       action: 'patients.verify_identity',
-      severity: 'warn',
+      severity: 'warning',
       practiceId: practice_id,
       resourceType: 'patient',
       resourceId: patient.id,

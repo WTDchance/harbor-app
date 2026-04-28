@@ -197,7 +197,7 @@ async function chargeFee({ appointmentId, source, kind }: FeeChargeArgs): Promis
       practiceId: row.practice_id,
       resourceType: 'appointment',
       resourceId: appointmentId,
-      severity: 'warn',
+      severity: 'warning',
       details: { ...baseDetails, billable: true, reason: 'stripe_not_configured' },
     })
     return { status: 'billable', amountCents: feeCents, reason: 'stripe_not_configured' }
@@ -281,7 +281,7 @@ async function chargeFee({ appointmentId, source, kind }: FeeChargeArgs): Promis
       practiceId: row.practice_id,
       resourceType: 'appointment',
       resourceId: appointmentId,
-      severity: 'warn',
+      severity: 'warning',
       details: { ...baseDetails, billable: true, reason: 'stripe_error', error: msg },
     })
     return { status: 'failed', amountCents: feeCents, reason: msg }

@@ -13,7 +13,7 @@ const TWIML_HEADERS = { 'Content-Type': 'application/xml' }
 export async function POST(req: NextRequest) {
   await auditSystemEvent({
     action: 'twilio.sms_webhook.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: { ua: req.headers.get('user-agent') ?? null },
   })
   return new NextResponse(`<?xml version="1.0" encoding="UTF-8"?><Response/>`, {

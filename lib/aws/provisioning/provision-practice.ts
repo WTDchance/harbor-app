@@ -189,7 +189,7 @@ export async function provisionPractice(
     )
     await auditSystemEvent({
       action: 'provision.failed',
-      severity: 'error',
+      severity: 'critical',
       practiceId,
       details: {
         error: (err as Error).message,

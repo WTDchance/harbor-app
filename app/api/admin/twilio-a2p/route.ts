@@ -19,7 +19,7 @@ import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 async function handle(req: NextRequest, method: string) {
   await auditSystemEvent({
     action: 'twilio.a2p.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: {
       method,
       ua: req.headers.get('user-agent') ?? null,

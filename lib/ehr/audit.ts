@@ -27,7 +27,7 @@ export async function auditEhrAccess(params: {
   action: EhrAuditAction
   resourceId?: string | null
   details?: Record<string, unknown>
-  severity?: 'info' | 'warn' | 'error'
+  severity?: 'info' | 'warning' | 'critical'
 }): Promise<void> {
   try {
     await supabaseAdmin.from('audit_logs').insert({

@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   if (!process.env.CRON_SECRET || auth !== expected) {
     await auditSystemEvent({
       action: 'admin.bootstrap_password',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'unauthorized', ip },
     })
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
   if (email !== ADMIN_EMAIL) {
     await auditSystemEvent({
       action: 'admin.bootstrap_password',
-      severity: 'warn',
+      severity: 'warning',
       details: {
         // Wave 41 / T0 — attempted_email renamed + hashed. The runtime
         // sanitizer blocks `attempted_email` as PHI; this email is
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     await auditSystemEvent({
       action: 'admin.bootstrap_password',
-      severity: 'error',
+      severity: 'warning',
       details: { outcome: 'admin_get_user_failed', error: (err as Error).message, ip, payload_hash: payloadHash },
     })
     return NextResponse.json({ error: 'admin user not found' }, { status: 404 })
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     await auditSystemEvent({
       action: 'admin.bootstrap_password',
-      severity: 'error',
+      severity: 'warning',
       details: {
         outcome: 'admin_set_password_failed',
         error: (err as Error).message,

@@ -159,7 +159,7 @@ export async function POST(req: NextRequest) {
   if (!verifyHmac(raw, sig)) {
     await auditSystemEvent({
       action: 'claim.acknowledgment_received',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'signature_invalid_or_secret_missing' },
     })
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 })
@@ -176,7 +176,7 @@ export async function POST(req: NextRequest) {
   if (acks.length === 0) {
     await auditSystemEvent({
       action: 'claim.acknowledgment_received',
-      severity: 'warn',
+      severity: 'warning',
       details: { outcome: 'no_claims_in_277ca', stedi_event_id: payload?.eventId ?? null },
     })
     return NextResponse.json({ ok: true, matched: 0 })
@@ -202,7 +202,7 @@ export async function POST(req: NextRequest) {
     if (sub.rows.length === 0) {
       await auditSystemEvent({
         action: 'claim.acknowledgment_received',
-        severity: 'warn',
+        severity: 'warning',
         details: { outcome: 'pcn_no_match', pcn: ack.pcn },
       })
       continue
@@ -247,7 +247,7 @@ export async function POST(req: NextRequest) {
 
     await auditSystemEvent({
       action: 'claim.acknowledgment_received',
-      severity: ack.status === 'rejected' ? 'warn' : 'info',
+      severity: ack.status === 'rejected' ? 'warning' : 'info',
       practiceId: row.practice_id,
       resourceType: 'ehr_claim_submission',
       resourceId: row.id,

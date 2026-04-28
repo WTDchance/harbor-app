@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   // Audit even unauthenticated probes — useful for detecting stale runbooks.
   await auditSystemEvent({
     action: 'vapi.attach.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: {
       authorized: !!process.env.CRON_SECRET && auth === expected,
       ua: req.headers.get('user-agent') ?? null,

@@ -24,7 +24,7 @@ const DEPRECATED_TWIML = `<?xml version="1.0" encoding="UTF-8"?>
 async function handle(req: NextRequest, method: string) {
   await auditSystemEvent({
     action: 'twilio.forward.deprecated_hit',
-    severity: 'warn',
+    severity: 'warning',
     details: { method, ua: req.headers.get('user-agent') ?? null },
   })
   return new NextResponse(DEPRECATED_TWIML, { status: 200, headers: TWIML_HEADERS })

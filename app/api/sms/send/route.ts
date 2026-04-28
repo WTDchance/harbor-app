@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   const result = await sendSMS({ to, body: messageBody, practiceId })
   await auditSystemEvent({
     action: result.ok ? 'signalwire.sms.sent' : 'signalwire.sms.failed',
-    severity: result.ok ? 'info' : 'warn',
+    severity: result.ok ? 'info' : 'warning',
     practiceId,
     details: result.ok
       ? { to, length: messageBody.length, sid: result.sid }
