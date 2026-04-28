@@ -21,7 +21,8 @@ import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { findActiveAuth, computeWarning, consumeAuthSession } from '@/lib/aws/ehr/authorizations'
-import { presetToRrule, parseRrule, expand } from '@/lib/aws/ehr/recurrence'
+import { presetToRrule, parseRrule, expand, tzOffsetMinutes } from '@/lib/aws/ehr/recurrence'
+import { usFederalHolidays, mergeHolidayLists, type HolidayInfo } from '@/lib/aws/ehr/holidays'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -101,13 +102,66 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'patient_not_found' }, { status: 404 })
     }
 
+    // W43 T1 — practice timezone + holiday list. Used to preserve the
+    // patient's local clock time across DST and to flag occurrences that
+    // land on a US federal or practice-custom holiday. Default to UTC if
+    // somehow null (older rows pre-migration) so we never crash.
+    const tzRes = await client.query(
+      `SELECT COALESCE(timezone, 'UTC') AS tz
+         FROM practices WHERE id = $1 LIMIT 1`,
+      [ctx.practiceId],
+    )
+    const practiceTz: string = tzRes.rows[0]?.tz || 'UTC'
+
+    // Build the holiday set once (federal for the next 2 years +
+    // practice-custom rows). The expander cap is 52, so two years of
+    // federal holidays plus custom is more than enough headroom.
+    const horizonYear = startDate.getUTCFullYear()
+    const customRes = await client.query(
+      `SELECT holiday_date::text AS date, name FROM ehr_practice_holidays
+        WHERE practice_id = $1
+          AND holiday_date >= ($2::date - INTERVAL '7 days')
+          AND holiday_date <  ($2::date + INTERVAL '2 years')`,
+      [ctx.practiceId, startDate.toISOString().slice(0, 10)],
+    )
+    const customHolidays: HolidayInfo[] = customRes.rows.map((r: any) => ({
+      date: String(r.date).slice(0, 10),
+      name: String(r.name || 'Practice holiday'),
+    }))
+    const holidaySet = new Set<string>(
+      mergeHolidayLists(
+        [...usFederalHolidays(horizonYear), ...usFederalHolidays(horizonYear + 1)],
+        customHolidays,
+      ).map((h) => h.date),
+    )
+
+    /** Convert a UTC date to the YYYY-MM-DD string in the practice's tz. */
+    function localDateInPracticeTz(d: Date): string {
+      try {
+        const fmt = new Intl.DateTimeFormat('en-CA', {
+          timeZone: practiceTz,
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        })
+        // en-CA with 2-digit parts → "YYYY-MM-DD"
+        return fmt.format(d)
+      } catch {
+        return d.toISOString().slice(0, 10)
+      }
+    }
+
+    const parentLocalDate = localDateInPracticeTz(startDate)
+    const parentHoliday = holidaySet.has(parentLocalDate)
+
     // Insert parent
     const parentRes = await client.query(
       `INSERT INTO appointments
          (practice_id, patient_id, patient_name, patient_phone,
           scheduled_for, duration_minutes, appointment_type, status,
-          recurrence_rule, notes, cpt_code, modifiers)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9, $10, $11)
+          recurrence_rule, notes, cpt_code, modifiers,
+          holiday_exception, dst_adjusted)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9, $10, $11, $12, FALSE)
        RETURNING *`,
       [
         ctx.practiceId,
@@ -121,6 +175,7 @@ export async function POST(req: NextRequest) {
         notes,
         cptCode,
         modifiers,
+        parentHoliday,
       ],
     )
     const parent = parentRes.rows[0]
@@ -130,14 +185,19 @@ export async function POST(req: NextRequest) {
       const parsed = parseRrule(rrule)
       if (parsed) {
         // expand returns the parent as occurrence[0]; skip it.
-        const occ = expand(startDate, parsed, occurrencesCap).slice(1)
+        // Pass practiceTz so the expander preserves local clock time
+        // across DST transitions and flags shifted occurrences.
+        const occ = expand(startDate, parsed, occurrencesCap, practiceTz).slice(1)
         for (const o of occ) {
+          const localDate = localDateInPracticeTz(new Date(o.startUtcIso))
+          const isHoliday = holidaySet.has(localDate)
           const child = await client.query(
             `INSERT INTO appointments
                (practice_id, patient_id, patient_name, patient_phone,
                 scheduled_for, duration_minutes, appointment_type, status,
-                recurrence_parent_id, notes, cpt_code, modifiers)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9, $10, $11)
+                recurrence_parent_id, notes, cpt_code, modifiers,
+                holiday_exception, dst_adjusted)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', $8, $9, $10, $11, $12, $13)
              RETURNING *`,
             [
               ctx.practiceId,
@@ -151,6 +211,8 @@ export async function POST(req: NextRequest) {
               notes,
               cptCode,
               modifiers,
+              isHoliday,
+              !!o.dstAdjusted,
             ],
           )
           children.push(child.rows[0])
@@ -225,6 +287,34 @@ export async function POST(req: NextRequest) {
         children_created: children.length,
       },
     })
+
+    // W43 T1 — best-effort audit signals when recurrence expansion
+    // tripped DST or landed on a holiday. Emit count-only details so we
+    // don't leak appointment dates/PHI into audit_logs (W41 T0 cleanup).
+    const dstCount =
+      (parent.dst_adjusted ? 1 : 0) +
+      children.reduce((n, c: any) => n + (c.dst_adjusted ? 1 : 0), 0)
+    const holidayCount =
+      (parent.holiday_exception ? 1 : 0) +
+      children.reduce((n, c: any) => n + (c.holiday_exception ? 1 : 0), 0)
+    if (dstCount > 0) {
+      await auditEhrAccess({
+        ctx,
+        action: 'recurrence.dst_adjusted',
+        resourceType: 'appointment',
+        resourceId: parent.id,
+        details: { adjusted_count: dstCount, total_occurrences: 1 + children.length },
+      })
+    }
+    if (holidayCount > 0) {
+      await auditEhrAccess({
+        ctx,
+        action: 'recurrence.holiday_exception_flagged',
+        resourceType: 'appointment',
+        resourceId: parent.id,
+        details: { holiday_count: holidayCount, total_occurrences: 1 + children.length },
+      })
+    }
 
     return NextResponse.json(
       {

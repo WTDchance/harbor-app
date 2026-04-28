@@ -258,6 +258,8 @@ export type EhrAuditAction =
   | 'public.scheduling.inquiry_page_viewed'
   | 'telehealth.recording.playback_url_generated'
   | 'chime.recording_webhook.received'
+  | 'recurrence.dst_adjusted'
+  | 'recurrence.holiday_exception_flagged'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
