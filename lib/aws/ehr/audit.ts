@@ -235,6 +235,8 @@ export type EhrAuditAction =
   | 'clinical_task.updated'
   | 'clinical_task.completed'
   | 'clinical_task.reassigned'
+  | 'user_layout.updated'
+  | 'user_layout.reset_to_default'
   | 'signals.ingested'
   | 'predictions.computed'
   | 'prediction.viewed'
