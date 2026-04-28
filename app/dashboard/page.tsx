@@ -36,6 +36,7 @@ import {
 } from "lucide-react"
 import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
 import TodayPredictionsSection from "@/components/predictions/TodayPredictionsSection"
+import ClinicalTasksList from "@/components/tasks/ClinicalTasksList"
 
 type Appointment = {
   id: string
@@ -234,6 +235,17 @@ export default function TodayPage() {
 
         {/* Predictions (W45 T6) */}
         <TodayPredictionsSection />
+
+        {/* Tasks (W46 T3) */}
+        <div className="space-y-2">
+          <ClinicalTasksList
+            title="Tasks"
+            dueWithin="7d"
+            maxItems={6}
+            showCreate={false}
+          />
+        </div>
+
 
         {/* Today's schedule */}
         <div>
