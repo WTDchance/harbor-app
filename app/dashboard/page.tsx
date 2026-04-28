@@ -35,6 +35,7 @@ import {
   ShieldAlert,
 } from "lucide-react"
 import { PatientSummaryDrawer } from "@/components/ehr/PatientSummaryDrawer"
+import TodayPredictionsSection from "@/components/predictions/TodayPredictionsSection"
 
 type Appointment = {
   id: string
@@ -230,6 +231,9 @@ export default function TodayPage() {
             </div>
           </div>
         )}
+
+        {/* Predictions (W45 T6) */}
+        <TodayPredictionsSection />
 
         {/* Today's schedule */}
         <div>
