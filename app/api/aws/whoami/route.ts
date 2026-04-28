@@ -25,6 +25,7 @@ export async function GET() {
           name: ctx.practice.name,
           ehrEnabled: ctx.practice.ehr_enabled === true,
           voiceProvider: ctx.practice.voice_provider,
+          productTier: (ctx.practice as any).product_tier ?? 'ehr_full',
         }
       : null,
   })
