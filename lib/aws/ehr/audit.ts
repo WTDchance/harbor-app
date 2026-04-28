@@ -254,6 +254,10 @@ export type EhrAuditAction =
   | 'claim.acknowledgment_received'
   | 'claim.resubmitted'
   | 'claim.cancelled'
+  | 'portal.scheduling.page_viewed'
+  | 'public.scheduling.inquiry_page_viewed'
+  | 'telehealth.recording.playback_url_generated'
+  | 'chime.recording_webhook.received'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext

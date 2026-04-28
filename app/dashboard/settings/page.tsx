@@ -902,6 +902,21 @@ if (!session) return
       {activeTab === 'practice' && (
         <>
 
+      {/* AI Receptionist link (Wave 42 T2 sub-page) */}
+      <a
+        href="/dashboard/settings/ai-receptionist"
+        className="bg-white rounded-xl border border-gray-200 mb-6 p-5 flex items-center justify-between hover:border-teal-300 hover:bg-gray-50 transition-colors"
+        style={{ minHeight: 64 }}
+      >
+        <div>
+          <h2 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">AI Receptionist</h2>
+          <p className="text-xs text-gray-500 mt-1">Customize {practice?.ai_name || 'Ellie'}'s prompt, manage locations, run a test call.</p>
+        </div>
+        <svg viewBox="0 0 24 24" fill="none" className="w-5 h-5 text-gray-400" stroke="currentColor" strokeWidth="2">
+          <path d="M9 18l6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </a>
+
       {/* Call Forwarding */}
       <div className="bg-white rounded-xl border border-gray-200 mb-6">
         <div className="p-5 border-b border-gray-100">
