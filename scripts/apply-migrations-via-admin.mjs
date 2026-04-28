@@ -31,12 +31,15 @@ let cookie = process.env.HARBOR_ADMIN_COOKIE
 if (!cookie) {
   const readline = await import('node:readline')
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout, terminal: false })
-  process.stdout.write('Paste your harbor_access cookie value, then press Enter:\n> ')
-  cookie = await new Promise((resolve) => rl.once('line', (line) => { rl.close(); resolve(line) }))
-  if (!cookie || !cookie.trim()) {
-    console.error('Abort: no cookie provided.')
+  process.stdout.write('Paste harbor_access cookie value:\n> ')
+  const accessVal = await new Promise((resolve) => rl.once('line', (line) => resolve(line)))
+  process.stdout.write('Paste harbor_id cookie value:\n> ')
+  const idVal = await new Promise((resolve) => rl.once('line', (line) => { rl.close(); resolve(line) }))
+  if (!accessVal || !accessVal.trim() || !idVal || !idVal.trim()) {
+    console.error('Abort: both harbor_access and harbor_id are required.')
     process.exit(2)
   }
+  cookie = `harbor_access=${accessVal.trim()}; harbor_id=${idVal.trim()}`
 }
 
 const baseUrl = (process.env.HARBOR_BASE_URL || 'https://lab.harboroffice.ai').replace(/\/$/, '')
@@ -45,8 +48,21 @@ if (/harborreceptionist\.com/i.test(baseUrl)) {
   process.exit(2)
 }
 
+// Cookie may be: a raw access-token value, "harbor_access=...", or a full
+// cookie header like "harbor_access=...; harbor_id=...". Pass through as-is
+// if already prefixed; otherwise wrap as harbor_access (legacy single-cookie
+// path — admin endpoints will then 401 because harbor_id is missing).
 const trimmed = cookie.trim()
-const cookieHeader = trimmed.startsWith('harbor_access=') ? trimmed : `harbor_access=${trimmed}`
+const cookieHeader = (trimmed.startsWith('harbor_access=') || trimmed.includes('=')) && trimmed.includes(';')
+  ? trimmed  // already a multi-cookie header
+  : trimmed.startsWith('harbor_access=')
+    ? trimmed
+    : `harbor_access=${trimmed}`
+
+if (!cookieHeader.includes('harbor_id=')) {
+  console.warn('WARN: harbor_id cookie not detected in input. Admin endpoint will likely reject this with 401 unauthorized.')
+  console.warn('      Use the run-migrations.ps1 wrapper which prompts for both cookies, or paste the full Cookie header from DevTools Network tab.')
+}
 
 const dir = 'supabase/migrations'
 const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
