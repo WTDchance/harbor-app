@@ -1,54 +1,90 @@
-// Wave 47 — Reception product split.
+// lib/aws/reception/generate-api-key.ts
 //
-// Mints a fresh API key for a practice. The plaintext is shown to the
-// caller exactly once (returned here, displayed on the API Keys page);
-// only the SHA-256 hash + a short prefix are persisted.
+// W48 T2 — mint a Reception API key. Plaintext is returned ONCE for
+// display; only the SHA-256 hash + first-12-char prefix are persisted.
 //
-// Format: hb_live_<32 base32 chars>. The first 12 characters of the
-// full string ("hb_live_AAAA") are stored as key_prefix for UI display
-// and operator forensic lookup.
+// Format: hb_live_<32 base32 chars>
+// The 32-char base32 suffix carries 160 bits of entropy from
+// crypto.randomBytes(20). Sufficient for an API key.
 
-import crypto from 'crypto'
+import { randomBytes, createHash } from 'node:crypto'
 import { pool } from '@/lib/aws/db'
+import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 
-const BASE32_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+const PREFIX = 'hb_live_'
+const PREFIX_LEN = 12 // first 12 chars (PREFIX + 4 of body) for display
 
-function base32Random(length: number): string {
-  const bytes = crypto.randomBytes(length)
-  let out = ''
-  for (let i = 0; i < length; i++) {
-    out += BASE32_ALPHABET[bytes[i] % 32]
+// Crockford-style base32 alphabet — drops I, L, O, U to avoid visual
+// confusion when a key is read aloud.
+const ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789'
+function toBase32(bytes: Uint8Array): string {
+  let bits = 0; let value = 0; let out = ''
+  for (let i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i]
+    bits += 8
+    while (bits >= 5) {
+      out += ALPHABET[(value >>> (bits - 5)) & 31]
+      bits -= 5
+    }
   }
+  if (bits > 0) out += ALPHABET[(value << (5 - bits)) & 31]
   return out
 }
 
-export function hashApiKey(plaintext: string): string {
-  return crypto.createHash('sha256').update(plaintext).digest('hex')
+export interface MintedKey {
+  id: string
+  plaintext: string  // returned ONCE; never recoverable
+  prefix: string     // 'hb_live_AAAA' style for display
 }
 
-export interface GenerateApiKeyResult {
-  plaintext: string
-  key_id: string
-  key_prefix: string
-}
+export async function generateApiKey(args: {
+  practiceId: string
+  scopes: string[]
+  createdByUserId?: string | null
+}): Promise<MintedKey> {
+  const suffix = toBase32(randomBytes(20)).slice(0, 32)
+  const plaintext = `${PREFIX}${suffix}`
+  const hash = createHash('sha256').update(plaintext).digest('hex')
+  const prefix = plaintext.slice(0, PREFIX_LEN)
 
-export async function generateApiKey(
-  practice_id: string,
-  scopes: string[],
-  created_by: string | null,
-): Promise<GenerateApiKeyResult> {
-  const suffix = base32Random(32)
-  const plaintext = `hb_live_${suffix}`
-  const key_hash = hashApiKey(plaintext)
-  const key_prefix = plaintext.slice(0, 12)
-
-  const { rows } = await pool.query<{ id: string }>(
-    `INSERT INTO reception_api_keys (
-        practice_id, key_hash, key_prefix, scopes, created_by_user_id
-     ) VALUES ($1, $2, $3, $4::text[], $5)
+  const ins = await pool.query(
+    `INSERT INTO reception_api_keys
+       (practice_id, key_hash, key_prefix, scopes, created_by_user_id)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING id`,
-    [practice_id, key_hash, key_prefix, scopes, created_by],
+    [args.practiceId, hash, prefix, args.scopes, args.createdByUserId ?? null],
   )
 
-  return { plaintext, key_id: rows[0].id, key_prefix }
+  await auditSystemEvent({
+    action: 'reception_api_key.created',
+    practiceId: args.practiceId,
+    resourceType: 'reception_api_key',
+    resourceId: ins.rows[0].id,
+    details: { prefix, scope_count: args.scopes.length },
+  })
+
+  return { id: ins.rows[0].id, plaintext, prefix }
+}
+
+export async function revokeApiKey(args: {
+  keyId: string
+  practiceId: string
+}): Promise<boolean> {
+  const r = await pool.query(
+    `UPDATE reception_api_keys
+        SET revoked_at = NOW()
+      WHERE id = $1 AND practice_id = $2 AND revoked_at IS NULL`,
+    [args.keyId, args.practiceId],
+  )
+  if ((r.rowCount ?? 0) > 0) {
+    await auditSystemEvent({
+      action: 'reception_api_key.revoked',
+      practiceId: args.practiceId,
+      resourceType: 'reception_api_key',
+      resourceId: args.keyId,
+      details: {},
+    })
+    return true
+  }
+  return false
 }
