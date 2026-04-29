@@ -8,10 +8,9 @@ const supabase = createClient()
 // FIX: Uses patient UUID for detail links (not base64-encoded email/phone).
 // Shows intake_status badge so practitioners see who needs intake forms.
 
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useState, useEffect, useCallback, useMemo, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import PatientFlagChips from "@/components/ehr/PatientFlagChips";
-import PatientFlagManager from "@/components/ehr/PatientFlagManager";
 import SavedViewsSidebar, { FilterChipBar, emptyFilter, type SavedView } from "@/components/ehr/SavedViewsSidebar";
 import type { FilterNode } from "@/lib/ehr/patient-flags";
 
@@ -126,11 +125,6 @@ export default function PatientsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
   const [showCreate, setShowCreate] = useState(false);
-  // Wave 49: saved views + chip-filter state.
-  const [filter, setFilter] = useState<FilterNode>(emptyFilter());
-  const [selectedView, setSelectedView] = useState<SavedView | null>(null);
-  const [flagsByPatient, setFlagsByPatient] = useState<Record<string, string[]>>({});
-
   // Debounce search
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedSearch(search), 300);
@@ -198,36 +192,111 @@ export default function PatientsPage() {
     return () => clearInterval(interval);
   }, [fetchPatients]);
 
+  // ── W50 D1: wire saved views + filter chips + flag chips ──────────────
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filter, setFilter] = useState<FilterNode>(emptyFilter());
+  const [activeView, setActiveView] = useState<SavedView | null>(null);
+  const [filteredPatients, setFilteredPatients] = useState<Patient[] | null>(null);
+  const [flagsByPatient, setFlagsByPatient] = useState<Record<string, string[]>>({});
+
+  const filterIsActive = useMemo(() => {
+    if (activeView) return true;
+    if (filter && 'predicates' in filter && Array.isArray(filter.predicates) && filter.predicates.length > 0) return true;
+    return false;
+  }, [filter, activeView]);
+
+  // Fetch flags for the loaded patient set so chips render in each row.
+  useEffect(() => {
+    const list = filteredPatients ?? patients;
+    if (!list || list.length === 0) { setFlagsByPatient({}); return; }
+    const ids = list.map(p => p.key).filter(Boolean);
+    if (ids.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/ehr/patients/bulk-flags', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ patient_ids: ids }),
+        });
+        if (!res.ok) return;
+        const j = await res.json();
+        if (!cancelled) setFlagsByPatient(j.flags || {});
+      } catch { /* silent — chips just don't render */ }
+    })();
+    return () => { cancelled = true };
+  }, [patients, filteredPatients]);
+
+  // When filters change, re-run the patients-search endpoint.
+  useEffect(() => {
+    if (!filterIsActive) { setFilteredPatients(null); return; }
+    const effectiveFilter = activeView?.filter ?? filter;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/ehr/patients-search', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ filter: effectiveFilter, sort: { field: 'last_name', direction: 'asc' }, limit: 200 }),
+        });
+        if (!res.ok) return;
+        const j = await res.json();
+        if (cancelled) return;
+        const mapped: Patient[] = (j.patients ?? []).map((p: any) => ({
+          key: p.id,
+          patient_name: [p.first_name, p.last_name].filter(Boolean).join(' ') || null,
+          patient_email: p.email ?? null,
+          patient_phone: p.phone ?? null,
+          patient_dob: null,
+          intake_status: 'none',
+          intake_count: 0,
+          last_seen: p.last_contact_at ?? null,
+          latest_phq9_score: null,
+          latest_phq9_severity: null,
+          latest_gad7_score: null,
+          latest_gad7_severity: null,
+          created_at: p.created_at ?? '',
+          active_flags: p.active_flags ?? [],
+        }));
+        setFilteredPatients(mapped);
+      } catch { /* keep prior */ }
+    })();
+    return () => { cancelled = true };
+  }, [filter, activeView, filterIsActive]);
+
   return (
-    <div className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-6">
-      <aside className="hidden lg:block">
-        <SavedViewsSidebar
-          selectedId={selectedView?.id ?? null}
-          onSelect={(v) => {
-            setSelectedView(v);
-            if (v && v.filter && Object.keys(v.filter).length > 0) {
-              setFilter(v.filter as FilterNode);
-            } else if (!v) {
-              setFilter(emptyFilter());
-            }
-          }}
-          currentFilter={filter}
-          currentSort={{ field: 'last_name', direction: 'asc' }}
-        />
-      </aside>
-      <div>
+    <div className="flex max-w-7xl mx-auto">
+      <SavedViewsSidebar
+        selectedId={activeView?.id ?? null}
+        onSelect={(v) => { setActiveView(v); if (v) setFilter(v.filter as FilterNode || emptyFilter()); }}
+        currentFilter={filter}
+        currentSort={{ field: 'last_name', direction: 'asc' }}
+      />
+      <div className="flex-1 p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Patients</h1>
-          <p className="text-sm text-gray-500">{total} patient{total !== 1 ? "s" : ""}</p>
+          <p className="text-sm text-gray-500">{total} patient{total !== 1 ? "s" : ""}{filterIsActive ? ` · filtered (${(filteredPatients ?? []).length})` : ''}</p>
         </div>
+        <div className="flex items-center gap-2">
+        <button
+          onClick={() => setFilterOpen(o => !o)}
+          className="px-3 py-2 border border-gray-300 hover:bg-gray-50 text-gray-700 text-sm font-medium rounded-lg"
+        >
+          {filterOpen ? 'Hide filters' : 'Filters'}
+        </button>
         <button
           onClick={() => setShowCreate(true)}
           className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white text-sm font-medium rounded-lg shadow-sm"
         >
           + New patient
         </button>
+        </div>
       </div>
+
+      {filterOpen && (
+        <FilterChipBar value={filter} onChange={(n) => { setActiveView(null); setFilter(n); }} />
+      )}
 
       {showCreate && (
         <NewPatientModal
@@ -277,19 +346,19 @@ export default function PatientsPage() {
         </div>
       ) : (
         <div className="bg-white border rounded-lg shadow-sm divide-y">
-          {sortPatients(patients, sortBy).map((patient) => (
+          {sortPatients(filteredPatients ?? patients, sortBy).map((patient) => (
             <div
               key={patient.key}
               onClick={() => router.push(`/dashboard/patients/${patient.key}`)}
               className="flex items-center justify-between px-5 py-4 hover:bg-gray-50 cursor-pointer transition"
             >
               <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <h3 className="font-medium text-gray-900 truncate">
                     {patient.patient_name || "Unknown"}
                   </h3>
                   <IntakeStatusBadge status={patient.intake_status} />
-                  <PatientFlagChips flags={(patient.active_flags && patient.active_flags.length ? patient.active_flags : flagsByPatient[patient.key]) as any} size="xs" />
+                  <PatientFlagChips flags={patient.active_flags ?? flagsByPatient[patient.key] ?? []} max={3} size="xs" />
                 </div>
                 <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
                   {patient.patient_phone && (

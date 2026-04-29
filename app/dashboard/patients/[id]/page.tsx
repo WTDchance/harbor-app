@@ -29,6 +29,15 @@ import {
 } from "lucide-react"
 
 import PatientHeaderPredictions from '@/components/predictions/PatientHeaderPredictions'
+import PatientFlagManager from '@/components/ehr/PatientFlagManager'
+import PatientFlagChips from '@/components/ehr/PatientFlagChips'
+import PatientFlagChipsLive from '@/components/ehr/PatientFlagChipsLive'
+import SendCustomFormButton from '@/components/ehr/SendCustomFormButton'
+import CallSignalsFeed from '@/components/ehr/CallSignalsFeed'
+import PatientRiskChips from '@/components/ehr/PatientRiskChips'
+import PatientTimeline from '@/components/ehr/PatientTimeline'
+import InsuranceVerificationBadge from '@/components/ehr/InsuranceVerificationBadge'
+
 import { PatientAISummaryCard } from "@/components/ehr/PatientAISummaryCard"
 import { TreatmentPlanCard } from "@/components/ehr/TreatmentPlanCard"
 import { SafetyPlanCard } from "@/components/ehr/SafetyPlanCard"
@@ -307,6 +316,34 @@ export default function PatientDetailPage() {
 
         {/* W45 T6 — predictions header strip */}
         <PatientHeaderPredictions patientId={patientId} />
+
+        {/* W50 D1 — patient flags + custom-form actions */}
+        <div className="bg-white border border-gray-200 rounded-xl p-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold">Flags</span>
+            <PatientFlagChipsLive patientId={patientId} />
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <InsuranceVerificationBadge patientId={patientId} />
+            <PatientFlagManager patientId={patientId} compact={false} />
+            <SendCustomFormButton patientId={patientId} compact={false} />
+          </div>
+        </div>
+
+        {/* W50 D3 — risk-chip indicators */}
+        <div className="bg-white border border-gray-200 rounded-xl p-3 flex items-center gap-3 flex-wrap">
+          <span className="text-xs uppercase tracking-wide text-gray-500 font-semibold">Risk</span>
+          <PatientRiskChips patientId={patientId} />
+        </div>
+
+        {/* W50 D4 — patient timeline two-layer viz */}
+        <PatientTimeline patientId={patientId} />
+
+        {/* W50 D2 — receptionist call signals */}
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3">Call signals</h3>
+          <CallSignalsFeed patientId={patientId} />
+        </div>
 
         {/* Quick context strip */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
