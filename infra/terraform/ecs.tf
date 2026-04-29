@@ -44,6 +44,7 @@ locals {
     { name = "COGNITO_APP_CLIENT_ID", value = aws_cognito_user_pool_client.app.id },
     { name = "COGNITO_CLIENT_ID", value = aws_cognito_user_pool_client.app.id },
     { name = "S3_UPLOADS_BUCKET", value = aws_s3_bucket.uploads.bucket },
+    { name = "S3_TRANSCRIBE_UPLOADS_BUCKET", value = aws_s3_bucket.transcribe_uploads.bucket },
     { name = "SES_FROM_ADDRESS", value = var.ses_from_address },
     { name = "BEDROCK_HAIKU_MODEL", value = "us.anthropic.claude-haiku-4-5-v1:0" },
     { name = "BEDROCK_SONNET_MODEL", value = "us.anthropic.claude-sonnet-4-6-v1:0" },
