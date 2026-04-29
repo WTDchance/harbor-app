@@ -1,9 +1,7 @@
-// Microsoft Outlook OAuth start. Cognito session → resolve practiceId →
-// build Microsoft consent screen URL.
+// app/api/integrations/outlook/auth/route.ts
 //
-// Allowlist required: this route's redirect URI
-//   https://lab.harboroffice.ai/api/integrations/outlook/callback
-// must be added to the Microsoft App Registration's Redirect URIs.
+// W51 D3 — Outlook (Microsoft Graph) OAuth start. Redirects to Microsoft
+// consent screen with the practice id encoded in `state`.
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireApiSession } from '@/lib/aws/api-auth'
@@ -11,34 +9,37 @@ import { requireApiSession } from '@/lib/aws/api-auth'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
+const SCOPES = [
+  'openid', 'email', 'profile', 'offline_access',
+  'https://graph.microsoft.com/Calendars.ReadWrite',
+].join(' ')
+
 export async function GET(req: NextRequest) {
   const ctx = await requireApiSession()
   if (ctx instanceof NextResponse) return ctx
   if (!ctx.practiceId) return NextResponse.redirect(new URL('/login', req.url))
 
-  const clientId = process.env.MICROSOFT_CLIENT_ID
+  const clientId = process.env.OUTLOOK_CLIENT_ID || process.env.MICROSOFT_CLIENT_ID
   const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/$/, '')
   const redirectUri = `${appUrl}/api/integrations/outlook/callback`
+  if (!clientId) return NextResponse.json({ error: 'Outlook OAuth not configured (set OUTLOOK_CLIENT_ID or MICROSOFT_CLIENT_ID)' }, { status: 500 })
 
-  if (!clientId) {
-    return NextResponse.json(
-      { error: 'Outlook Calendar not configured (set MICROSOFT_CLIENT_ID)' },
-      { status: 500 },
-    )
-  }
-
-  const scopes = ['openid', 'profile', 'email', 'Calendars.ReadWrite', 'offline_access']
+  const state = Buffer.from(JSON.stringify({
+    practiceId: ctx.practiceId,
+    therapistId: req.nextUrl.searchParams.get('therapist_id') ?? null,
+  })).toString('base64url')
 
   const params = new URLSearchParams({
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: 'code',
-    scope: scopes.join(' '),
     response_mode: 'query',
-    state: Buffer.from(JSON.stringify({ practiceId: ctx.practiceId })).toString('base64'),
+    scope: SCOPES,
+    state,
+    prompt: 'select_account',
   })
 
   return NextResponse.redirect(
-    `https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params.toString()}`,
+    new URL(`https://login.microsoftonline.com/common/oauth2/v2.0/authorize?${params}`),
   )
 }

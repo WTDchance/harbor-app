@@ -201,6 +201,30 @@ const EHR_PREFERENCES_NAV = {
   ),
 }
 
+// --- Reception nav items (W51) -------------------------------------------------
+const RECEPTION_CALLS_NAV = {
+  href: "/dashboard/receptionist/calls",
+  label: "Calls",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <path d="M16 12.5c-1.2 0-2.4-.2-3.5-.6a.94.94 0 00-1 .2l-2.2 2.2A14.1 14.1 0 013.7 8.7l2.2-2.2c.3-.3.4-.7.2-1C5.7 4.4 5.5 3.2 5.5 2c0-.6-.4-1-1-1H1.5C.9 1 .5 1.4.5 2c0 8.3 6.7 15 15 15 .6 0 1-.4 1-1v-2.5c0-.6-.4-1-1-1z" fill="currentColor" fillOpacity="0.85" />
+    </svg>
+  ),
+}
+const RECEPTION_LEADS_NAV = {
+  href: "/dashboard/receptionist/leads",
+  label: "Leads",
+  exact: false,
+  icon: (
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+      <circle cx="6" cy="6" r="2.5" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M1 15c0-2.5 2-4 5-4s5 1.5 5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M11 4l3 3 4-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  ),
+}
+
 // --- Nav items ----------------------------------------------------------------
 const NAV = [
   {
@@ -377,10 +401,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         // not here. ehr_full / ehr_only / both pass through. 'both' gets
         // a tier switcher in a follow-up; for now they default to EHR.
         const tier = data.practice?.productTier ?? 'ehr_full';
-        if (tier === 'reception_only') {
-          router.replace('/reception/dashboard');
-          return;
-        }
+        // W51 — reception_only practices stay on /dashboard with the
+        // tier-filtered nav (Calls, Leads, Settings, Billing).
         setUserEmail(data.email ?? null);
         setPracticeName(data.practice?.name ?? null);
         setProductTier(tier);
@@ -423,6 +445,19 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     })()
     return () => { cancelled = true }
   }, [router]);
+
+  // W51 — server-side tier gate. If a reception_only practice tries to
+  // hit any clinical/EHR path directly, redirect to /dashboard/receptionist/calls.
+  useEffect(() => {
+    if (productTier !== 'reception_only') return
+    const RECEPTION_ALLOW: string[] = [
+      '/dashboard/receptionist',
+      '/dashboard/settings',
+    ]
+    const isAllowed = pathname === '/dashboard' ||
+      RECEPTION_ALLOW.some(p => pathname.startsWith(p))
+    if (!isAllowed) router.replace('/dashboard/receptionist/calls')
+  }, [productTier, pathname, router])
 
   async function handleLogout() {
     window.location.href = "/api/auth/logout";
@@ -491,6 +526,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Nav */}
         <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">
           {(() => {
+            // W51 — reception_only practices get a short, focused nav.
+            if (productTier === 'reception_only') {
+              return [RECEPTION_CALLS_NAV, RECEPTION_LEADS_NAV, ...NAV.slice(-1)] as any
+            }
             if (!ehrEnabled) return NAV
             const f = prefs?.features ?? {}
             const s = prefs?.sidebar ?? { compact: false, show_analytics: true, show_billing: true }

@@ -9,14 +9,27 @@ import { useState } from 'react'
 const TIERS = [
   {
     key: 'reception_only_monthly',
-    name: 'Reception Only',
-    price: '$99/mo',
+    name: 'Reception',
+    price: '$199/mo',
     description:
       'AI receptionist for practices that already have an EHR elsewhere.',
     bullets: [
       'Inbound call handling',
-      'Intake & scheduling reminders',
+      'Intake capture & lead handoff',
+      'Calendar sync (Google / Outlook)',
       'Bring-your-own EHR',
+    ],
+  },
+  {
+    key: 'reception_with_verify_monthly',
+    name: 'Reception + Verify',
+    price: '$249/mo',
+    description:
+      'AI receptionist + real-time Stedi insurance eligibility verification.',
+    bullets: [
+      'Everything in Reception',
+      'Real-time eligibility checks (Stedi 270/271)',
+      'Coverage shown at the call',
     ],
   },
   {

@@ -118,6 +118,58 @@ export async function POST(req: NextRequest) {
     ).catch((e) => console.error('[call-ended] signals insert failed:', (e as Error).message))
   }
 
+  // W51 D2 — reception_only practices: stash the captured data into
+  // reception_leads instead of the patients table (the patients table
+  // is EHR-only). This is best-effort; we only insert when we have at
+  // least one capture signal.
+  try {
+    const tierRow = await pool.query(
+      `SELECT COALESCE(product_tier, 'ehr_full') AS product_tier FROM practices WHERE id = $1`,
+      [row.practice_id],
+    )
+    const productTier = tierRow.rows[0]?.product_tier ?? 'ehr_full'
+    if (productTier === 'reception_only') {
+      const findSignal = (kind: string) => signals.find(s => s.signal_type === kind)?.signal_value ?? null
+      const nameValue = findSignal('name_candidate') ?? ''
+      const [first, ...rest] = nameValue.split(/\s+/)
+      const last = rest.join(' ').trim() || null
+      const dobRaw = findSignal('dob_candidate')
+      // Convert MM/DD/YYYY to YYYY-MM-DD where possible.
+      let dobIso: string | null = null
+      if (dobRaw) {
+        const m = /^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2}|\d{4})$/.exec(dobRaw)
+        if (m) {
+          const yyyy = m[3].length === 2 ? Number(m[3]) > 30 ? '19' + m[3] : '20' + m[3] : m[3]
+          dobIso = `${yyyy}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`
+        }
+      }
+      const urgency = signals.find(s => s.signal_type === 'urgency_high') ? 'high'
+        : signals.find(s => s.signal_type === 'urgency_medium') ? 'medium'
+        : signals.find(s => s.signal_type === 'urgency_low') ? 'low'
+        : null
+      const isCrisis = hasCrisisSignal(signals)
+      await pool.query(
+        `INSERT INTO reception_leads
+           (practice_id, call_id, first_name, last_name, date_of_birth,
+            phone_e164, email, insurance_payer,
+            reason_for_visit, urgency_level, status, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'new', $11::jsonb)`,
+        [
+          row.practice_id, row.id,
+          first || null, last,
+          dobIso,
+          findSignal('phone_confirmation'), null,
+          findSignal('insurance_mention'),
+          payload.call.call_analysis?.call_summary?.slice(0, 1000) ?? null,
+          isCrisis ? 'crisis' : urgency,
+          JSON.stringify({ retell_call_id: callId, signal_count: signals.length }),
+        ],
+      ).catch((e) => console.error('[call-ended] reception_leads insert failed:', (e as Error).message))
+    }
+  } catch (e) {
+    console.error('[call-ended] tier lookup failed:', (e as Error).message)
+  }
+
   // Crisis flag handling — critical-severity audit + alert.
   if (hasCrisisSignal(signals)) {
     await writeAuditLog({

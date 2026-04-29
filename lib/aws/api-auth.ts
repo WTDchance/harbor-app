@@ -117,6 +117,15 @@ export async function requireEhrApiSession(): Promise<ApiAuthContext | NextRespo
  *   const ctx = await requireProductTier(['reception_only', 'both'])
  *   if (ctx instanceof NextResponse) return ctx
  */
+/**
+ * W51 D8 — guard for /api/reception/* routes. Allows every paying tier
+ * (reception_only and all EHR tiers). Reception data is the universal
+ * surface; EHR practices also use it for inbound call review.
+ */
+export async function requireReceptionApiSession(): Promise<ApiAuthContext | NextResponse> {
+  return requireProductTier(['reception_only', 'ehr_full', 'ehr_only', 'both'] as Array<'reception_only' | 'ehr_full' | 'ehr_only' | 'both'>)
+}
+
 export async function requireProductTier(
   allowedTiers: Array<'ehr_full' | 'reception_only' | 'ehr_only' | 'both'>,
 ): Promise<ApiAuthContext | NextResponse> {
