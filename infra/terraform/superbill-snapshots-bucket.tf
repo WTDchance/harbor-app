@@ -129,9 +129,9 @@ data "aws_iam_policy_document" "superbill_snapshots_bucket" {
   }
 
   statement {
-    sid       = "DenyInsecureTransport"
-    effect    = "Deny"
-    actions   = ["s3:*"]
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
     resources = [
       aws_s3_bucket.superbill_snapshots.arn,
       "${aws_s3_bucket.superbill_snapshots.arn}/*",

@@ -119,10 +119,10 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage_low" {
   period              = 300
   statistic           = "Minimum"
   # 10% of allocated, in bytes (var is in GB).
-  threshold           = var.rds_allocated_storage_gb * 1024 * 1024 * 1024 * 0.1
-  treat_missing_data  = "notBreaching"
-  alarm_actions       = [aws_sns_topic.alerts.arn]
-  ok_actions          = [aws_sns_topic.alerts.arn]
+  threshold          = var.rds_allocated_storage_gb * 1024 * 1024 * 1024 * 0.1
+  treat_missing_data = "notBreaching"
+  alarm_actions      = [aws_sns_topic.alerts.arn]
+  ok_actions         = [aws_sns_topic.alerts.arn]
   dimensions = {
     DBInstanceIdentifier = aws_db_instance.primary.identifier
   }

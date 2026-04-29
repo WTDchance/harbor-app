@@ -77,7 +77,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "patient_documents" {
       storage_class   = "GLACIER"
     }
     noncurrent_version_expiration {
-      noncurrent_days = 2555  # ~7 years
+      noncurrent_days = 2555 # ~7 years
     }
 
     abort_incomplete_multipart_upload {
