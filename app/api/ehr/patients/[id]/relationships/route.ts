@@ -109,7 +109,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         relationship,
         isMinorConsent,
         notes,
-        ctx.userId,
+        ctx.user.id,
       ],
     )
 
@@ -129,7 +129,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         inverse,
         inverseIsMinorConsent(),
         notes,
-        ctx.userId,
+        ctx.user.id,
       ],
     )
 

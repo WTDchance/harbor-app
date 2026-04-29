@@ -57,7 +57,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             note_format, status, created_by)
          VALUES ($1, $2, $3, $4, 'soap', 'draft', $5)
          RETURNING id`,
-        [ctx.practiceId, patientId, params.id, 'Group session note', ctx.userId],
+        [ctx.practiceId, patientId, params.id, 'Group session note', ctx.user.id],
       )
       noteId = ins.rows[0].id
     }

@@ -10,7 +10,7 @@
 //
 // POST body:
 //   { title, description?, due_at?, kind?, priority?, patient_id?, assigned_to_user_id? }
-//   assigned_to_user_id defaults to ctx.userId (self-assigned).
+//   assigned_to_user_id defaults to ctx.user.id (self-assigned).
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (assigneeParam === 'me') {
-    args.push(ctx.userId)
+    args.push(ctx.user.id)
     conds.push(`assigned_to_user_id = $${args.length}`)
   } else if (assigneeParam !== 'all') {
     args.push(assigneeParam)
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
   const kind = KINDS.has(body.kind) ? body.kind : 'clinical_followup'
   const priority = PRIORITIES.has(body.priority) ? body.priority : 'normal'
   const patientId = body.patient_id ? String(body.patient_id) : null
-  const assignee = body.assigned_to_user_id ? String(body.assigned_to_user_id) : ctx.userId
+  const assignee = body.assigned_to_user_id ? String(body.assigned_to_user_id) : ctx.user.id
 
   // Verify assignee is in this practice.
   const assigneeRow = await pool.query(
@@ -128,7 +128,7 @@ export async function POST(req: NextRequest) {
      RETURNING id, assigned_to_user_id::text, patient_id::text,
                title, description, due_at, completed_at,
                kind, priority, created_at`,
-    [ctx.practiceId, assignee, patientId, title, description, dueAt, kind, priority, ctx.userId],
+    [ctx.practiceId, assignee, patientId, title, description, dueAt, kind, priority, ctx.user.id],
   )
 
   await auditEhrAccess({
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
       kind, priority,
       has_patient: !!patientId,
       has_due_date: !!dueAt,
-      self_assigned: assignee === ctx.userId,
+      self_assigned: assignee === ctx.user.id,
     },
   })
 

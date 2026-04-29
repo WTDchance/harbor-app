@@ -41,7 +41,7 @@ export async function GET() {
        FROM users u
        JOIN practices p ON p.id = u.practice_id
       WHERE u.id = $1 LIMIT 1`,
-    [ctx.userId],
+    [ctx.user.id],
   )
   const row = r.rows[0] ?? {}
 
@@ -90,7 +90,7 @@ export async function PATCH(req: NextRequest) {
 
   if (fields.length === 0) return NextResponse.json({ error: 'no_fields' }, { status: 400 })
 
-  args.push(ctx.userId)
+  args.push(ctx.user.id)
   await pool.query(
     `UPDATE users SET ${fields.join(', ')} WHERE id = $${args.length}`,
     args,

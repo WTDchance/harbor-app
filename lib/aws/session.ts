@@ -9,6 +9,7 @@
 import { cookies } from 'next/headers'
 import { cache } from 'react'
 import { verifyIdToken, SESSION_COOKIE, ACCESS_COOKIE, type CognitoSession } from './cognito'
+export type { CognitoSession }
 
 /**
  * Returns the current Cognito session or null if absent / invalid.

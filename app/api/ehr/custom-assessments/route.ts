@@ -58,7 +58,7 @@ export async function POST(req: NextRequest) {
       JSON.stringify(validated.questions),
       validated.scoring_function,
       JSON.stringify(validated.severity_bands),
-      ctx.userId,
+      ctx.user.id,
     ],
   )
 

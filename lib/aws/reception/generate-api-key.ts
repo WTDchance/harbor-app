@@ -52,3 +52,24 @@ export async function generateApiKey(
 
   return { plaintext, key_id: rows[0].id, key_prefix }
 }
+
+/**
+ * Revoke (soft-delete) an API key by setting revoked_at = now().
+ * Returns true if a row was updated (i.e. key existed, belonged to
+ * this practice, and was not already revoked).
+ */
+export async function revokeApiKey(args: {
+  keyId: string
+  practiceId: string | null
+}): Promise<boolean> {
+  if (!args.practiceId) return false
+  const { rowCount } = await pool.query(
+    `UPDATE reception_api_keys
+        SET revoked_at = now()
+      WHERE id = $1
+        AND practice_id = $2
+        AND revoked_at IS NULL`,
+    [args.keyId, args.practiceId],
+  )
+  return (rowCount ?? 0) > 0
+}

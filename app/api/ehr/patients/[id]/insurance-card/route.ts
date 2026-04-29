@@ -160,8 +160,9 @@ export async function POST(
   // Upload originals + run Textract per side. Front and back are
   // independent — do them in parallel to keep the user-facing latency
   // low (this is a phone UX, every second counts).
-  let frontExtract: { fields: InsuranceCardFields; raw: AnalyzeFormsResult } | null = null
-  let backExtract: { fields: InsuranceCardFields; raw: AnalyzeFormsResult } | null = null
+  type Extract = { fields: InsuranceCardFields; raw: AnalyzeFormsResult }
+  let frontExtract = null as Extract | null
+  let backExtract = null as Extract | null
   try {
     const tasks: Promise<void>[] = []
     if (frontFile && frontKey) {

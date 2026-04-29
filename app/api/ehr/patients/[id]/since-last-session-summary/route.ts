@@ -138,7 +138,7 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     const resp = await createMessage({
       max_tokens: 250,
       system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: [{ type: 'text', text: userMsg }] }],
+      messages: [{ role: 'user', content: userMsg }],
     })
     summary = resp.content
       .filter((c: any) => c.type === 'text')

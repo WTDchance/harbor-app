@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
     model: 'claude-sonnet-4-6',
     max_tokens: 800,
     temperature: 0.2,
-    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+    system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: contextBlocks.join('\n') }],
   })
 

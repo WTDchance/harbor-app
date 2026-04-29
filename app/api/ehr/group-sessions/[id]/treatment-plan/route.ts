@@ -59,7 +59,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
      VALUES ($1, $2, $3, $4, $5::jsonb, $6, 'active', $7)
      RETURNING id, title, presenting_problem, goals, frequency, status,
                start_date::text, review_date::text, created_at`,
-    [ctx.practiceId, params.id, title, presentingProblem, JSON.stringify(goals), frequency, ctx.userId],
+    [ctx.practiceId, params.id, title, presentingProblem, JSON.stringify(goals), frequency, ctx.user.id],
   )
 
   await auditEhrAccess({

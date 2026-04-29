@@ -394,10 +394,7 @@ export default function SettingsPage() {
     setTherapistsLoading(true)
     try {
       // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
-if (!session) { setTherapistsLoading(false); return }
-      const res = await fetch('/api/therapists', {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
+      const res = await fetch('/api/therapists')
       if (res.ok) {
         const json = await res.json()
         setTherapists(json.therapists || [])
@@ -564,7 +561,6 @@ if (!session) { setTherapistsLoading(false); return }
     setTherapistError(null)
     try {
       // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
-if (!session) { setTherapistSaving(false); return }
       const url = editingTherapistId ? `/api/therapists/${editingTherapistId}` : '/api/therapists'
       const method = editingTherapistId ? 'PATCH' : 'POST'
       const res = await fetch(url, {
@@ -598,11 +594,7 @@ if (!session) { setTherapistSaving(false); return }
     if (!confirm('Remove this therapist from the active roster? Their record is kept for history and can be reactivated later.')) return
     try {
       // Wave 21: Cognito session cookie auto-attached on same-origin fetch.
-if (!session) return
-      const res = await fetch(`/api/therapists/${id}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${session.access_token}` },
-      })
+      const res = await fetch(`/api/therapists/${id}`, { method: 'DELETE' })
       if (res.ok) await loadTherapists()
     } catch {}
   }

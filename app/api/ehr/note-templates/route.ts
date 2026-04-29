@@ -80,7 +80,7 @@ export async function POST(req: NextRequest) {
        (practice_id, name, description, sections, created_by)
      VALUES ($1, $2, $3, $4::jsonb, $5)
      RETURNING id, name, description, sections, archived_at, created_at, updated_at`,
-    [ctx.practiceId, name, description, JSON.stringify(sections), ctx.userId],
+    [ctx.practiceId, name, description, JSON.stringify(sections), ctx.user.id],
   )
 
   await auditEhrAccess({

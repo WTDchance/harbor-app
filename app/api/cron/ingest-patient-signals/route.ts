@@ -281,7 +281,7 @@ export async function GET(req: NextRequest) {
   await auditSystemEvent({
     action: 'signals.ingested',
     resourceType: 'cron',
-    severity: errors.length > 0 ? 'warn' : 'info',
+    severity: errors.length > 0 ? 'warning' : 'info',
     details: {
       total_inserted: total,
       lookback_days: lookbackDays,

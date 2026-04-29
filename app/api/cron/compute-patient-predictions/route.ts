@@ -128,7 +128,7 @@ export async function GET(req: NextRequest) {
   await auditSystemEvent({
     action: 'predictions.computed',
     resourceType: 'cron',
-    severity: errors > 0 ? 'warn' : 'info',
+    severity: errors > 0 ? 'warning' : 'info',
     details: {
       patients_scanned: targets.length,
       upcoming_appointments_scored: upcoming.length,

@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
        (practice_id, name, inactive_days, channel, subject, body, active, created_by)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING id, name, inactive_days, channel, subject, body, active, created_at, updated_at`,
-    [ctx.practiceId, name, inactiveDays, channel, subject, messageBody, active, ctx.userId],
+    [ctx.practiceId, name, inactiveDays, channel, subject, messageBody, active, ctx.user.id],
   )
 
   await auditEhrAccess({

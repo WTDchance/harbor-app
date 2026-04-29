@@ -277,7 +277,7 @@ export async function POST() {
         t.presenting_problem,
         JSON.stringify(goals),
         t.frequency,
-        ctx.userId,
+        ctx.user.id,
       ],
     )
     created.push(ins.rows[0].id)
