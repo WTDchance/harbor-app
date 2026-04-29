@@ -205,7 +205,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     model: 'claude-sonnet-4-6',
     max_tokens: 400,
     temperature: 0.2,
-    system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
+    system: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: blocks.join('\n') }],
   })
 
