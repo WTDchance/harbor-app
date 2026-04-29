@@ -3,6 +3,16 @@
 // Wave 19 (AWS port). Therapist signup. Creates a Cognito user +
 // practices row in pending_payment state, then mints a Stripe
 // Checkout session and returns its URL. Carrier provisioning
+//
+// W50 - Harbor-as-vendor billing integration:
+// This route stays the legacy founding-member flow (charge-upfront,
+// no trial). The new tier-picker flow lives at /onboarding/billing
+// and calls /api/billing/checkout-session, which creates a 14-day
+// trial subscription using the prices from lib/billing/stripe-products.ts.
+// Both flows share the same stripe.customers.create call below, so
+// the customer record is the same regardless of entry path.
+// PHI rule: metadata carries practice_id ONLY -- no patient/clinical
+// fields, ever.
 // (Twilio + Vapi) does NOT happen here — Bucket 1 (Retell + SignalWire
 // migration) owns that. The Stripe webhook (Wave 15) advances
 // provisioning_state from 'pending_payment' → 'provisioning' →
