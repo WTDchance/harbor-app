@@ -66,7 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
   if (body.completed === true && !row.completed_at) {
     args.push(new Date().toISOString()); fields.push(`completed_at = $${args.length}`)
-    args.push(ctx.userId); fields.push(`completed_by = $${args.length}`)
+    args.push(ctx.user.id); fields.push(`completed_by = $${args.length}`)
     isComplete = true
   }
   if (body.completed === false) {

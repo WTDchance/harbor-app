@@ -53,7 +53,7 @@ export async function POST(
             override_by     = $3,
             override_at     = CASE WHEN $1 IS NULL THEN NULL ELSE NOW() END
       WHERE id = $4 AND practice_id = $5`,
-    [clear ? null : score, clear ? null : reason, ctx.userId, params.predictionId, ctx.practiceId],
+    [clear ? null : score, clear ? null : reason, ctx.user.id, params.predictionId, ctx.practiceId],
   )
 
   if (!clear) {

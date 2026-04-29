@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   const minted = await generateApiKey({
     practiceId: ctx.practiceId,
     scopes: filtered,
-    createdByUserId: ctx.userId,
+    createdByUserId: ctx.user.id,
   })
 
   return NextResponse.json({

@@ -94,7 +94,7 @@ export async function DELETE(
     `UPDATE ehr_patient_documents
         SET deleted_at = NOW(), deleted_by = $1
       WHERE id = $2`,
-    [ctx.userId, params.docId],
+    [ctx.user.id, params.docId],
   )
   try {
     await deletePatientDocument(doc.s3_key)

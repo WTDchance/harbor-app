@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
         status,
         status === 'sent' ? new Date().toISOString() : null,
         failedReason,
-        ctx.userId,
+        ctx.user.id,
       ],
     )
 

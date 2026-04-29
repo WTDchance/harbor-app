@@ -134,7 +134,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       stored.sha256,
       category,
       description,
-      ctx.userId,
+      ctx.user.id,
     ],
   )
 

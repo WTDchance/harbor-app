@@ -86,7 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         JSON.stringify(tpl.goals || []),
         tpl.frequency,
         status,
-        ctx.userId,
+        ctx.user.id,
       ],
     )
 

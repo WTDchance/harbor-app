@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
       presentingProblem,
       JSON.stringify(goals),
       frequency,
-      ctx.userId,
+      ctx.user.id,
     ],
   )
 
