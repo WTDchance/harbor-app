@@ -1,7 +1,7 @@
 {
-  "name": "Harbor",
+  "name": "Harbor — Therapy EHR + AI Reception",
   "short_name": "Harbor",
-  "description": "AI Front Office for Therapy Practices",
+  "description": "HIPAA-aligned EHR with AI receptionist for therapy practices.",
   "start_url": "/dashboard",
   "display": "standalone",
   "orientation": "portrait-primary",
@@ -29,4 +29,10 @@
     },
     {
       "src": "/icon-512-maskable.png",
-   
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "categories": ["medical", "productivity", "business"]
+}

@@ -1,5 +1,22 @@
 // Service Worker for Harbor app
-// Handles push notifications, offline support, and app installation
+// Handles push notifications, offline support, and app installation.
+//
+// Strategy:
+//   - /api/*, /api/auth, /login, /signup, /reception/signup → network-only (never cached)
+//     Auth-sensitive responses must never be served from cache.
+//   - Everything else → cache-first, fall back to network. Static app shell
+//     (homepage, manifest, icons) is precached on install.
+
+const CACHE_NAME = 'harbor-v2'
+const PRECACHE = [
+  '/',
+  '/manifest.json',
+  '/icon-72.png',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/icon-512-maskable.png',
+  '/apple-touch-icon.png',
+]
 
 self.addEventListener('push', function(event) {
   const data = event.data ? event.data.json() : {}
@@ -28,14 +45,12 @@ self.addEventListener('notificationclick', function(event) {
       type: 'window',
       includeUncontrolled: true,
     }).then(function(clientList) {
-      // Check if there is already a window/tab open with the target URL
       for (let i = 0; i < clientList.length; i++) {
         const client = clientList[i]
         if (client.url === urlToOpen && 'focus' in client) {
           return client.focus()
         }
       }
-      // If not, open a new window/tab with the target URL
       if (clients.openWindow) {
         return clients.openWindow(urlToOpen)
       }
@@ -47,54 +62,71 @@ self.addEventListener('notificationclose', function(event) {
   console.log('Notification closed:', event.notification.tag)
 })
 
-// Install event - cache app shell
+// Install — precache app shell so the home screen icon launches even offline.
 self.addEventListener('install', function(event) {
   event.waitUntil(
-    caches.open('harbor-v1').then(function(cache) {
-      return cache.addAll([
-        '/dashboard',
-      ])
+    caches.open(CACHE_NAME).then(function(cache) {
+      return cache.addAll(PRECACHE).catch(function(err) {
+        // Don't fail install if a single asset is missing in dev.
+        console.warn('Precache partial failure:', err)
+      })
     })
   )
+  self.skipWaiting()
 })
 
-// Activate event - clean up old caches
+// Activate — drop old cache versions and take control of open pages.
 self.addEventListener('activate', function(event) {
   event.waitUntil(
     caches.keys().then(function(cacheNames) {
       return Promise.all(
         cacheNames.map(function(cacheName) {
-          if (cacheName !== 'harbor-v1') {
+          if (cacheName !== CACHE_NAME) {
             return caches.delete(cacheName)
           }
         })
       )
+    }).then(function() {
+      return self.clients.claim()
     })
   )
 })
 
-// Fetch event - network first strategy
+// Fetch — bypass auth/API; cache-first for everything else.
 self.addEventListener('fetch', function(event) {
-  // Only handle GET requests
-  if (event.request.method !== 'GET') {
+  if (event.request.method !== 'GET') return
+
+  const url = new URL(event.request.url)
+
+  // Never cache auth/API or auth-flow pages — must always be fresh.
+  const isApi = url.pathname.startsWith('/api/')
+  const isAuthFlow =
+    url.pathname.startsWith('/login') ||
+    url.pathname.startsWith('/signup') ||
+    url.pathname.startsWith('/reset-password') ||
+    url.pathname.startsWith('/onboard') ||
+    url.pathname.includes('/signup')
+
+  if (isApi || isAuthFlow) {
+    event.respondWith(fetch(event.request))
     return
   }
 
+  // Cache-first with network fallback for static and content routes.
   event.respondWith(
-    fetch(event.request)
-      .then(function(response) {
-        // Cache successful responses
-        if (response.status === 200) {
+    caches.match(event.request).then(function(cached) {
+      if (cached) return cached
+      return fetch(event.request).then(function(response) {
+        if (response && response.status === 200 && response.type === 'basic') {
           const responseToCache = response.clone()
-          caches.open('harbor-v1').then(function(cache) {
+          caches.open(CACHE_NAME).then(function(cache) {
             cache.put(event.request, responseToCache)
           })
         }
         return response
-      })
-      .catch(function() {
-        // Return cached version on network error
+      }).catch(function() {
         return caches.match(event.request)
       })
+    })
   )
 })
