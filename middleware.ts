@@ -51,6 +51,8 @@ const PUBLIC_API_PREFIXES = [
   '/api/cron/',
   '/api/admin/',
   '/api/stripe/webhook',
+  // W50 - Harbor-as-vendor subscription billing webhook (Stripe-signed).
+  '/api/webhooks/stripe-subscription',
   '/api/ehr/billing/stripe-webhook',
   '/api/vapi/webhook',          // legacy carrier — kept for inbound webhook compat
   '/api/sms/',
