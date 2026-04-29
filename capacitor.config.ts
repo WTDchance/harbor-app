@@ -26,13 +26,25 @@ const config: CapacitorConfig = {
     // exists, Capacitor loads the site over the network instead of
     // bundling static assets — the simplest and most maintainable way
     // to ship a WebView-based portal.
-    url: process.env.CAPACITOR_SERVER_URL || 'https://harborreceptionist.com/portal',
+    //
+    // URL transition note: the apex domain harboroffice.ai went live
+    // this week and is now the canonical home for the portal. The
+    // legacy harborreceptionist.com host is being kept in
+    // allowNavigation below for backward compatibility during the
+    // transition (existing installs / bookmarks / email links), and
+    // can be removed once traffic has fully migrated.
+    url: process.env.CAPACITOR_SERVER_URL || 'https://harboroffice.ai/portal',
     // Allow the shell to include the portal's login cookie
     androidScheme: 'https',
     cleartext: false,
     // Only navigations to these hosts stay inside the app; anything else
     // opens in the system browser. Keeps the app scoped to Harbor.
     allowNavigation: [
+      'harboroffice.ai',
+      '*.harboroffice.ai',
+      'lab.harboroffice.ai',
+      // Backward compat during the harborreceptionist.com -> harboroffice.ai
+      // transition. Safe to remove once all traffic has migrated.
       'harborreceptionist.com',
       '*.harborreceptionist.com',
       'meet.jit.si', // telehealth room opens in-app
