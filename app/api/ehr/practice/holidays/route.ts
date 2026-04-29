@@ -6,13 +6,14 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { pool } from '@/lib/aws/db'
-import { requireEhrApiSession } from '@/lib/aws/ehr/auth'
+import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 import { usFederalHolidays } from '@/lib/aws/ehr/holidays'
 
 export async function GET(req: NextRequest) {
-  const ctx = await requireEhrApiSession(req)
-  if ('error' in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ error: 'no_practice' }, { status: 403 })
 
   const url = new URL(req.url)
   const yearParam = url.searchParams.get('year')
@@ -35,8 +36,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const ctx = await requireEhrApiSession(req)
-  if ('error' in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ error: 'no_practice' }, { status: 403 })
 
   const body = await req.json().catch(() => null)
   if (!body) return NextResponse.json({ error: 'invalid_json' }, { status: 400 })
@@ -58,7 +60,7 @@ export async function POST(req: NextRequest) {
        ON CONFLICT (practice_id, holiday_date) DO UPDATE
          SET name = EXCLUDED.name, notes = EXCLUDED.notes
        RETURNING id, holiday_date::text AS date, name, notes`,
-      [ctx.practiceId, date, name, notes, ctx.userId],
+      [ctx.practiceId, date, name, notes, ctx.user.id],
     )
     await auditEhrAccess({
       ctx,
@@ -74,8 +76,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const ctx = await requireEhrApiSession(req)
-  if ('error' in ctx) return NextResponse.json({ error: ctx.error }, { status: ctx.status })
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ error: 'no_practice' }, { status: 403 })
 
   const url = new URL(req.url)
   const id = url.searchParams.get('id')
