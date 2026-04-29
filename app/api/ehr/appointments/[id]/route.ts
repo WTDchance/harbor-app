@@ -77,6 +77,95 @@ async function siblingsInScope(row: any, scope: Scope, practiceId: string): Prom
   return [row.id]
 }
 
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const ctx = await requireEhrApiSession()
+  if (ctx instanceof NextResponse) return ctx
+  if (!ctx.practiceId) return NextResponse.json({ error: 'no_practice' }, { status: 403 })
+  const { id } = await params
+
+  const { rows } = await pool.query(
+    `SELECT a.id, a.patient_id, a.scheduled_for, a.duration_minutes,
+            a.appointment_type, a.status, a.notes,
+            a.cpt_code, a.modifiers,
+            a.recurrence_rule, a.recurrence_parent_id,
+            a.event_type_id, a.location, a.completed_at,
+            a.created_at, a.updated_at,
+            p.first_name AS patient_first_name,
+            p.last_name  AS patient_last_name,
+            p.date_of_birth AS patient_dob,
+            p.email AS patient_email,
+            p.phone AS patient_phone,
+            p.status AS patient_status,
+            p.insurance_carrier AS insurance_carrier,
+            p.insurance_member_id AS insurance_member_id,
+            et.name AS event_type_name,
+            et.color AS event_type_color,
+            et.default_cpt_codes AS event_type_default_cpt
+       FROM appointments a
+       LEFT JOIN patients p ON p.id = a.patient_id
+       LEFT JOIN calendar_event_types et ON et.id = a.event_type_id
+      WHERE a.id = $1 AND a.practice_id = $2
+      LIMIT 1`,
+    [id, ctx.practiceId],
+  )
+  const appt = rows[0]
+  if (!appt) return NextResponse.json({ error: 'not_found' }, { status: 404 })
+
+  // Latest signed/amended note for the patient
+  let lastNote: any = null
+  if (appt.patient_id) {
+    const noteRes = await pool.query(
+      `SELECT id, title, note_format, status, signed_at, cpt_codes, icd10_codes,
+              subjective, objective, assessment, plan, body
+         FROM ehr_progress_notes
+        WHERE patient_id = $1 AND practice_id = $2
+          AND status IN ('signed', 'amended')
+        ORDER BY signed_at DESC NULLS LAST, created_at DESC
+        LIMIT 1`,
+      [appt.patient_id, ctx.practiceId],
+    )
+    lastNote = noteRes.rows[0] || null
+  }
+
+  // Active patient flags (Wave 49) — surface as `flags: string[]`.
+  let flags: string[] = []
+  if (appt.patient_id) {
+    const flagsRes = await pool.query(
+      `SELECT type FROM patient_flags
+        WHERE patient_id = $1 AND practice_id = $2 AND cleared_at IS NULL`,
+      [appt.patient_id, ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] }))
+    flags = flagsRes.rows.map((r: any) => r.type)
+  }
+
+  // Custom-form (intake) status: completed vs pending counts.
+  let intake = { completed: 0, pending: 0 }
+  if (appt.patient_id) {
+    const intakeRes = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE submitted_at IS NOT NULL) AS completed,
+              COUNT(*) FILTER (WHERE submitted_at IS NULL)     AS pending
+         FROM custom_form_responses
+        WHERE patient_id = $1 AND practice_id = $2`,
+      [appt.patient_id, ctx.practiceId],
+    ).catch(() => ({ rows: [{ completed: 0, pending: 0 }] }))
+    intake = {
+      completed: Number(intakeRes.rows[0]?.completed ?? 0),
+      pending:   Number(intakeRes.rows[0]?.pending   ?? 0),
+    }
+  }
+
+  await auditEhrAccess({
+    ctx,
+    action: 'note.view',
+    resourceType: 'appointment',
+    resourceId: id,
+    details: { surface: 'appointment_detail' },
+    severity: 'info',
+  })
+
+  return NextResponse.json({ appointment: appt, last_note: lastNote, flags, intake })
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const ctx = await requireEhrApiSession()
   if (ctx instanceof NextResponse) return ctx
