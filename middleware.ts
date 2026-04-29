@@ -1,15 +1,27 @@
-// Harbor — Cognito-only auth middleware.
+// Harbor — hostname-aware middleware.
 //
-// Public allowlist (no auth required): / , /login, /login/aws, /signup, /onboard,
-//   /intake, /privacy*, /terms, /sms, /reset-password, /appointments/*,
-//   plus Next internals and select /api/* (each route enforces its own auth).
+// Two hosts share the same Next.js app and ALB target group:
 //
-// Everything else requires a valid Cognito ID token cookie (presence checked at
-// the edge; full JWKS verification happens in route handlers via getServerSession()).
+//   • harboroffice.ai / www.harboroffice.ai  → public marketing site
+//     Rewrites every request to /marketing/<path>, served by the
+//     app/marketing route group. No auth.
+//
+//   • lab.harboroffice.ai (and any other host) → existing EHR app
+//     Cognito-only auth. Public allowlist (no auth required):
+//       /, /login, /login/aws, /signup, /onboard, /intake, /privacy*,
+//       /terms, /sms, /reset-password, /appointments/*,
+//       Next internals, and select /api/* (each route enforces its own auth).
+//
+//     Everything else requires a valid Cognito ID token cookie (presence
+//     checked at the edge; full JWKS verification happens in route handlers
+//     via getServerSession()).
 
 import { NextResponse, type NextRequest } from 'next/server'
 
 const HARBOR_ID_COOKIE = 'harbor_id'
+
+// Hosts served by the public marketing site.
+const APEX_HOSTS = new Set(['harboroffice.ai', 'www.harboroffice.ai'])
 
 const PUBLIC_PREFIXES = [
   '/login',
@@ -87,9 +99,58 @@ function publicOriginFromRequest(req: NextRequest): string {
   return 'https://lab.harboroffice.ai'
 }
 
+// Extract the public hostname (no port) from forwarded headers when present,
+// falling back to the Host header. Returned lowercase.
+function publicHostFromRequest(req: NextRequest): string {
+  const fwdHost = req.headers.get('x-forwarded-host')
+  const host = req.headers.get('host') || ''
+  const raw = (fwdHost || host).trim().toLowerCase()
+  return raw.split(':')[0] // strip port
+}
+
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
+  const host = publicHostFromRequest(request)
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Marketing host (harboroffice.ai / www.harboroffice.ai)
+  // ──────────────────────────────────────────────────────────────────────────
+  // Every request is rewritten to /marketing/<path>. The /marketing route
+  // group renders the public marketing site (no auth). Paths that don't
+  // match a marketing page produce a Next 404 inside the marketing layout.
+  if (APEX_HOSTS.has(host)) {
+    // Let Next internals and static files through unmodified.
+    if (
+      pathname.startsWith('/_next') ||
+      pathname.startsWith('/favicon') ||
+      pathname === '/sw.js' ||
+      pathname === '/manifest.json' ||
+      pathname === '/robots.txt' ||
+      pathname === '/sitemap.xml' ||
+      pathname.startsWith('/monitoring') // Sentry tunnel
+    ) {
+      return NextResponse.next({ request })
+    }
+
+    // Already-rewritten or directly-requested /marketing/* paths: pass through
+    // (catches internal links and direct hits).
+    if (pathname === '/marketing' || pathname.startsWith('/marketing/')) {
+      return NextResponse.next({ request })
+    }
+
+    // Rewrite the apex request to its /marketing/* equivalent.
+    const url = request.nextUrl.clone()
+    url.pathname = pathname === '/' ? '/marketing' : `/marketing${pathname}`
+    return NextResponse.rewrite(url)
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // App host (lab.harboroffice.ai and everything else)
+  // ──────────────────────────────────────────────────────────────────────────
+  // Marketing pages under /marketing/* are public by design (no auth) and
+  // remain technically reachable from the app host — but apex is the canonical
+  // home for them. We don't rewrite or block here; the existing public
+  // allowlist + Cognito gate below handles the EHR routes unchanged.
   if (isPublic(pathname)) {
     return NextResponse.next({ request })
   }
