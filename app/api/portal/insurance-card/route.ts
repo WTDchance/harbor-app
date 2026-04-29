@@ -109,8 +109,9 @@ export async function POST(req: NextRequest) {
   const frontKey = frontFile ? `${keyPrefix}/front.jpg` : null
   const backKey = backFile ? `${keyPrefix}/back.jpg` : null
 
-  let frontExtract: { fields: InsuranceCardFields; raw: AnalyzeFormsResult } | null = null
-  let backExtract: { fields: InsuranceCardFields; raw: AnalyzeFormsResult } | null = null
+  type Extract = { fields: InsuranceCardFields; raw: AnalyzeFormsResult }
+  let frontExtract = null as Extract | null
+  let backExtract = null as Extract | null
   try {
     const tasks: Promise<void>[] = []
     if (frontFile && frontKey) {
