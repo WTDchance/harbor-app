@@ -17,6 +17,14 @@ export type WidgetId =
   | 'todays_schedule'
   | 'recent_activity'
   | 'engagement_trends'
+  // Wave 49 D6
+  | 'today_needs_attention'
+  | 'today_at_risk_patients'
+  | 'next_7_days_revenue_projection'
+  | 'expiring_licenses'
+  | 'unpaid_claims_aging'
+
+export type WidgetSize = '1x1' | '2x1' | '2x2'
 
 export interface WidgetMeta {
   id: WidgetId
@@ -24,6 +32,12 @@ export interface WidgetMeta {
   description: string
   /** Default true = always available unless explicitly hidden. */
   default_on: boolean
+  /** Default cell-size on the dashboard grid. User can resize at render time. */
+  default_size?: WidgetSize
+  /** Default refresh interval (seconds). 0 = render-on-mount, no auto-refresh. */
+  refresh_interval_seconds?: number
+  /** Optional internal route the widget links into when clicked. */
+  drilldown_path?: string
 }
 
 export const WIDGET_REGISTRY: Record<WidgetId, WidgetMeta> = {
@@ -48,6 +62,52 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetMeta> = {
   engagement_trends: { id: 'engagement_trends', name: 'Engagement trends',
                        description: 'Caseload-wide engagement score trend.',
                        default_on: false },
+  // Wave 49 D6 — table-stakes catch-up widgets.
+  today_needs_attention: {
+    id: 'today_needs_attention',
+    name: "Today — needs attention",
+    description: 'Combined feed of unsigned notes, expiring consents, crisis flags, and stale tasks for today.',
+    default_on: true,
+    default_size: '2x1',
+    refresh_interval_seconds: 60,
+    drilldown_path: '/dashboard/ehr/tasks',
+  },
+  today_at_risk_patients: {
+    id: 'today_at_risk_patients',
+    name: 'Today — at-risk patients',
+    description: 'Patients with active suicide_risk, no_show_risk, or payment_risk flags scheduled today.',
+    default_on: true,
+    default_size: '2x1',
+    refresh_interval_seconds: 120,
+    drilldown_path: '/dashboard/patients',
+  },
+  next_7_days_revenue_projection: {
+    id: 'next_7_days_revenue_projection',
+    name: 'Next 7 days — revenue projection',
+    description: 'Projected revenue from booked appointments × CPT defaults across the next 7 days.',
+    default_on: false,
+    default_size: '2x1',
+    refresh_interval_seconds: 600,
+    drilldown_path: '/dashboard/ehr/billing',
+  },
+  expiring_licenses: {
+    id: 'expiring_licenses',
+    name: 'Expiring licenses',
+    description: 'Therapist licenses expiring within 60 days, sorted by urgency.',
+    default_on: false,
+    default_size: '1x1',
+    refresh_interval_seconds: 3600,
+    drilldown_path: '/dashboard/settings',
+  },
+  unpaid_claims_aging: {
+    id: 'unpaid_claims_aging',
+    name: 'Unpaid claims — aging',
+    description: 'Insurance claims open by 0-30 / 31-60 / 60+ day buckets.',
+    default_on: false,
+    default_size: '2x1',
+    refresh_interval_seconds: 600,
+    drilldown_path: '/dashboard/ehr/billing',
+  },
 }
 
 /** Application-wide default widget order. Used when a user has no

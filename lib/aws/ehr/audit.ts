@@ -322,6 +322,63 @@ export type EhrAuditAction =
   // the secret material.
   | 'reception_api_key.created'
   | 'reception_api_key.revoked'
+  // Wave 49 — Table stakes & depth catch-up.
+  // D1: Custom forms builder.
+  | 'custom_form.created'
+  | 'custom_form.updated'
+  | 'custom_form.deleted'
+  | 'custom_form.published'
+  | 'custom_form.archived'
+  | 'custom_form.viewed'
+  | 'custom_form.list'
+  | 'custom_form.sent_to_patient'
+  | 'custom_form.assignment_cancelled'
+  | 'custom_form.assignment_opened'
+  | 'custom_form.response_submitted'
+  | 'custom_form.response_viewed'
+  // D2: Telehealth waiting room.
+  | 'telehealth.session_started'
+  | 'telehealth.patient_invited'
+  | 'telehealth.patient_checked_in'
+  | 'telehealth.patient_admitted'
+  | 'telehealth.therapist_arrived'
+  | 'telehealth.session_ended'
+  | 'telehealth.patient_left'
+  | 'telehealth.session_status_polled'
+  // D3: Credentialing tracker.
+  | 'credential.license.create'
+  | 'credential.license.update'
+  | 'credential.license.delete'
+  | 'credential.license.expiry_warning'
+  | 'credential.license.expired'
+  | 'credential.specialty.create'
+  | 'credential.specialty.delete'
+  | 'credential.payer_enrollment.create'
+  | 'credential.payer_enrollment.update'
+  | 'credential.payer_enrollment.delete'
+  | 'credential.ce_credit.create'
+  | 'credential.ce_credit.update'
+  | 'credential.ce_credit.delete'
+  | 'credential.list'
+  | 'credential.expiry_cron_run'
+  // D4: Calendar event types.
+  | 'event_type.create'
+  | 'event_type.update'
+  | 'event_type.delete'
+  | 'event_type.list'
+  | 'appointment.event_type_set'
+  // D5: Patient flags + saved views.
+  | 'patient_flag.added'
+  | 'patient_flag.cleared'
+  | 'patient_flag.list'
+  | 'saved_view.create'
+  | 'saved_view.update'
+  | 'saved_view.delete'
+  | 'saved_view.list'
+  | 'saved_view.viewed'
+  // D6: Dashboard widgets follow-through.
+  | 'widget_layout.updated'
+  | 'widget_layout.reset'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
@@ -329,11 +386,13 @@ export async function auditEhrAccess(params: {
   resourceType?: string
   resourceId?: string | null
   details?: Record<string, unknown>
+  /** Wave 49 — severity tag for triage. Defaults to 'info'. */
+  severity?: 'info' | 'warning' | 'critical'
 }): Promise<void> {
   try {
     await pool.query(
-      `INSERT INTO audit_logs (user_id, user_email, practice_id, action, resource_type, resource_id, details)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      `INSERT INTO audit_logs (user_id, user_email, practice_id, action, resource_type, resource_id, details, severity)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
       [
         params.ctx.user.id,
         params.ctx.session.email,
@@ -342,6 +401,7 @@ export async function auditEhrAccess(params: {
         params.resourceType ?? 'ehr_progress_note',
         params.resourceId ?? null,
         JSON.stringify(params.details ?? {}),
+        params.severity ?? 'info',
       ],
     )
   } catch (err) {
@@ -389,6 +449,13 @@ export type PortalAuditAction =
   | 'portal.insurance_card.uploaded'
   | 'portal.insurance_card.reviewed'
   | 'portal.insurance_card.confirmed'
+  // Wave 49 D2 — telehealth waiting-room (patient surface)
+  | 'telehealth.patient_checked_in'
+  | 'telehealth.patient_left'
+  // Wave 49 D1 — custom forms (patient submission via portal token, but
+  // these may also be logged from a portal-session context.)
+  | 'custom_form.assignment_opened'
+  | 'custom_form.response_submitted'
 
 /**
  * Audit a portal patient action. Mirrors auditEhrAccess() but takes a
