@@ -6,6 +6,8 @@
 // callers who hit before the inbound webhook fires) and its own agent
 // (so voice settings are tunable per-practice).
 
+import { HARBOR_DEFAULT_RECEPTIONIST_PROMPT } from '../retell/default-prompt'
+
 const RETELL_API_KEY = process.env.RETELL_API_KEY || ''
 const DEMO_AGENT_ID = process.env.RETELL_AGENT_ID || ''
 const DEMO_LLM_ID = process.env.RETELL_LLM_ID || ''
@@ -61,11 +63,14 @@ export async function cloneAgentForPractice(opts: {
   // 1. Pull demo LLM
   const demoLlm = await retellGet<any>(`/get-retell-llm/${DEMO_LLM_ID}`)
 
-  // 2. Build practice-specific prompt: substitute the static defaults.
-  //    The {{practice_name}} / {{therapist_name}} dynamic placeholders
-  //    elsewhere in the prompt remain — Retell still substitutes them
-  //    per-call from inbound webhook context.
-  const baseGeneralPrompt: string = demoLlm.general_prompt ?? ''
+  // 2. Build practice-specific prompt. The base prompt now lives in
+  //    code (HARBOR_DEFAULT_RECEPTIONIST_PROMPT) rather than being
+  //    fetched from the demo LLM, so updates to the canonical Harbor
+  //    receptionist behavior ship via deploy, not by manually editing
+  //    the Retell dashboard. The {{practice_name}}, {{therapist_name}},
+  //    {{practice_hours}} placeholders are still substituted per-call
+  //    from the inbound webhook context.
+  const baseGeneralPrompt: string = HARBOR_DEFAULT_RECEPTIONIST_PROMPT
   // Pre-bake fallbacks at the top so callers hit a useful default
   // even when inbound-webhook context is unavailable.
   const therapistLine = opts.therapistName
