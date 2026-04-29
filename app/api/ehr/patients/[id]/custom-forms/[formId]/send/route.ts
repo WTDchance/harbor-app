@@ -9,6 +9,7 @@ import { randomBytes } from 'node:crypto'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
+import { sendCustomFormInvitation } from '@/lib/aws/transactional-email'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -23,8 +24,12 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { id: patientId, formId } = await params
 
   // Verify patient + form both belong to the caller's practice.
-  const { rows: pRows } = await pool.query(
-    `SELECT id FROM patients WHERE id = $1 AND practice_id = $2 LIMIT 1`,
+  const { rows: pRows } = await pool.query<{
+    id: string
+    email: string | null
+    first_name: string | null
+  }>(
+    `SELECT id, email, first_name FROM patients WHERE id = $1 AND practice_id = $2 LIMIT 1`,
     [patientId, ctx.practiceId],
   )
   if (pRows.length === 0) return NextResponse.json({ error: 'patient_not_found' }, { status: 404 })
@@ -59,8 +64,25 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   })
 
   const base = process.env.NEXT_PUBLIC_APP_URL ?? ''
+
+  // Wave 50 — fire transactional invitation email (suppression+pref+audit
+  // are handled in the wrapper; failure here doesn't block assignment).
+  if (pRows[0].email) {
+    sendCustomFormInvitation({
+      practiceId: ctx.practiceId!,
+      patientEmail: pRows[0].email,
+      patientFirstName: pRows[0].first_name ?? 'there',
+      providerName: ctx.user.full_name ?? 'your provider',
+      formName: fRows[0].name,
+      formToken: token,
+      expiryDays: 14,
+    }).catch(err => {
+      console.error('[custom-form/send] email failed:', (err as Error).message)
+    })
+  }
+
   return NextResponse.json({
     assignment: ins.rows[0],
-    portal_url: `${base}/portal/forms/${token}`,
+    portal_url: `${base}/portal/custom-forms/${token}`,
   }, { status: 201 })
 }

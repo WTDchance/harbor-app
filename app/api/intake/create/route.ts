@@ -7,6 +7,7 @@ import { randomBytes } from 'crypto'
 import { requireApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { sendPatientEmail, buildIntakeEmail } from '@/lib/email'
+import { sendIntakeInvitation } from '@/lib/aws/transactional-email'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -66,23 +67,25 @@ export async function POST(req: NextRequest) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://lab.harboroffice.ai'
   const intakeUrl = `${baseUrl.replace(/\/$/, '')}/intake/${token}`
 
-  // Email
+  // Email — Wave 50 transactional pipeline (suppression+pref+audit+log).
   let emailSent = false
   let emailReason: string | null = null
   if (patient_email) {
     try {
-      const { subject, html } = buildIntakeEmail({
-        practiceName: ctx.practice.name,
-        patientName: patient_name ?? undefined,
-        intakeUrl,
+      const firstName = (patient_name ?? '').split(/\s+/)[0] || 'there'
+      const res = await sendIntakeInvitation({
+        practiceId: ctx.practice.id,
+        patientEmail: patient_email,
+        patientFirstName: firstName,
+        intakeToken: token,
+        expiryDays: 7,
       })
-      const res = await sendPatientEmail({
-        practiceId: ctx.practice.id, to: patient_email, subject, html,
-      })
-      emailSent = res.sent
-      if (!emailSent) {
-        emailReason = res.skipped === 'opted_out'
-          ? 'recipient_opted_out'
+      emailSent = res.ok
+      if (!res.ok) {
+        emailReason =
+          res.reason === 'opted_out' ? 'recipient_opted_out'
+          : res.reason === 'suppressed' ? 'recipient_suppressed'
+          : res.reason === 'invalid_recipient' ? 'invalid_email'
           : 'ses_not_verified_or_send_failed'
       }
     } catch (err) {
