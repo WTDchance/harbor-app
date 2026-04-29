@@ -5,7 +5,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import Link from "next/link";
+import Link from "next/link"
+import TierSwitcher from "@/components/reception/TierSwitcher";
 import ImpersonationBanner from "@/components/ImpersonationBanner";
 import SessionTimeout from "@/components/SessionTimeout";
 
@@ -331,6 +332,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [practiceName, setPracticeName] = useState<string | null>(null);
+  const [productTier, setProductTier] = useState<string>('ehr_full');
   const [ehrEnabled, setEhrEnabled] = useState(false);
   const [prefs, setPrefs] = useState<{
     features: Record<string, boolean>
@@ -371,8 +373,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         }
         const data = await res.json();
         if (cancelled) return;
+        // W48 T6 — reception_only practices belong on /reception/dashboard,
+        // not here. ehr_full / ehr_only / both pass through. 'both' gets
+        // a tier switcher in a follow-up; for now they default to EHR.
+        const tier = data.practice?.productTier ?? 'ehr_full';
+        if (tier === 'reception_only') {
+          router.replace('/reception/dashboard');
+          return;
+        }
         setUserEmail(data.email ?? null);
         setPracticeName(data.practice?.name ?? null);
+        setProductTier(tier);
         if (data.practice?.ehrEnabled === true) setEhrEnabled(true);
         // Preferences (gracefully no-op if endpoint not yet ported)
         try {
@@ -599,6 +610,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         <ImpersonationBanner />
         <SessionTimeout />
         <main className="flex-1 overflow-auto">
+        {productTier === "both" && (
+          <div className="flex justify-end px-4 py-2 border-b border-gray-100 bg-white"><TierSwitcher tier={productTier} /></div>
+        )}
           {children}
         </main>
       </div>
