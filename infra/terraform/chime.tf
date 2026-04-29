@@ -88,10 +88,10 @@ resource "aws_iam_role_policy" "task_chime_recording" {
 }
 
 resource "aws_kms_key" "chime_recordings" {
-  description              = "Encrypts Chime telehealth recording artifacts"
-  enable_key_rotation      = true
-  deletion_window_in_days  = 30
-  tags                     = local.common_tags
+  description             = "Encrypts Chime telehealth recording artifacts"
+  enable_key_rotation     = true
+  deletion_window_in_days = 30
+  tags                    = local.common_tags
 }
 
 resource "aws_kms_alias" "chime_recordings" {
@@ -139,7 +139,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "chime_recordings" {
     id     = "hipaa-7y-retention"
     status = "Enabled"
     expiration {
-      days = 2555  # 7 years
+      days = 2555 # 7 years
     }
     noncurrent_version_expiration {
       noncurrent_days = 90

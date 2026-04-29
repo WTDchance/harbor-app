@@ -50,26 +50,26 @@ locals {
   ]
 
   app_secrets = [
-    { name = "PGPASSWORD",        valueFrom = aws_ssm_parameter.rds_password.arn },
+    { name = "PGPASSWORD", valueFrom = aws_ssm_parameter.rds_password.arn },
     # Runtime API keys (see secrets.tf for the placeholder/ignore_changes pattern).
     { name = "ANTHROPIC_API_KEY", valueFrom = aws_ssm_parameter.anthropic_api_key.arn },
-    { name = "STEDI_API_KEY",     valueFrom = aws_ssm_parameter.stedi_api_key.arn },
-    { name = "OPENAI_API_KEY",    valueFrom = aws_ssm_parameter.openai_api_key.arn },
+    { name = "STEDI_API_KEY", valueFrom = aws_ssm_parameter.stedi_api_key.arn },
+    { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
     # Stripe webhook signing secrets (Wave 25). Two distinct endpoints:
     #   subscriptions  → app/api/stripe/webhook/route.ts
     #   billing        → app/api/ehr/billing/stripe-webhook/route.ts
-    { name = "STRIPE_WEBHOOK_SECRET",     valueFrom = aws_ssm_parameter.stripe_webhook_subscriptions.arn },
+    { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_subscriptions.arn },
     { name = "STRIPE_EHR_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_billing.arn },
     # Wave 27b — SignalWire + Retell carrier-swap credentials.
-    { name = "SIGNALWIRE_PROJECT_ID",     valueFrom = aws_ssm_parameter.signalwire_project_id.arn },
-    { name = "SIGNALWIRE_TOKEN",          valueFrom = aws_ssm_parameter.signalwire_token.arn },
-    { name = "SIGNALWIRE_SPACE_URL",      valueFrom = aws_ssm_parameter.signalwire_space_url.arn },
-    { name = "SIGNALWIRE_FROM_NUMBER",    valueFrom = aws_ssm_parameter.signalwire_from_number.arn },
-    { name = "RETELL_API_KEY",            valueFrom = aws_ssm_parameter.retell_api_key.arn },
-    { name = "RETELL_AGENT_ID",           valueFrom = aws_ssm_parameter.retell_agent_id.arn },
-    { name = "RETELL_LLM_ID",             valueFrom = aws_ssm_parameter.retell_llm_id.arn },
+    { name = "SIGNALWIRE_PROJECT_ID", valueFrom = aws_ssm_parameter.signalwire_project_id.arn },
+    { name = "SIGNALWIRE_TOKEN", valueFrom = aws_ssm_parameter.signalwire_token.arn },
+    { name = "SIGNALWIRE_SPACE_URL", valueFrom = aws_ssm_parameter.signalwire_space_url.arn },
+    { name = "SIGNALWIRE_FROM_NUMBER", valueFrom = aws_ssm_parameter.signalwire_from_number.arn },
+    { name = "RETELL_API_KEY", valueFrom = aws_ssm_parameter.retell_api_key.arn },
+    { name = "RETELL_AGENT_ID", valueFrom = aws_ssm_parameter.retell_agent_id.arn },
+    { name = "RETELL_LLM_ID", valueFrom = aws_ssm_parameter.retell_llm_id.arn },
     # Wave 27p — LaML signing key (HMAC key for inbound webhook signature).
-    { name = "SIGNALWIRE_SIGNING_KEY",    valueFrom = aws_ssm_parameter.signalwire_signing_key.arn },
+    { name = "SIGNALWIRE_SIGNING_KEY", valueFrom = aws_ssm_parameter.signalwire_signing_key.arn },
     # Wave 27o — debug toggle ("true"/"false"). Plain String SSM param.
     { name = "SIGNALWIRE_VALIDATE_INBOUND", valueFrom = aws_ssm_parameter.signalwire_validate_inbound.arn },
   ]

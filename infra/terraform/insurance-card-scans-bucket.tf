@@ -99,9 +99,9 @@ data "aws_iam_policy_document" "insurance_cards_bucket" {
   }
 
   statement {
-    sid       = "DenyInsecureTransport"
-    effect    = "Deny"
-    actions   = ["s3:*"]
+    sid     = "DenyInsecureTransport"
+    effect  = "Deny"
+    actions = ["s3:*"]
     resources = [
       aws_s3_bucket.insurance_cards.arn,
       "${aws_s3_bucket.insurance_cards.arn}/*",
