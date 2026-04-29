@@ -9,8 +9,10 @@
 //   • lab.harboroffice.ai (and any other host) → existing EHR app
 //     Cognito-only auth. Public allowlist (no auth required):
 //       /, /login, /login/aws, /signup, /onboard, /intake, /privacy*,
-//       /terms, /sms, /reset-password, /appointments/*,
+//       /terms, /sms, /reset-password, /appointments/*, /reception/signup,
 //       Next internals, and select /api/* (each route enforces its own auth).
+//     /reception/dashboard and the rest of /reception/* require auth and
+//     are tier-gated to reception_only / both at the layout/API level.
 //
 //     Everything else requires a valid Cognito ID token cookie (presence
 //     checked at the edge; full JWKS verification happens in route handlers
@@ -34,6 +36,9 @@ const PUBLIC_PREFIXES = [
   '/sms',
   '/reset-password',
   '/appointments/',
+  // Wave 47 — public Reception-only signup. The rest of /reception/*
+  // (dashboard, etc.) stays auth-gated and tier-checked.
+  '/reception/signup',
   '/_next',
   '/favicon',
 ]
