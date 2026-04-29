@@ -9,6 +9,7 @@
 
 export type HarborTierKey =
   | 'reception_only_monthly'
+  | 'reception_with_verify_monthly'
   | 'solo_cash_pay_monthly'
   | 'solo_in_network_monthly'
   | 'group_practice_monthly'
@@ -26,12 +27,21 @@ export interface HarborTier {
 export const HARBOR_PRICING_TIERS = {
   reception_only_monthly: {
     key: 'reception_only_monthly',
-    name: 'Reception Only',
+    name: 'Reception',
     description:
-      'AI receptionist for practices that already have an EHR elsewhere. Inbound calls, intake, scheduling reminders.',
+      'AI receptionist for practices that already have an EHR elsewhere. Inbound calls, intake capture, calendar sync, lead handoff.',
     interval: 'month',
-    amount_usd_cents: 9900,
+    amount_usd_cents: 19900,
     stripe_price_id_env: 'STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY',
+  },
+  reception_with_verify_monthly: {
+    key: 'reception_with_verify_monthly',
+    name: 'Reception + Verify',
+    description:
+      'AI receptionist + real-time Stedi insurance eligibility verification. For in-network practices that want coverage confirmed at the call.',
+    interval: 'month',
+    amount_usd_cents: 24900,
+    stripe_price_id_env: 'STRIPE_PRICE_RECEPTION_WITH_VERIFY_MONTHLY',
   },
   solo_cash_pay_monthly: {
     key: 'solo_cash_pay_monthly',
