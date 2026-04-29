@@ -10,10 +10,15 @@ const supabase = createClient()
 
 import { useState, useEffect, useCallback, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import PatientFlagChips from "@/components/ehr/PatientFlagChips";
+import PatientFlagManager from "@/components/ehr/PatientFlagManager";
+import SavedViewsSidebar, { FilterChipBar, emptyFilter, type SavedView } from "@/components/ehr/SavedViewsSidebar";
+import type { FilterNode } from "@/lib/ehr/patient-flags";
 
 
 type Patient = {
   key: string; // patient UUID
+  active_flags?: string[];
   patient_name: string | null;
   patient_email: string | null;
   patient_phone: string | null;
@@ -121,6 +126,10 @@ export default function PatientsPage() {
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortOption>("name-asc");
   const [showCreate, setShowCreate] = useState(false);
+  // Wave 49: saved views + chip-filter state.
+  const [filter, setFilter] = useState<FilterNode>(emptyFilter());
+  const [selectedView, setSelectedView] = useState<SavedView | null>(null);
+  const [flagsByPatient, setFlagsByPatient] = useState<Record<string, string[]>>({});
 
   // Debounce search
   useEffect(() => {
@@ -154,6 +163,24 @@ export default function PatientsPage() {
       const json = await res.json();
       setPatients(json.patients || []);
       setTotal(json.total || 0);
+
+      // Wave 49 -- side fetch for active flags so we can render chips on
+      // the legacy list rows. Best-effort; failures fall through silently.
+      try {
+        const fr = await fetch('/api/ehr/patients-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filter, sort: { field: 'last_name', direction: 'asc' }, limit: 500 }),
+        });
+        if (fr.ok) {
+          const fj = await fr.json();
+          const map: Record<string, string[]> = {};
+          for (const p of (fj.patients || []) as { id: string; active_flags?: string[] }[]) {
+            map[p.id] = Array.isArray(p.active_flags) ? p.active_flags : [];
+          }
+          setFlagsByPatient(map);
+        }
+      } catch { /* ignore */ }
     } catch (e) {
       console.error("Error fetching patients:", e);
     } finally {
@@ -172,7 +199,23 @@ export default function PatientsPage() {
   }, [fetchPatients]);
 
   return (
-    <div className="max-w-5xl mx-auto p-6">
+    <div className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-6">
+      <aside className="hidden lg:block">
+        <SavedViewsSidebar
+          selectedId={selectedView?.id ?? null}
+          onSelect={(v) => {
+            setSelectedView(v);
+            if (v && v.filter && Object.keys(v.filter).length > 0) {
+              setFilter(v.filter as FilterNode);
+            } else if (!v) {
+              setFilter(emptyFilter());
+            }
+          }}
+          currentFilter={filter}
+          currentSort={{ field: 'last_name', direction: 'asc' }}
+        />
+      </aside>
+      <div>
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Patients</h1>
@@ -195,6 +238,9 @@ export default function PatientsPage() {
           }}
         />
       )}
+
+      {/* Wave 49: chip-based filter bar. */}
+      <FilterChipBar value={filter} onChange={setFilter} />
 
       {/* Search + Sort */}
       <div className="flex gap-3 mb-4">
@@ -243,6 +289,7 @@ export default function PatientsPage() {
                     {patient.patient_name || "Unknown"}
                   </h3>
                   <IntakeStatusBadge status={patient.intake_status} />
+                  <PatientFlagChips flags={(patient.active_flags && patient.active_flags.length ? patient.active_flags : flagsByPatient[patient.key]) as any} size="xs" />
                 </div>
                 <div className="flex items-center gap-4 mt-1 text-sm text-gray-500">
                   {patient.patient_phone && (
@@ -298,6 +345,7 @@ export default function PatientsPage() {
           ))}
         </div>
       )}
+      </div>
     </div>
   );
 }
