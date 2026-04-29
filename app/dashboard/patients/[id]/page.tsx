@@ -47,6 +47,8 @@ import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes"
 import { ExportPatientButton } from "@/components/ehr/ExportPatientButton"
 import { InsuranceCardScanner } from "@/components/ehr/InsuranceCardScanner"
 import { PreauthRequestsCard } from "@/components/ehr/PreauthRequestsCard"
+import PatientFlagChips from "@/components/ehr/PatientFlagChips"
+import PatientFlagManager from "@/components/ehr/PatientFlagManager"
 
 type PatientResp = {
   patient: {
@@ -145,6 +147,7 @@ function saveSectionPrefs(prefs: Record<SectionKey, boolean>) {
 export default function PatientDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const [activeFlags, setActiveFlags] = useState<string[]>([])
   const patientId = params?.id as string
 
   const [data, setData] = useState<PatientResp | null>(null)
@@ -201,7 +204,22 @@ export default function PatientDetailPage() {
   }, [data])
 
   if (loading) {
-    return (
+    useEffect(() => {
+    if (!patientId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch(`/api/ehr/patients/${patientId}/flags`)
+        if (!r.ok) return
+        const j = await r.json()
+        if (cancelled) return
+        setActiveFlags((j.flags || []).map((f: any) => f.type).filter(Boolean))
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [patientId])
+
+  return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-gray-500">Loading patient…</div>
       </div>
@@ -240,6 +258,8 @@ export default function PatientDetailPage() {
                 {ageStr && <span>· {ageStr}y</span>}
                 {p.date_of_birth && <span>· DOB {new Date(p.date_of_birth).toLocaleDateString()}</span>}
               </div>
+              {/* Wave 49 -- patient flag chips in the header. */}
+              <div className="mt-1"><PatientFlagChips flags={activeFlags as any} /></div>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -254,6 +274,7 @@ export default function PatientDetailPage() {
               Edit
             </Link>
             <ExportPatientButton patientId={patientId} />
+            <PatientFlagManager patientId={patientId} />
           </div>
         </div>
       </div>

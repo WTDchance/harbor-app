@@ -25,6 +25,7 @@ interface EligibilityCheck {
 
 interface InsuranceRecord {
   id: string
+  patient_id?: string | null
   patient_name: string
   patient_dob: string | null
   patient_phone: string | null
@@ -70,6 +71,8 @@ export default function InsurancePage() {
   const [form, setForm] = useState<FormData>(emptyForm)
   const [saving, setSaving] = useState(false)
   const [verifying, setVerifying] = useState<string | null>(null)
+  const [coverageChecking, setCoverageChecking] = useState<string | null>(null)
+  const [coverageDetail, setCoverageDetail] = useState<{ recordId: string; result: any } | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [setupNeeded, setSetupNeeded] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -142,6 +145,36 @@ export default function InsurancePage() {
       await fetchRecords()
     } catch { setError('Verification failed') }
     setVerifying(null)
+  }
+
+  // Launch-blocker fix #5 -- patient-keyed manual eligibility trigger that
+  // hits POST /api/ehr/patients/{id}/eligibility-check. Returns the full
+  // EligibilityResult inline so the practice owner sees copay/deductible
+  // immediately. Result is also persisted via the existing Stedi helper.
+  async function handleCheckCoverage(record: InsuranceRecord) {
+    if (!record.patient_id) {
+      setError('This record has no linked patient -- use the legacy Verify button.')
+      return
+    }
+    setCoverageChecking(record.id)
+    setError(null)
+    try {
+      const res = await fetch(`/api/ehr/patients/${record.patient_id}/eligibility-check`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ insurance_record_id: record.id }),
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok) {
+        setError(data?.message || data?.error || 'Coverage check failed')
+      } else {
+        setCoverageDetail({ recordId: record.id, result: data?.result ?? null })
+        await fetchRecords()
+      }
+    } catch {
+      setError('Coverage check failed')
+    }
+    setCoverageChecking(null)
   }
 
   async function handleDelete(id: string) {
@@ -349,6 +382,15 @@ export default function InsurancePage() {
                     {verifying === record.id ? 'Checking...' : 'Verify'}
                   </button>
                   <button
+                    onClick={() => handleCheckCoverage(record)}
+                    disabled={coverageChecking === record.id || !record.patient_id}
+                    title={!record.patient_id ? 'Linked patient required' : 'Run a real-time Stedi 270/271 eligibility check'}
+                    className="flex items-center gap-1.5 px-3 py-1.5 border border-blue-200 text-blue-700 rounded-lg text-xs hover:bg-blue-50 transition-colors disabled:opacity-50"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${coverageChecking === record.id ? 'animate-spin' : ''}`} />
+                    {coverageChecking === record.id ? 'Checking coverage…' : 'Check coverage now'}
+                  </button>
+                  <button
                     onClick={() => setExpanded(expanded === record.id ? null : record.id)}
                     className="p-1.5 text-gray-400 hover:text-gray-600"
                   >
@@ -360,6 +402,22 @@ export default function InsurancePage() {
                 </div>
               </div>
 
+              {coverageDetail?.recordId === record.id && coverageDetail.result && (
+                <div className="px-4 pb-4 pt-3 border-t border-gray-100 bg-blue-50 text-sm">
+                  <div className="font-medium text-blue-900 mb-2">Live Stedi 270/271 result</div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div><div className="text-xs text-gray-500">Status</div><div>{String(coverageDetail.result.status)}</div></div>
+                    <div><div className="text-xs text-gray-500">Active</div><div>{coverageDetail.result.isActive == null ? '—' : (coverageDetail.result.isActive ? 'Yes' : 'No')}</div></div>
+                    <div><div className="text-xs text-gray-500">Copay</div><div>{coverageDetail.result.copayAmount != null ? `$${(coverageDetail.result.copayAmount / 100).toFixed(2)}` : '—'}</div></div>
+                    <div><div className="text-xs text-gray-500">Deductible total</div><div>{coverageDetail.result.deductibleTotal != null ? `$${(coverageDetail.result.deductibleTotal / 100).toFixed(2)}` : '—'}</div></div>
+                    <div><div className="text-xs text-gray-500">Deductible met</div><div>{coverageDetail.result.deductibleMet != null ? `$${(coverageDetail.result.deductibleMet / 100).toFixed(2)}` : '—'}</div></div>
+                    <div><div className="text-xs text-gray-500">Plan</div><div>{coverageDetail.result.planName || '—'}</div></div>
+                  </div>
+                  {coverageDetail.result.errorMessage && (
+                    <p className="mt-2 text-xs text-red-700">{coverageDetail.result.errorMessage}</p>
+                  )}
+                </div>
+              )}
               {expanded === record.id && (
                 <div className="px-4 pb-4 pt-0 border-t border-gray-100 bg-gray-50">
                   <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3 text-sm">

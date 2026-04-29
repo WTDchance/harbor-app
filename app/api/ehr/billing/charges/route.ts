@@ -52,9 +52,41 @@ export async function POST(req: NextRequest) {
   if (ctx instanceof NextResponse) return ctx
 
   const body = await req.json().catch(() => null)
-  if (!body?.patient_id || !body?.cpt_code) {
-    return NextResponse.json({ error: 'patient_id and cpt_code required' }, { status: 400 })
+  if (!body?.patient_id) {
+    return NextResponse.json({ error: 'patient_id required' }, { status: 400 })
   }
+
+  // Launch-blocker fix #4 -- when the caller passes appointment_id but no
+  // explicit cpt_code, default the CPT from the appointment's event_type
+  // (Wave 49: calendar_event_types.default_cpt_codes). If both are
+  // provided, the explicit cpt_code wins (manual override semantics).
+  // We only DEFAULT, we don't validate -- conflicts are intentional.
+  let resolvedCpt: string | null = body.cpt_code ? String(body.cpt_code) : null
+  let cptDefaultedFrom: 'event_type' | null = null
+  if (!resolvedCpt && body.appointment_id) {
+    const r = await pool.query(
+      `SELECT et.default_cpt_codes
+         FROM appointments a
+         LEFT JOIN calendar_event_types et ON et.id = a.event_type_id
+        WHERE a.id = $1 AND a.practice_id = $2
+        LIMIT 1`,
+      [body.appointment_id, ctx.practiceId],
+    ).catch(() => ({ rows: [] as any[] }))
+    const codes: string[] = Array.isArray(r.rows[0]?.default_cpt_codes)
+      ? r.rows[0].default_cpt_codes.map(String)
+      : []
+    if (codes[0]) {
+      resolvedCpt = codes[0]
+      cptDefaultedFrom = 'event_type'
+    }
+  }
+  if (!resolvedCpt) {
+    return NextResponse.json(
+      { error: 'cpt_code required (or appointment_id whose event_type has default_cpt_codes)' },
+      { status: 400 },
+    )
+  }
+  body.cpt_code = resolvedCpt
 
   // Per-practice CPT fee override lives in practices.default_fee_schedule_cents (jsonb).
   const practiceFee = await pool.query(
@@ -114,7 +146,9 @@ export async function POST(req: NextRequest) {
       base_fee_cents: baseFee,
       sliding_fee_tier_applied: appliedTier,
       sliding_fee_pct: appliedPct,
+      cpt_defaulted_from: cptDefaultedFrom,
     },
+    severity: 'info',
   })
-  return NextResponse.json({ charge }, { status: 201 })
+  return NextResponse.json({ charge, cpt_defaulted_from: cptDefaultedFrom }, { status: 201 })
 }

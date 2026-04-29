@@ -5,9 +5,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Users, Filter } from 'lucide-react'
+import PatientFlagChips from '@/components/ehr/PatientFlagChips'
+import SavedViewsSidebar, { FilterChipBar, emptyFilter, type SavedView } from '@/components/ehr/SavedViewsSidebar'
+import type { FilterNode } from '@/lib/ehr/patient-flags' 
 
 type Row = {
   id: string; name: string; phone: string | null; email: string | null
+  active_flags?: string[]
   referral_source: string | null; patient_since: string
   last_appt: string | null; next_appt: string | null
   open_notes: number
@@ -28,6 +32,32 @@ function cents(n: number): string { return `$${(n / 100).toFixed(2)}` }
 export default function CaseloadPage() {
   const [rows, setRows] = useState<Row[] | null>(null)
   const [filter, setFilter] = useState<Filter>('all')
+  // Wave 49 mirror of /dashboard/patients.
+  const [w49Filter, setW49Filter] = useState<FilterNode>(emptyFilter())
+  const [selectedView, setSelectedView] = useState<SavedView | null>(null)
+  const [flagsByPatient, setFlagsByPatient] = useState<Record<string, string[]>>({})
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const r = await fetch('/api/ehr/patients-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filter: w49Filter, sort: { field: 'last_name', direction: 'asc' }, limit: 500 }),
+        })
+        if (!r.ok) return
+        const j = await r.json()
+        if (cancelled) return
+        const map: Record<string, string[]> = {}
+        for (const p of (j.patients || []) as { id: string; active_flags?: string[] }[]) {
+          map[p.id] = Array.isArray(p.active_flags) ? p.active_flags : []
+        }
+        setFlagsByPatient(map)
+      } catch { /* ignore */ }
+    })()
+    return () => { cancelled = true }
+  }, [w49Filter])
 
   useEffect(() => {
     (async () => {
@@ -51,7 +81,20 @@ export default function CaseloadPage() {
   }, [rows, filter])
 
   return (
-    <div className="max-w-6xl mx-auto py-8 px-4">
+    <div className="max-w-7xl mx-auto py-8 px-4 grid grid-cols-1 lg:grid-cols-[220px,1fr] gap-6">
+      <aside className="hidden lg:block">
+        <SavedViewsSidebar
+          selectedId={selectedView?.id ?? null}
+          onSelect={(v) => {
+            setSelectedView(v)
+            if (v && v.filter && Object.keys(v.filter).length > 0) setW49Filter(v.filter as FilterNode)
+            else if (!v) setW49Filter(emptyFilter())
+          }}
+          currentFilter={w49Filter}
+          currentSort={{ field: 'last_name', direction: 'asc' }}
+        />
+      </aside>
+      <div>
       <div className="flex items-center justify-between mb-4">
         <div>
           <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-2">
@@ -63,6 +106,8 @@ export default function CaseloadPage() {
           </p>
         </div>
       </div>
+
+      <FilterChipBar value={w49Filter} onChange={setW49Filter} />
 
       <div className="mb-3 flex items-center gap-2 flex-wrap">
         <Filter className="w-4 h-4 text-gray-400" />
@@ -99,9 +144,12 @@ export default function CaseloadPage() {
                 return (
                   <tr key={r.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2">
-                      <Link href={`/dashboard/patients/${r.id}`} className="text-sm text-teal-700 hover:text-teal-900 font-medium">
-                        {r.name}
-                      </Link>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link href={`/dashboard/patients/${r.id}`} className="text-sm text-teal-700 hover:text-teal-900 font-medium">
+                          {r.name}
+                        </Link>
+                        <PatientFlagChips flags={(r.active_flags && r.active_flags.length ? r.active_flags : flagsByPatient[r.id]) as any} size="xs" />
+                      </div>
                       {r.referral_source && <div className="text-[10px] text-gray-400">via {r.referral_source}</div>}
                     </td>
                     <td className={`px-4 py-2 text-xs ${stale ? 'text-amber-700' : 'text-gray-600'}`}>
@@ -147,6 +195,7 @@ export default function CaseloadPage() {
             </tbody>
           </table>
         )}
+      </div>
       </div>
     </div>
   )

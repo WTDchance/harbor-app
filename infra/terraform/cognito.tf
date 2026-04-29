@@ -55,7 +55,7 @@ resource "aws_cognito_user_pool" "this" {
   </div>
 </body></html>
       EOT
-      sms_message = "Your Harbor temporary password is {####}. Sign in at harborreceptionist.com/login as {username}."
+      sms_message   = "Your Harbor temporary password is {####}. Sign in at harborreceptionist.com/login as {username}."
     }
   }
 
