@@ -7,7 +7,7 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { requireEhrApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
-import { generateApiKey, revokeApiKey } from '@/lib/aws/reception/generate-api-key'
+import { generateApiKey } from '@/lib/aws/reception/generate-api-key'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -43,16 +43,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'at_least_one_scope_required' }, { status: 400 })
   }
 
-  const minted = await generateApiKey({
-    practiceId: ctx.practiceId,
-    scopes: filtered,
-    createdByUserId: ctx.user.id,
-  })
+  const minted = await generateApiKey(ctx.practiceId!, filtered, ctx.user.id)
 
   return NextResponse.json({
-    id: minted.id,
+    id: minted.key_id,
     plaintext: minted.plaintext,
-    prefix: minted.prefix,
+    prefix: minted.key_prefix,
     scopes: filtered,
   })
 }

@@ -147,11 +147,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Mint the first API key with a sensible default scope set.
-    const minted = await generateApiKey({
-      practiceId,
-      scopes: DEFAULT_SCOPES,
-      createdByUserId: null,
-    })
+    const minted = await generateApiKey(practiceId, DEFAULT_SCOPES, null)
 
     await auditSystemEvent({
       action: 'reception.signup_completed' as any,
