@@ -9,6 +9,7 @@ import { pool } from '@/lib/aws/db'
 import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 import { assertCronAuthorized } from '@/lib/cron-auth'
 import { sendEmail } from '@/lib/email'
+import { sendCredentialingExpiryWarning } from '@/lib/aws/transactional-email'
 import { EXPIRY_THRESHOLDS, daysUntil, pickThresholdToFire } from '@/lib/ehr/credentialing'
 
 export const runtime = 'nodejs'
@@ -110,14 +111,16 @@ export async function GET(req: NextRequest) {
     })
 
     if (row.owner_email) {
-      sendEmail({
-        to: row.owner_email,
-        subject: `License expiring in ${days} days — ${row.therapist_name} (${row.type}, ${row.state})`,
-        html:
-          `<p>Heads up — <strong>${row.therapist_name}</strong>'s ${row.type} license in ${row.state} ` +
-          `(#${row.license_number}) expires on <strong>${row.expires_at}</strong> ` +
-          `(${days} day${days === 1 ? '' : 's'} from now).</p>` +
-          `<p><a href="${process.env.NEXT_PUBLIC_APP_URL ?? ''}/dashboard/settings/therapists/${row.therapist_id}/credentials">Renew or update the license →</a></p>`,
+      sendCredentialingExpiryWarning({
+        practiceId: row.practice_id,
+        ownerEmail: row.owner_email,
+        therapistName: row.therapist_name,
+        therapistId: row.therapist_id,
+        licenseType: row.type,
+        licenseState: row.state,
+        licenseNumber: row.license_number,
+        expiresAt: row.expires_at,
+        daysRemaining: days,
       }).catch((err: any) => {
         console.error('[credentials-expiry] email failed', err?.message ?? err)
       })
