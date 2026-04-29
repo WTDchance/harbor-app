@@ -38,6 +38,16 @@ jobs:
           role-to-assume: arn:aws:iam::417242953135:role/harbor-github-plan
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Write backend.hcl
+        run: |
+          cat > backend.hcl <<EOF
+          bucket         = "harbor-terraform-state-417242953135"
+          key            = "staging/terraform.tfstate"
+          region         = "us-east-1"
+          dynamodb_table = "harbor-terraform-lock"
+          encrypt        = true
+          EOF
+
       - name: terraform fmt
         run: terraform fmt -check -recursive
 
