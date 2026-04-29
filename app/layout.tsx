@@ -16,10 +16,14 @@ export const metadata: Metadata = {
   viewport: 'width=device-width, initial-scale=1',
   icons: {
     icon: [
-      { url: '/harbor-icon-clean.png', type: 'image/png' },
+      { url: '/favicon.ico' },
+      { url: '/favicon-16.png', type: 'image/png', sizes: '16x16' },
+      { url: '/favicon-32.png', type: 'image/png', sizes: '32x32' },
     ],
-    shortcut: '/harbor-icon-clean.png',
-    apple: '/harbor-icon-clean.png',
+    shortcut: '/favicon.ico',
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
   },
   manifest: '/manifest.json',
   appleWebApp: {
@@ -77,8 +81,10 @@ export default function RootLayout({
         <meta name="application-name" content="Harbor" />
         <meta name="theme-color" content="#0d9488" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" type="image/png" href="/harbor-icon-clean.png" />
-        <link rel="shortcut icon" type="image/png" href="/harbor-icon-clean.png" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+        <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16.png" />
+        <link rel="icon" href="/favicon.ico" />
+        <link rel="shortcut icon" href="/favicon.ico" />
         {/* Sized apple-touch-icon for sharp home-screen rendering on iOS. */}
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
