@@ -322,6 +322,9 @@ export type EhrAuditAction =
   // the secret material.
   | 'reception_api_key.created'
   | 'reception_api_key.revoked'
+  | 'credentialing.updated'
+  | 'credentialing.license_expiring_alert'
+  | 'credentialing.ce_added'
 
 export async function auditEhrAccess(params: {
   ctx: ApiAuthContext
