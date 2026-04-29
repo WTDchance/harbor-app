@@ -7,6 +7,7 @@ import { TelehealthButton } from '@/components/ehr/TelehealthButton'
 import { SessionTimerButton } from '@/components/ehr/SessionTimerButton'
 import { RecurrencePicker } from '@/components/ehr/RecurrencePicker'
 import { AppointmentCptPicker } from '@/components/ehr/AppointmentCptPicker'
+import EventTypePicker from '@/components/ehr/EventTypePicker'
 import { WaiveFeeButton } from '@/components/ehr/WaiveFeeButton'
 
 interface Appointment {
@@ -59,6 +60,7 @@ export default function AppointmentsPage() {
     appointment_time: '09:00',
     duration_minutes: 50,
     appointment_type: 'in-person',
+    event_type_id: null as string | null,
     notes: '',
     // Wave 38 TS1
     recurrence: 'none',
@@ -434,6 +436,21 @@ export default function AppointmentsPage() {
                     className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-teal-500 focus:border-transparent"
                     value={form.appointment_time}
                     onChange={e => setForm(f => ({ ...f, appointment_time: e.target.value }))}
+                  />
+                </div>
+                <div className="col-span-2 md:col-span-3 mb-3">
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Event type</label>
+                  <EventTypePicker
+                    value={form.event_type_id}
+                    onChange={(et) => setForm(f => ({
+                      ...f,
+                      event_type_id: et.id,
+                      duration_minutes: et.duration_minutes,
+                      cpt_code: et.cpt_codes[0] ?? f.cpt_code,
+                      appointment_type: !et.allows_in_person && et.allows_telehealth ? 'telehealth' :
+                                         !et.allows_telehealth && et.allows_in_person ? 'in-person' :
+                                         f.appointment_type,
+                    }))}
                   />
                 </div>
                 <div>

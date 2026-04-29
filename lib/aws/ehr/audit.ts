@@ -322,6 +322,15 @@ export type EhrAuditAction =
   // the secret material.
   | 'reception_api_key.created'
   | 'reception_api_key.revoked'
+  // Wave 50 — moat + wiring.
+  | 'retell.call.crisis_detected'
+  | 'retell.call_ended.no_call_log'
+  | 'receptionist.calls.list'
+  | 'receptionist.calls.view'
+  | 'receptionist.correction.created'
+  | 'insurance_verification.requested'
+  | 'insurance_verification.viewed'
+  | 'insurance_verification.list'
   // Wave 49 — Table stakes & depth catch-up.
   // D1: Custom forms builder.
   | 'custom_form.created'
