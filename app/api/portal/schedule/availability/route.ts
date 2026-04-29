@@ -68,12 +68,31 @@ export async function GET(req: NextRequest) {
     [sess.practiceId, startWindow.toISOString(), endWindow.toISOString()],
   ).catch(() => ({ rows: [] as any[] }))
 
+  // W49 T5 — calendar blocks (supervision, admin, lunch, etc.) also
+  // make a slot busy. Recurring blocks are not yet expanded here;
+  // an upcoming PR ports the W43 T1 recurrence expander to this
+  // surface. The non-recurring case covers the bulk of practice usage.
+  const blocksRes = await pool.query(
+    `SELECT starts_at, ends_at
+       FROM ehr_calendar_blocks
+      WHERE practice_id = $1
+        AND starts_at < $3 AND ends_at > $2
+        AND COALESCE(is_recurring, FALSE) = FALSE`,
+    [sess.practiceId, startWindow.toISOString(), endWindow.toISOString()],
+  ).catch(() => ({ rows: [] as any[] }))
+
   type Busy = { start: number; end: number }
-  const busy: Busy[] = busyRes.rows.map((r: any) => {
-    const s = new Date(r.scheduled_for).getTime()
-    const dur = Number(r.duration_minutes ?? duration) * 60_000
-    return { start: s - buffer * 60_000, end: s + dur + buffer * 60_000 }
-  }).sort((a, b) => a.start - b.start)
+  const busy: Busy[] = [
+    ...busyRes.rows.map((r: any) => {
+      const s = new Date(r.scheduled_for).getTime()
+      const dur = Number(r.duration_minutes ?? duration) * 60_000
+      return { start: s - buffer * 60_000, end: s + dur + buffer * 60_000 }
+    }),
+    ...blocksRes.rows.map((r: any) => ({
+      start: new Date(r.starts_at).getTime() - buffer * 60_000,
+      end:   new Date(r.ends_at).getTime() + buffer * 60_000,
+    })),
+  ].sort((a, b) => a.start - b.start)
 
   // Generate candidate slots on 30-minute increments inside business hours.
   // Conservative default: 9-17 every weekday if hours JSONB is not set.
