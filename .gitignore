@@ -52,3 +52,17 @@ infra/terraform/backend.hcl
 infra/terraform/*.tfstate*
 infra/terraform/*.tfvars
 .env.aws
+
+# Capacitor mobile builds
+/ios/Pods/
+/ios/build/
+/ios/DerivedData/
+/ios/*.xcworkspace/xcuserdata/
+/ios/*.xcodeproj/xcuserdata/
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/.idea/
+/android/local.properties
+/android/captures/
+/android/keystores/release/
