@@ -75,3 +75,43 @@ export async function startRetellTestCall(args: {
     return { ok: false, error: (err as Error).message }
   }
 }
+
+export interface UpdateAgentVoiceResult {
+  ok: boolean
+  agentId: string | null
+  error?: string
+}
+
+/**
+ * Push a voice_id update to a Retell agent. Best-effort; surfaces
+ * errors to the caller so a Retell hiccup doesn't block whatever
+ * else the caller is doing.
+ */
+export async function updateRetellAgentVoice(args: {
+  agentId: string
+  voiceId: string
+}): Promise<UpdateAgentVoiceResult> {
+  if (!RETELL_API_KEY) {
+    return { ok: false, agentId: args.agentId, error: 'RETELL_API_KEY not configured' }
+  }
+  if (!args.agentId) return { ok: false, agentId: null, error: 'agentId required' }
+  if (!args.voiceId) return { ok: false, agentId: args.agentId, error: 'voiceId required' }
+  try {
+    const res = await fetch(`https://api.retellai.com/update-agent/${args.agentId}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${RETELL_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ voice_id: args.voiceId }),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false, agentId: args.agentId, error: `retell_${res.status}: ${text.slice(0, 200)}` }
+    }
+    return { ok: true, agentId: args.agentId }
+  } catch (err) {
+    return { ok: false, agentId: args.agentId, error: (err as Error).message }
+  }
+}
+
