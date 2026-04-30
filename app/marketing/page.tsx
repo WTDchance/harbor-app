@@ -2,9 +2,9 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Harbor — HIPAA-aligned EHR & AI Receptionist for therapy practices',
+  title: 'Harbor — AI Receptionist for Therapy Practices',
   description:
-    'Harbor is the HIPAA-aligned EHR and AI receptionist built for therapy practices. Voice-to-text notes, no-show prediction, claim resubmit automation, and 24/7 call coverage — on a HIPAA-aligned AWS stack.',
+    'AI receptionist that answers calls 24/7, captures intake, verifies insurance in real time, and books appointments. Plugs into any EHR — Athena, Ensora, SimplePractice, TheraNest, or your existing calendar. HIPAA-aligned on AWS.',
 }
 
 const APP_URL = 'https://lab.harboroffice.ai'
@@ -27,15 +27,15 @@ export default function MarketingHome() {
             <div className="lg:col-span-7">
               <div className="inline-flex items-center gap-2 bg-white/15 backdrop-blur-sm text-white/90 text-sm px-4 py-1.5 rounded-full mb-6 border border-white/20">
                 <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
-                EHR + AI Receptionist · HIPAA-aligned on AWS
+                AI Receptionist for Therapy · HIPAA-aligned on AWS
               </div>
               <h1 className="text-4xl lg:text-6xl font-bold mb-6 leading-[1.05] tracking-tight">
-                The clinical front office<br />therapy practices deserve.
+                The AI receptionist<br />therapy practices deserve.
               </h1>
               <p className="text-lg text-white/85 mb-8 max-w-2xl leading-relaxed">
-                Harbor is a HIPAA-aligned EHR with a built-in AI receptionist. Voice-to-text notes,
-                no-show prediction, claim resubmit automation, and 24/7 call coverage — all on
-                infrastructure designed to meet the requirements of the HIPAA Security Rule.
+                Ellie answers every call, captures intake, verifies insurance in real time, books on your
+                calendar, and pushes call summaries to your existing EHR. Plugs into Athena, Ensora,
+                SimplePractice, TheraNest, or any Google/Microsoft 365 calendar.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <Link
@@ -46,14 +46,14 @@ export default function MarketingHome() {
                   Book a Demo &rarr;
                 </Link>
                 <Link
-                  href="/ehr"
+                  href="/reception"
                   className="border-2 border-white/40 text-white px-7 py-3.5 rounded-xl font-semibold text-lg hover:bg-white/10 transition-all text-center"
                 >
-                  See the EHR
+                  See how it works
                 </Link>
               </div>
               <p className="text-white/60 mt-6 text-sm">
-                Solo cash-pay from $149/mo · In-network from $299/mo · Reception standalone from $99/mo
+                Reception Solo $199/mo · Reception Pro $349/mo · Reception Group $999/mo
               </p>
             </div>
 
@@ -131,10 +131,10 @@ export default function MarketingHome() {
         <div className="max-w-6xl mx-auto">
           <div className="text-center mb-14">
             <p className="text-sm font-semibold uppercase tracking-wider mb-3" style={{ color: '#52bfc0' }}>
-              Two ways to use Harbor
+              How Harbor fits your practice
             </p>
             <h2 className="text-3xl md:text-4xl font-bold tracking-tight" style={{ color: '#1f375d' }}>
-              Run your whole practice on Harbor — or just the front desk.
+              Reception standalone — or with the EHR underneath.
             </h2>
           </div>
 
@@ -300,10 +300,10 @@ export default function MarketingHome() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { tier: 'Solo Cash-Pay', price: '$149', sub: '/mo', desc: 'Solo therapists not billing insurance.' },
-              { tier: 'Solo In-Network', price: '$299', sub: '/mo', desc: 'Solo therapists with insurance billing.' },
-              { tier: 'Group Practice', price: '$899', sub: '/mo', desc: 'Up to 10 clinicians, full EHR features.' },
-              { tier: 'Reception Only', price: '$99–129', sub: '/mo', desc: 'Standalone AI receptionist.' },
+              { tier: 'Reception Solo', price: '$199', sub: '/mo', desc: 'AI receptionist for solo practices. Up to 100 calls/mo.' },
+              { tier: 'Reception Pro', price: '$349', sub: '/mo', desc: 'Adds Stedi real-time insurance verification. Up to 300 calls/mo.' },
+              { tier: 'Reception Group', price: '$999', sub: '/mo', desc: 'Multi-therapist practices. Up to 1,000 calls/mo.' },
+              { tier: 'Full Harbor (with EHR)', price: 'From $349', sub: '/mo', desc: 'Reception + complete EHR + billing. Available for Reception customers ready to consolidate.' },
             ].map(({ tier, price, sub, desc }, i) => (
               <div
                 key={tier}

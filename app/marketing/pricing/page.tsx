@@ -2,9 +2,9 @@ import Link from 'next/link'
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'Pricing — Harbor EHR & Reception',
+  title: 'Pricing — Harbor Reception',
   description:
-    'Transparent pricing for Harbor. Solo cash-pay $149/mo, solo in-network $299/mo, group practice $899/mo, reception-only from $99/mo. No per-seat fees.',
+    'Transparent pricing for Harbor Reception. Solo $199/mo, Pro $349/mo (with Stedi insurance verification), Group $999/mo. Full Harbor (Reception + EHR) available for customers ready to consolidate. No per-seat fees.',
 }
 
 const TIERS = [
