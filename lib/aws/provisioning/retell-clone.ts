@@ -6,7 +6,7 @@
 // callers who hit before the inbound webhook fires) and its own agent
 // (so voice settings are tunable per-practice).
 
-import { HARBOR_DEFAULT_RECEPTIONIST_PROMPT } from '../retell/default-prompt'
+import { HARBOR_DEFAULT_RECEPTIONIST_PROMPT, HARBOR_DEFAULT_RETELL_VOICE_ID } from '../retell/default-prompt'
 
 const RETELL_API_KEY = process.env.RETELL_API_KEY || ''
 const DEMO_AGENT_ID = process.env.RETELL_AGENT_ID || ''
@@ -49,8 +49,9 @@ export interface ClonedRetellPair {
  *   inbound webhook variables, but baked here so callers hear the
  *   right name even if the inbound webhook fails or is slow.
  *
- * We do NOT publish a new "Bella" voice or change voice_id from the
- * demo — the practice can tune that later via the dashboard.
+ * Voice: clones use HARBOR_DEFAULT_RETELL_VOICE_ID (currently
+ * ElevenLabs Sarah — warm, professional, upbeat). Practices can
+ * override via the dashboard (practices.ai_voice_id).
  */
 export async function cloneAgentForPractice(opts: {
   practiceName: string
@@ -111,7 +112,7 @@ export async function cloneAgentForPractice(opts: {
       llm_id: newLlmId,
     },
     agent_name: `Harbor — ${opts.practiceName}`,
-    voice_id: demoAgent.voice_id,
+    voice_id: HARBOR_DEFAULT_RETELL_VOICE_ID,
     voice_temperature: demoAgent.voice_temperature,
     voice_speed: demoAgent.voice_speed,
     ambient_sound: demoAgent.ambient_sound,
