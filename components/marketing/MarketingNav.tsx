@@ -16,11 +16,8 @@ export function MarketingNav() {
         </Link>
 
         <div className="hidden md:flex items-center gap-7">
-          <Link href="/ehr" className="text-sm text-gray-600 hover:text-gray-900 font-medium">
-            Harbor EHR
-          </Link>
           <Link href="/reception" className="text-sm text-gray-600 hover:text-gray-900 font-medium">
-            Harbor Reception
+            Product
           </Link>
           <Link href="/pricing" className="text-sm text-gray-600 hover:text-gray-900 font-medium">
             Pricing
@@ -66,8 +63,7 @@ export function MarketingNav() {
 
       {open && (
         <div className="md:hidden mt-4 pb-2 space-y-2 border-t border-gray-100 pt-4">
-          <Link href="/ehr" className="block py-2 text-sm font-medium text-gray-700">Harbor EHR</Link>
-          <Link href="/reception" className="block py-2 text-sm font-medium text-gray-700">Harbor Reception</Link>
+          <Link href="/reception" className="block py-2 text-sm font-medium text-gray-700">Product</Link>
           <Link href="/pricing" className="block py-2 text-sm font-medium text-gray-700">Pricing</Link>
           <Link href="/security" className="block py-2 text-sm font-medium text-gray-700">Security</Link>
           <Link href="/about" className="block py-2 text-sm font-medium text-gray-700">About</Link>
