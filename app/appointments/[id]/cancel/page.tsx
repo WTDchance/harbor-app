@@ -4,9 +4,10 @@
 // when the practice has opted into a cancellation policy — assess the
 // late-cancel fee against the patient's saved card on file.
 
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
 import { enforceLateCancelFee } from '@/lib/aws/ehr/cancellation-policy'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 interface PageProps {
@@ -16,80 +17,98 @@ interface PageProps {
 export default async function CancelAppointmentPage({ params }: PageProps) {
   const { id } = await params
 
-  const { data: appt, error } = await supabaseAdmin
-    .from('appointments')
-    .select('id, status, scheduled_at, practice_id, practices(name, ai_name, cancellation_policy_text, cancellation_policy_hours, cancellation_fee_cents)')
-    .eq('id', id)
-    .maybeSingle()
-
   let statusLine = ''
   let policyMessage: string | null = null
   let practiceName = 'your therapist'
   let aiName = 'Ellie'
   let apptTime = ''
+  let policyText: string | null = null
 
-  if (error || !appt) {
-    statusLine = `We couldn't find that appointment. Please contact your therapist's office directly.`
-  } else {
-    const practice = (appt as any).practices
-    practiceName = practice?.name || practiceName
-    aiName = practice?.ai_name || aiName
-    apptTime = appt.scheduled_at
-      ? new Date(appt.scheduled_at).toLocaleString('en-US', {
-          weekday: 'long',
-          month: 'long',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })
-      : ''
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id,
+              a.status,
+              a.scheduled_at,
+              a.practice_id,
+              p.name AS practice_name,
+              p.ai_name AS practice_ai_name,
+              p.cancellation_policy_text,
+              p.cancellation_policy_hours,
+              p.cancellation_fee_cents
+         FROM appointments a
+         LEFT JOIN practices p ON p.id = a.practice_id
+        WHERE a.id = $1
+        LIMIT 1`,
+      [id],
+    )
+    const appt = rows[0]
 
-    if (appt.status === 'cancelled') {
-      statusLine = `This appointment was already cancelled.`
+    if (!appt) {
+      statusLine = `We couldn't find that appointment. Please contact your therapist's office directly.`
     } else {
-      await supabaseAdmin
-        .from('appointments')
-        .update({ status: 'cancelled', cancelled_at: new Date().toISOString() })
-        .eq('id', id)
+      practiceName = appt.practice_name || practiceName
+      aiName = appt.practice_ai_name || aiName
+      policyText = appt.cancellation_policy_text ?? null
+      apptTime = appt.scheduled_at
+        ? new Date(appt.scheduled_at).toLocaleString('en-US', {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })
+        : ''
 
-      statusLine = `Got it — your ${apptTime} appointment has been cancelled. ${practiceName} will reach out if you'd like to reschedule.`
+      if (appt.status === 'cancelled') {
+        statusLine = `This appointment was already cancelled.`
+      } else {
+        await pool.query(
+          `UPDATE appointments
+              SET status = 'cancelled',
+                  cancelled_at = NOW()
+            WHERE id = $1`,
+          [id],
+        )
 
-      // Apply the practice's cancellation policy. The library is a
-      // no-op when no policy is configured. Failure to charge never
-      // blocks the cancellation; we surface a billable-on-invoice
-      // message when the saved card is missing or declines.
-      try {
-        const fee = await enforceLateCancelFee(id, 'patient')
-        if (fee.status === 'charged' && fee.amountCents) {
-          policyMessage = `Per ${practiceName}'s cancellation policy, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee was charged to the card on file.`
-        } else if (fee.status === 'billable' && fee.amountCents) {
-          policyMessage = `Per ${practiceName}'s cancellation policy, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee will be added to your next invoice.`
-        } else if (fee.status === 'failed' && fee.amountCents) {
-          policyMessage = `Per ${practiceName}'s cancellation policy, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee will be added to your next invoice.`
+        statusLine = `Got it — your ${apptTime} appointment has been cancelled. ${practiceName} will reach out if you'd like to reschedule.`
+
+        // Apply the practice's cancellation policy. The library is a no-op
+        // when no policy is configured. Failure to charge never blocks the
+        // cancellation; we surface a billable-on-invoice message when the
+        // saved card is missing or declines.
+        try {
+          const fee = await enforceLateCancelFee(id, 'patient')
+          if (fee.status === 'charged' && fee.amountCents) {
+            policyMessage = `Per ${practiceName}'s cancellation policy, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee was charged to the card on file.`
+          } else if (fee.status === 'billable' && fee.amountCents) {
+            policyMessage = `Per ${practiceName}'s cancellation policy, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee will be added to your next invoice.`
+          } else if (fee.status === 'failed' && fee.amountCents) {
+            policyMessage = `Per ${practiceName}'s cancellation policy, a $${(fee.amountCents / 100).toFixed(2)} late-cancellation fee will be added to your next invoice.`
+          }
+        } catch (err) {
+          console.error('[appointments/cancel] policy enforcement failed:', err)
         }
-      } catch (err) {
-        console.error('[appointments/cancel] policy enforcement failed:', err)
-      }
 
-      // Fire cancellation-fill in the background; failure is non-fatal.
-      const slotTime = apptTime
-      try {
-        await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/cancellation/fill`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            practiceId: (appt as any).practice_id,
-            appointmentId: id,
-            slotTime,
-          }),
-        })
-      } catch (err) {
-        console.error('[appointments/cancel] fill trigger failed:', err)
+        // Fire cancellation-fill in the background; failure is non-fatal.
+        try {
+          await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/cancellation/fill`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              practiceId: appt.practice_id,
+              appointmentId: id,
+              slotTime: apptTime,
+            }),
+          })
+        } catch (err) {
+          console.error('[appointments/cancel] fill trigger failed:', err)
+        }
       }
     }
+  } catch (err) {
+    console.error('[appointments/cancel] DB error:', err)
+    statusLine = `We couldn't load that appointment right now. Please try again or contact your therapist's office.`
   }
-
-  const policyText: string | null = (appt as any)?.practices?.cancellation_policy_text ?? null
 
   return (
     <main className="min-h-screen bg-[#f5f5f0] flex items-center justify-center p-6">
