@@ -56,8 +56,6 @@ import { PatientProgressNotes } from "@/components/ehr/PatientProgressNotes"
 import { ExportPatientButton } from "@/components/ehr/ExportPatientButton"
 import { InsuranceCardScanner } from "@/components/ehr/InsuranceCardScanner"
 import { PreauthRequestsCard } from "@/components/ehr/PreauthRequestsCard"
-import PatientFlagChips from "@/components/ehr/PatientFlagChips"
-import PatientFlagManager from "@/components/ehr/PatientFlagManager"
 
 type PatientResp = {
   patient: {
