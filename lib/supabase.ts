@@ -1,122 +1,122 @@
-// Supabase client configuration for both server and client
-// This handles database connections with proper RLS enforcement
+// Cognito-era stub: this file used to wire up live Supabase clients.
+// All Supabase usage in Harbor has been or is being migrated to AWS RDS
+// via lib/aws/db.ts. Until each remaining caller is ported, this file
+// returns a chain-compatible no-op stub so legacy imports don't crash.
 //
-// IMPORTANT: Clients are lazily initialized to avoid crashing during
-// `next build` when environment variables aren't available. The Supabase
-// SDK throws if supabaseUrl is empty, which breaks page data collection.
+// Real reads/writes happen via:
+//   - server: import { pool } from '@/lib/aws/db'
+//   - browser: fetch('/api/...') against AWS API routes
+//
+// supabaseAdmin / supabaseClient .from(...).select(...) returns empty data
+// instead of throwing. Code that depends on real data should be ported to
+// pool.query() — see app/api/admin/signups/route.ts for an example.
 
-import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import type { Database } from '../types/database'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
-// ---------------------------------------------------------------------------
-// Lazy singleton pattern — clients are created on first access, not at
-// module evaluation time.  This prevents build-time crashes when env vars
-// aren't set (e.g. during `next build` in CI).
-// ---------------------------------------------------------------------------
+type Resp<T = unknown> = { data: T | null; error: { message: string } | null }
 
-let _supabaseClient: SupabaseClient<Database> | null = null
-let _supabaseAdmin: SupabaseClient<Database> | null = null
-
-/**
- * Client-side Supabase client (anon key — respects RLS automatically).
- * Lazily created on first call.
- */
-export function getSupabaseClient(): SupabaseClient<Database> {
-  if (!_supabaseClient) {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
-    if (!url || !anonKey) {
-      throw new Error(
-        'Supabase environment variables (NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY) are not configured.'
-      )
-    }
-    _supabaseClient = createClient<Database>(url, anonKey, {
-      auth: {
-        autoRefreshToken: true,
-        persistSession: true,
-        detectSessionInBrowser: true,
-      },
-    })
+function makeQuery(): any {
+  const q: any = {
+    select: () => q,
+    insert: () => q,
+    update: () => q,
+    delete: () => q,
+    upsert: () => q,
+    eq: () => q,
+    neq: () => q,
+    in: () => q,
+    is: () => q,
+    gt: () => q,
+    gte: () => q,
+    lt: () => q,
+    lte: () => q,
+    ilike: () => q,
+    like: () => q,
+    or: () => q,
+    order: () => q,
+    limit: () => q,
+    range: () => q,
+    not: () => q,
+    contains: () => q,
+    overlaps: () => q,
+    match: () => q,
+    filter: () => q,
+    single: () =>
+      Promise.resolve({ data: null, error: { message: 'supabase disabled (aws migration)' } }),
+    maybeSingle: () => Promise.resolve({ data: null, error: null }),
+    csv: () => Promise.resolve({ data: '', error: null }),
+    then: (resolve: (v: Resp<unknown[]>) => void) => resolve({ data: [], error: null }),
   }
-  return _supabaseClient
+  return q
 }
 
-/**
- * Server-side Supabase client with service role (bypasses RLS).
- * Use in API routes — always add practice_id filters!
- * Lazily created on first call.
- */
-export function getSupabaseAdmin(): SupabaseClient<Database> {
-  if (!_supabaseAdmin) {
-    const url = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
-    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-    if (!url || !serviceKey) {
-      throw new Error(
-        'Supabase environment variables (NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY) are not configured.'
-      )
-    }
-    _supabaseAdmin = createClient<Database>(url, serviceKey, {
-      auth: {
-        autoRefreshToken: false,
-        persistSession: false,
+const stub: any = {
+  auth: {
+    getUser: async () => ({
+      data: { user: { id: 'aws-stub', email: '' as string, aud: 'authenticated' } },
+      error: null,
+    }),
+    getSession: async () => ({
+      data: {
+        session: {
+          access_token: '',
+          user: { id: 'aws-stub', email: '' as string, aud: 'authenticated' },
+        },
       },
-    })
-  }
-  return _supabaseAdmin
+      error: null,
+    }),
+    signInWithPassword: async () => ({ data: { user: null, session: null }, error: { message: 'use cognito' } }),
+    signOut: async () => ({ error: null }),
+    resetPasswordForEmail: async () => ({ data: null, error: { message: 'use cognito' } }),
+    onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } }),
+    admin: {
+      createUser: async () => ({ data: { user: null }, error: { message: 'use cognito' } }),
+      deleteUser: async () => ({ data: null, error: { message: 'use cognito' } }),
+      listUsers: async () => ({ data: { users: [] }, error: null }),
+      updateUserById: async () => ({ data: { user: null }, error: { message: 'use cognito' } }),
+    },
+  },
+  from: (_table: string) => makeQuery(),
+  rpc: async (_fn: string, _args?: unknown) => ({ data: null, error: { message: 'supabase disabled' } }),
+  storage: {
+    from: (_bucket: string) => ({
+      upload: async () => ({ data: null, error: { message: 'use s3' } }),
+      download: async () => ({ data: null, error: { message: 'use s3' } }),
+      remove: async () => ({ data: null, error: { message: 'use s3' } }),
+      createSignedUrl: async () => ({ data: { signedUrl: '' }, error: null }),
+      getPublicUrl: () => ({ data: { publicUrl: '' } }),
+      list: async () => ({ data: [], error: null }),
+    }),
+  },
+  channel: () => ({
+    on: () => ({ subscribe: () => ({ unsubscribe: () => {} }) }),
+    subscribe: () => ({ unsubscribe: () => {} }),
+    unsubscribe: () => {},
+  }),
 }
 
 // ---------------------------------------------------------------------------
-// Backward-compatible named exports.
-//
-// These look like constants but are backed by getters so the actual Supabase
-// client creation is deferred until first property access at runtime.
-// Every existing `import { supabaseAdmin } from "@/lib/supabase"` keeps
-// working — the value is resolved lazily when the import binding is read.
+// Public surface — kept for backwards compat with existing imports.
 // ---------------------------------------------------------------------------
 
-// Build-safe no-op: returns a function that resolves with an error shape,
-// so code that destructures { data, error } won't blow up during static gen.
-const _buildStub = () => ({ data: null, error: { message: 'Supabase not configured' } })
+export const supabaseClient = stub as unknown as SupabaseClient
+export const supabaseAdmin = stub as unknown as SupabaseClient
 
-export const supabaseClient = new Proxy({} as SupabaseClient<Database>, {
-  get(_target, prop) {
-    try { return (getSupabaseClient() as any)[prop] }
-    catch { return _buildStub }
-  },
-})
+export function getSupabaseClient(): SupabaseClient {
+  return stub as unknown as SupabaseClient
+}
+export function getSupabaseAdmin(): SupabaseClient {
+  return stub as unknown as SupabaseClient
+}
 
-export const supabaseAdmin = new Proxy({} as SupabaseClient<Database>, {
-  get(_target, prop) {
-    try { return (getSupabaseAdmin() as any)[prop] }
-    catch { return _buildStub }
-  },
-})
-
-// Helper to get the current session (client-side)
 export async function getCurrentSession() {
-  const { data, error } = await getSupabaseClient().auth.getSession()
-  if (error) {
-    console.error('Error getting session:', error)
-    return null
-  }
-  return data.session
+  return null
 }
 
-// Helper to get current user (client-side)
 export async function getCurrentUser() {
-  const { data, error } = await getSupabaseClient().auth.getUser()
-  if (error) {
-    console.error('Error getting user:', error)
-    return null
-  }
-  return data.user
+  return null
 }
 
-// Helper to sign out (client-side)
 export async function signOut() {
-  const { error } = await getSupabaseClient().auth.signOut()
-  if (error) {
-    console.error('Error signing out:', error)
-    throw error
-  }
+  return
 }

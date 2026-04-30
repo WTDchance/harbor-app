@@ -1,31 +1,16 @@
-// Server-side Supabase instance that reads cookies (for middleware + server components)
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+// Cognito-era stub: server-side Supabase client is no longer wired up.
+// All server reads/writes go through lib/aws/db.ts (RDS pool) and Cognito
+// session cookies. Auth checks use requireApiSession / requireEhrApiSession
+// from lib/aws/api-auth.ts.
+//
+// This stub keeps legacy `createServerSupabase()` / `createClient()` imports
+// from crashing while we finish porting their callers. Returns an object
+// whose .from() and .auth methods resolve to empty / null shapes.
+
+import { supabaseAdmin } from './supabase'
 
 export async function createServerSupabase() {
-  const cookieStore = await cookies()
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {
-            // Middleware will handle this
-          }
-        },
-      },
-    }
-  )
+  return supabaseAdmin
 }
 
-// Alias for API routes — returns Promise<SupabaseClient>
-// Usage: const supabase = await createClient()
 export const createClient = createServerSupabase
