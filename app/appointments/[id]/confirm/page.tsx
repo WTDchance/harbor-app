@@ -1,10 +1,11 @@
-// Public confirmation page — hit from email reminder "Confirm" button.
+// Public confirmation page — hit from email/SMS reminder "Confirm" button.
 // No auth required: the appointment UUID is the capability token.
 // This is an intentional low-friction UX choice; if we ever need stronger
 // protection we can add an HMAC-signed confirm_token column to appointments.
 
-import { supabaseAdmin } from '@/lib/supabase'
+import { pool } from '@/lib/aws/db'
 
+export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 interface PageProps {
@@ -14,45 +15,59 @@ interface PageProps {
 export default async function ConfirmAppointmentPage({ params }: PageProps) {
   const { id } = await params
 
-  const { data: appt, error } = await supabaseAdmin
-    .from('appointments')
-    .select('id, status, scheduled_at, practices(name, ai_name)')
-    .eq('id', id)
-    .maybeSingle()
-
   let statusLine = ''
   let practiceName = 'your therapist'
   let aiName = 'Ellie'
   let apptTime = ''
 
-  if (error || !appt) {
-    statusLine = `We couldn't find that appointment. Please contact your therapist's office directly.`
-  } else {
-    const practice = (appt as any).practices
-    practiceName = practice?.name || practiceName
-    aiName = practice?.ai_name || aiName
-    apptTime = appt.scheduled_at
-      ? new Date(appt.scheduled_at).toLocaleString('en-US', {
-          weekday: 'long',
-          month: 'long',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-        })
-      : ''
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.id,
+              a.status,
+              a.scheduled_at,
+              p.name AS practice_name,
+              p.ai_name AS practice_ai_name
+         FROM appointments a
+         LEFT JOIN practices p ON p.id = a.practice_id
+        WHERE a.id = $1
+        LIMIT 1`,
+      [id],
+    )
+    const appt = rows[0]
 
-    if (appt.status === 'cancelled') {
-      statusLine = `This appointment was already cancelled. If that's not right, please call ${practiceName}.`
-    } else if (appt.status === 'confirmed') {
-      statusLine = `You're already confirmed for ${apptTime}. See you then!`
+    if (!appt) {
+      statusLine = `We couldn't find that appointment. Please contact your therapist's office directly.`
     } else {
-      // Transition any other active state to confirmed
-      await supabaseAdmin
-        .from('appointments')
-        .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
-        .eq('id', id)
-      statusLine = `Confirmed! See you on ${apptTime}.`
+      practiceName = appt.practice_name || practiceName
+      aiName = appt.practice_ai_name || aiName
+      apptTime = appt.scheduled_at
+        ? new Date(appt.scheduled_at).toLocaleString('en-US', {
+            weekday: 'long',
+            month: 'long',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit',
+          })
+        : ''
+
+      if (appt.status === 'cancelled') {
+        statusLine = `This appointment was already cancelled. If that's not right, please call ${practiceName}.`
+      } else if (appt.status === 'confirmed') {
+        statusLine = `You're already confirmed for ${apptTime}. See you then!`
+      } else {
+        // Transition any other active state to confirmed
+        await pool.query(
+          `UPDATE appointments
+              SET status = 'confirmed',
+                  confirmed_at = NOW()
+            WHERE id = $1`,
+          [id],
+        )
+        statusLine = `Confirmed! See you on ${apptTime}.`
+      }
     }
+  } catch {
+    statusLine = `We couldn't load that appointment right now. Please try again or contact your therapist's office.`
   }
 
   return (
