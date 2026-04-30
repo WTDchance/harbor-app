@@ -7,26 +7,26 @@ const SITE_URL = 'https://harboroffice.ai'
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: 'Harbor — HIPAA-aligned EHR & AI Receptionist for therapy practices',
+    default: 'Harbor — AI Receptionist for Therapy Practices',
     template: '%s | Harbor',
   },
   description:
-    'Harbor is the HIPAA-aligned EHR and AI receptionist built for therapy practices. Voice-to-text notes, no-show prediction, claim resubmits, and 24/7 call coverage — on a HIPAA-aligned AWS stack.',
+    'AI receptionist that answers calls 24/7, captures intake, verifies insurance in real time, and books appointments. Plugs into any EHR — Athena, Ensora, SimplePractice, TheraNest, or your existing calendar. HIPAA-aligned on AWS.',
   openGraph: {
     type: 'website',
     locale: 'en_US',
     url: SITE_URL,
     siteName: 'Harbor',
-    title: 'Harbor — EHR & AI Receptionist for therapy practices',
+    title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
-      'The HIPAA-aligned EHR and AI receptionist for therapy practices. Built on AWS, signed BAAs, full clinical workflow.',
+      'AI receptionist that answers calls 24/7, captures intake, verifies insurance, books appointments. Integrates with any EHR. HIPAA-aligned.',
     images: [{ url: '/harbor-logo-120.png', width: 120, height: 120, alt: 'Harbor' }],
   },
   twitter: {
     card: 'summary',
-    title: 'Harbor — EHR & AI Receptionist for therapy practices',
+    title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
-      'The HIPAA-aligned EHR and AI receptionist for therapy practices.',
+      'AI receptionist that answers calls 24/7, captures intake, verifies insurance, books appointments. Integrates with any EHR.',
     images: ['/harbor-logo-120.png'],
   },
   alternates: { canonical: SITE_URL },

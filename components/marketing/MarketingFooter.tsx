@@ -10,7 +10,7 @@ export function MarketingFooter() {
               <img src="/harbor-logo.svg" alt="Harbor" className="h-10 w-auto" />
             </Link>
             <p className="text-sm text-gray-500 mt-3 max-w-xs">
-              HIPAA-aligned EHR and AI receptionist for therapy practices.
+              AI receptionist for therapy practices. Plugs into any EHR..
             </p>
             <p className="text-xs text-gray-400 mt-4">
               <a href="mailto:chancewonser@gmail.com" className="hover:text-gray-700">
