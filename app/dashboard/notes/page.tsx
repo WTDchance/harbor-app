@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { createClient } from '@/lib/supabase-browser'
 import { Mic, Trash2, Copy, Send } from 'lucide-react'
 
 interface SessionNote {
@@ -16,7 +15,6 @@ interface SessionNote {
 }
 
 export default function NotesPage() {
-  const supabase = createClient()
   const [notes, setNotes] = useState<SessionNote[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedNote, setSelectedNote] = useState<SessionNote | null>(null)
@@ -31,7 +29,7 @@ export default function NotesPage() {
 
   useEffect(() => {
     loadNotes()
-  }, [supabase])
+  }, [])
 
   const loadNotes = async () => {
     try {

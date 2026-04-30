@@ -7,10 +7,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase-browser'
 import { Search, ChevronDown, ChevronUp, FileText, User, Phone, Mail, Calendar, AlertCircle, Shield, ClipboardList } from 'lucide-react'
 
-const supabase = createClient()
 
 // --- Types ---
 type Severity = 'Minimal' | 'Mild' | 'Moderate' | 'Moderately Severe' | 'Severe'
