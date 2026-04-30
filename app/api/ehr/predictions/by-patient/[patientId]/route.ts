@@ -20,7 +20,7 @@ export async function GET(_req: NextRequest, { params }: { params: { patientId: 
   const patientLevel = await pool.query(
     `SELECT id, prediction_kind, score::float, factors, model_version,
             computed_at, override_score::float, override_reason, override_at
-       FROM ehr_patient_predictions
+       FROM ehr_patient_predictions_v2
       WHERE practice_id = $1 AND patient_id = $2
         AND appointment_id IS NULL`,
     [ctx.practiceId, params.patientId],
@@ -33,7 +33,7 @@ export async function GET(_req: NextRequest, { params }: { params: { patientId: 
             pp.override_score::float, pp.override_reason, pp.override_at,
             pp.appointment_id, a.scheduled_for::text
        FROM appointments a
-       LEFT JOIN ehr_patient_predictions pp
+       LEFT JOIN ehr_patient_predictions_v2 pp
          ON pp.appointment_id = a.id AND pp.prediction_kind = 'no_show'
       WHERE a.practice_id = $1 AND a.patient_id = $2
         AND a.status IN ('scheduled','confirmed')

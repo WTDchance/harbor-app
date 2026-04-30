@@ -46,7 +46,7 @@ export async function GET(req: NextRequest) {
             COALESCE(pp.factors->>'summary', '') AS factors_summary,
             pp.appointment_id::text AS appointment_id,
             a.scheduled_for::text   AS scheduled_for
-       FROM ehr_patient_predictions pp
+       FROM ehr_patient_predictions_v2 pp
        JOIN appointments a ON a.id = pp.appointment_id
        JOIN patients p     ON p.id = pp.patient_id
       WHERE pp.practice_id = $1
@@ -69,7 +69,7 @@ export async function GET(req: NextRequest) {
             COALESCE(pp.factors->>'summary', '') AS factors_summary,
             NULL::text          AS appointment_id,
             NULL::text          AS scheduled_for
-       FROM ehr_patient_predictions pp
+       FROM ehr_patient_predictions_v2 pp
        JOIN patients p ON p.id = pp.patient_id
       WHERE pp.practice_id = $1
         AND pp.prediction_kind = 'dropout_risk'

@@ -85,7 +85,7 @@ async function loadNoShow(practiceId: string): Promise<KindSummary> {
             (a.status = 'no_show')                   AS is_no_show,
             (a.scheduled_for < NOW())                AS is_matured,
             pp.computed_at::text
-       FROM ehr_patient_predictions pp
+       FROM ehr_patient_predictions_v2 pp
        JOIN appointments a ON a.id = pp.appointment_id
       WHERE pp.practice_id = $1
         AND pp.prediction_kind = 'no_show'
@@ -120,7 +120,7 @@ async function loadDropout(practiceId: string): Promise<KindSummary> {
             ))                                     AS actual,
             (NOW() >= pp.computed_at + INTERVAL '30 days') AS matured,
             pp.computed_at::text
-       FROM ehr_patient_predictions pp
+       FROM ehr_patient_predictions_v2 pp
       WHERE pp.practice_id = $1
         AND pp.prediction_kind = 'dropout_risk'
         AND pp.appointment_id IS NULL
