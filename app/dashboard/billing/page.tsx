@@ -4,7 +4,6 @@ import { Suspense } from 'react'
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { CreditCard, AlertCircle, CheckCircle } from 'lucide-react'
-import { createClient } from '@/lib/supabase-browser'
 
 interface PracticeWithBilling {
   id: string
@@ -23,27 +22,38 @@ function BillingPageContent() {
   const [redirecting, setRedirecting] = useState(false)
   const searchParams = useSearchParams()
   const success = searchParams.get('success')
-  const supabase = createClient()
 
   useEffect(() => {
     const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) {
+      try {
+        const res = await fetch('/api/practice/me', { cache: 'no-store' })
+        if (!res.ok) {
+          setLoading(false)
+          return
+        }
+        const body = await res.json()
+        if (body.practice) {
+          // Map AWS schema to legacy shape consumed by this page
+          const p = body.practice
+          setPractice({
+            id: p.id,
+            name: p.name,
+            notification_email: body.user?.email ?? '',
+            stripe_customer_id: p.stripe_customer_id ?? null,
+            stripe_subscription_id: p.stripe_subscription_id ?? null,
+            subscription_status: p.subscription_status ?? p.provisioning_state ?? 'unknown',
+            trial_ends_at: p.trial_ends_at ?? null,
+            billing_email: p.billing_email ?? body.user?.email ?? null,
+          })
+        }
+      } catch (err) {
+        console.error('Failed to load practice:', err)
+      } finally {
         setLoading(false)
-        return
       }
-      const { data: practiceData } = await supabase
-        .from('practices')
-        .select('*')
-        .eq('notification_email', user.email)
-        .single()
-      if (practiceData) {
-        setPractice(practiceData)
-      }
-      setLoading(false)
     }
     load()
-  }, [supabase])
+  }, [])
 
   const handleManageBilling = async () => {
     if (!practice?.notification_email) return
@@ -96,7 +106,6 @@ function BillingPageContent() {
       day: 'numeric',
     })
   }
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
