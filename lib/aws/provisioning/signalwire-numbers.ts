@@ -28,16 +28,30 @@ export interface AvailableNumber {
 
 /**
  * Search SignalWire's pool for available US local numbers.
- * If areaCode given, scopes to that NPA.
+ *
+ * SignalWire's LaML AvailablePhoneNumbers endpoint is Twilio-compatible
+ * and supports narrowing by AreaCode, InRegion (2-letter state),
+ * InLocality (city), InPostalCode, and Contains (digit pattern). When
+ * multiple are passed, SignalWire ANDs them.
  */
 export async function searchAvailableNumbers(opts: {
   areaCode?: string
+  region?: string       // 2-letter state, e.g. "OR"
+  locality?: string     // city, e.g. "Portland"
+  postalCode?: string
+  contains?: string     // digit pattern, e.g. "*FREE*"
   limit?: number
+  page?: number         // for Refresh-style rotation through the pool
 }): Promise<AvailableNumber[]> {
   if (!PROJECT_ID || !TOKEN || !SPACE_URL) throw new Error('SIGNALWIRE_NOT_CONFIGURED')
-  const limit = opts.limit ?? 5
+  const limit = opts.limit ?? 10
   const params = new URLSearchParams({ PageSize: String(limit) })
   if (opts.areaCode) params.set('AreaCode', opts.areaCode)
+  if (opts.region) params.set('InRegion', opts.region.toUpperCase())
+  if (opts.locality) params.set('InLocality', opts.locality)
+  if (opts.postalCode) params.set('InPostalCode', opts.postalCode)
+  if (opts.contains) params.set('Contains', opts.contains)
+  if (opts.page && opts.page > 0) params.set('Page', String(opts.page))
   const url = `${laMLBase()}/AvailablePhoneNumbers/US/Local.json?${params.toString()}`
   const res = await fetch(url, { headers: { Authorization: authHeader() } })
   if (!res.ok) throw new Error(`signalwire_search_failed_${res.status}: ${await res.text().catch(() => '')}`)
