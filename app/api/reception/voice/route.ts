@@ -8,7 +8,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { writeAuditLog } from '@/lib/audit'
-import { updateRetellLlmPrompt } from '@/lib/aws/retell/llm-update'
+import { updateRetellLlmPrompt, updateRetellAgentVoice } from '@/lib/aws/retell/llm-update'
+import { HARBOR_DEFAULT_RECEPTIONIST_PROMPT } from '@/lib/aws/retell/default-prompt'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -74,20 +75,52 @@ export async function PUT(req: NextRequest) {
     args,
   )
 
-  // Best-effort push to Retell.
-  let retell_pushed = false
+  // Push prompt + voice to Retell. The .from helper takes an object
+  // (was being called positionally before — silently failed because
+  // the function returned 'llmId required'). Save & Re-deploy was
+  // a no-op for everyone hitting this endpoint until now.
+  //
+  // If the user has cleared the override, push the Harbor default
+  // (with the warm/upbeat TONE block) so the agent doesn't stay on
+  // a stale prompt.
+  let retell_prompt_pushed = false
+  let retell_voice_pushed = false
   try {
     const { rows: rr } = await pool.query(
-      `SELECT retell_llm_id, ai_prompt_override FROM practices WHERE id = $1 LIMIT 1`,
+      `SELECT retell_llm_id, retell_agent_id, ai_prompt_override, ai_voice_id
+         FROM practices WHERE id = $1 LIMIT 1`,
       [ctx.practiceId],
     )
-    if (rr[0]?.retell_llm_id && rr[0]?.ai_prompt_override) {
-      await updateRetellLlmPrompt(rr[0].retell_llm_id, rr[0].ai_prompt_override)
-      retell_pushed = true
+    const llmId = rr[0]?.retell_llm_id ?? null
+    const agentId = rr[0]?.retell_agent_id ?? null
+
+    if (llmId) {
+      const promptToPush = rr[0]?.ai_prompt_override
+        || HARBOR_DEFAULT_RECEPTIONIST_PROMPT
+      const result = await updateRetellLlmPrompt({
+        llmId,
+        generalPrompt: promptToPush,
+      })
+      retell_prompt_pushed = result.ok
+      if (!result.ok) {
+        console.error('[reception/voice] retell prompt push failed:', result.error)
+      }
+    }
+
+    if (agentId && rr[0]?.ai_voice_id) {
+      const result = await updateRetellAgentVoice({
+        agentId,
+        voiceId: rr[0].ai_voice_id,
+      })
+      retell_voice_pushed = result.ok
+      if (!result.ok) {
+        console.error('[reception/voice] retell voice push failed:', result.error)
+      }
     }
   } catch (e) {
     console.error('[reception/voice] retell push failed:', (e as Error).message)
   }
+  const retell_pushed = retell_prompt_pushed || retell_voice_pushed
 
   await writeAuditLog({
     practice_id: ctx.practiceId, user_id: ctx.user.id,
@@ -96,9 +129,10 @@ export async function PUT(req: NextRequest) {
     details: {
       prompt_set: body.prompt_override !== undefined,
       voice_set: body.voice_id !== undefined,
-      retell_pushed,
+      retell_prompt_pushed,
+      retell_voice_pushed,
     },
   })
 
-  return NextResponse.json({ ok: true, retell_pushed })
+  return NextResponse.json({ ok: true, retell_prompt_pushed, retell_voice_pushed })
 }
