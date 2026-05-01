@@ -8,6 +8,7 @@ import { pool } from '@/lib/aws/db'
 import { writeAuditLog } from '@/lib/audit'
 import { decryptToken } from '@/lib/aws/token-encryption'
 import { createEvent as outlookCreateEvent, refreshAccessToken as refreshOutlook } from '@/lib/outlookCalendar'
+import { createEvent as googleCreateEvent, refreshAccessToken as refreshGoogle } from '@/lib/aws/googleCalendar'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -46,32 +47,49 @@ export async function POST(req: NextRequest) {
   if (rows.length === 0) return NextResponse.json({ error: 'no_calendar_connected' }, { status: 400 })
   const row = rows[0]
 
-  if (row.provider !== 'outlook') {
-    return NextResponse.json({ error: 'unsupported_provider', message: 'Use /api/integrations/google-calendar/events for Google.' }, { status: 400 })
+  if (row.provider !== 'outlook' && row.provider !== 'google') {
+    return NextResponse.json({ error: 'unsupported_provider', provider: row.provider }, { status: 400 })
   }
 
   let access = await decryptToken(row.access_token_encrypted)
   if (!access || !row.access_token_expires_at || new Date(row.access_token_expires_at) < new Date()) {
-    const refresh = await decryptToken(row.refresh_token_encrypted)
-    const fresh = await refreshOutlook(refresh)
-    access = fresh.access_token
+    try {
+      const refresh = await decryptToken(row.refresh_token_encrypted)
+      const fresh = row.provider === 'google'
+        ? await refreshGoogle(refresh)
+        : await refreshOutlook(refresh)
+      access = fresh.access_token
+    } catch {
+      return NextResponse.json({ error: 'token_refresh_failed' }, { status: 502 })
+    }
   }
-  const event = await outlookCreateEvent(access, {
-    subject: body.subject,
-    bodyHtml: body.body_html,
-    startISO: body.start_iso,
-    endISO: body.end_iso,
-    timezone: body.timezone,
-    attendees: body.attendees,
-    location: body.location,
-  })
+
+  const event = row.provider === 'google'
+    ? await googleCreateEvent(access, {
+        subject: body.subject,
+        bodyHtml: body.body_html,
+        startISO: body.start_iso,
+        endISO: body.end_iso,
+        timezone: body.timezone,
+        attendees: body.attendees,
+        location: body.location,
+      })
+    : await outlookCreateEvent(access, {
+        subject: body.subject,
+        bodyHtml: body.body_html,
+        startISO: body.start_iso,
+        endISO: body.end_iso,
+        timezone: body.timezone,
+        attendees: body.attendees,
+        location: body.location,
+      })
   if (!event) return NextResponse.json({ error: 'event_create_failed' }, { status: 502 })
 
   await writeAuditLog({
     practice_id: ctx.practiceId, user_id: ctx.user.id,
     action: 'calendar.event_created', resource_type: 'practice_calendar_integration',
     resource_id: row.id, severity: 'info',
-    details: { provider: 'outlook', event_id: event.id },
+    details: { provider: row.provider, event_id: event.id },
   })
 
   return NextResponse.json({ event })

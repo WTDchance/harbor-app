@@ -7,6 +7,7 @@ import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { decryptToken } from '@/lib/aws/token-encryption'
 import { getFreeBusy as outlookFreeBusy, refreshAccessToken as refreshOutlook } from '@/lib/outlookCalendar'
+import { getFreeBusy as googleFreeBusy, refreshAccessToken as refreshGoogle } from '@/lib/aws/googleCalendar'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -37,28 +38,26 @@ export async function GET(req: NextRequest) {
   if (rows.length === 0) return NextResponse.json({ busy: [], integration: null })
   const row = rows[0]
 
-  if (row.provider !== 'outlook') {
-    // Google free/busy is not yet wired through this Reception endpoint.
-    // Returning success with empty busy would let the receptionist book
-    // over real conflicts. Return a 503-style signal so the caller falls
-    // back to confirm-with-human or known-business-hours scheduling.
+  if (row.provider !== 'outlook' && row.provider !== 'google') {
     return NextResponse.json(
       {
         busy: null,
         error: 'free_busy_unavailable',
         provider: row.provider,
-        message: 'Free/busy lookup not yet implemented for this provider — receptionist should confirm slot with human before booking.',
+        message: 'Free/busy lookup not implemented for this provider — receptionist should confirm slot with human before booking.',
       },
       { status: 503 },
     )
   }
 
-  // Outlook — refresh access token if expired.
+  // Refresh access token if missing or expired. Same shape for both providers.
   let access = await decryptToken(row.access_token_encrypted)
   if (!access || !row.access_token_expires_at || new Date(row.access_token_expires_at) < new Date()) {
     try {
       const refresh = await decryptToken(row.refresh_token_encrypted)
-      const fresh = await refreshOutlook(refresh)
+      const fresh = row.provider === 'google'
+        ? await refreshGoogle(refresh)
+        : await refreshOutlook(refresh)
       access = fresh.access_token
       // (We don't persist the refreshed token here for brevity; production
       // path should re-encrypt and update the row.)
@@ -66,6 +65,20 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: 'token_refresh_failed' }, { status: 502 })
     }
   }
+
+  if (row.provider === 'google') {
+    const busy = await googleFreeBusy(access, start, end)
+    if (busy === null) {
+      // Upstream Google call failed. Returning busy:[] would let the
+      // receptionist book over real conflicts — fail closed instead.
+      return NextResponse.json(
+        { error: 'free_busy_lookup_failed', provider: 'google' },
+        { status: 502 },
+      )
+    }
+    return NextResponse.json({ busy, integration: { id: row.id, provider: row.provider } })
+  }
+
   const busy = await outlookFreeBusy(access, start, end)
   return NextResponse.json({ busy, integration: { id: row.id, provider: row.provider } })
 }
