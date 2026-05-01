@@ -5,7 +5,7 @@
 // not API keys themselves.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { generateApiKey } from '@/lib/aws/reception/generate-api-key'
 
@@ -19,7 +19,7 @@ const ALLOWED_SCOPES = new Set([
 ])
 
 export async function GET() {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
 
   const { rows } = await pool.query(
@@ -33,7 +33,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
 
   const body = await req.json().catch(() => null)

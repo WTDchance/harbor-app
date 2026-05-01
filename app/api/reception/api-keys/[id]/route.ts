@@ -5,14 +5,14 @@
 // itself).
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { revokeApiKey } from '@/lib/aws/reception/generate-api-key'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
 
   const ok = await revokeApiKey({ keyId: params.id, practiceId: ctx.practiceId })
