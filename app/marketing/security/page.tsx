@@ -102,7 +102,7 @@ export default function SecurityPage() {
               },
               {
                 section: '§164.314 — Business Associate Agreement',
-                control: 'Signed BAA with every customer practice. Signed BAAs upstream with AWS, Twilio, Resend, Stedi, Anthropic, and every other vendor that touches PHI.',
+                control: 'Signed BAA with every customer practice. Signed BAAs upstream with AWS, SignalWire, Resend, Anthropic, and every other vendor that touches PHI.',
               },
             ].map(({ section, control }) => (
               <div key={section} className="bg-white rounded-xl p-5 border border-gray-200">

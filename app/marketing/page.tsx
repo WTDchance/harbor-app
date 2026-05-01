@@ -53,7 +53,7 @@ export default function MarketingHome() {
                 </Link>
               </div>
               <p className="text-white/60 mt-6 text-sm">
-                Reception Solo $199/mo · Reception Pro $349/mo · Reception Group $999/mo
+                Reception $249/mo · Reception Group $999/mo
               </p>
             </div>
 
@@ -119,8 +119,6 @@ export default function MarketingHome() {
             <span aria-hidden>&middot;</span>
             <span>BAA on request</span>
             <span aria-hidden>&middot;</span>
-            <span>Stedi insurance integration</span>
-            <span aria-hidden>&middot;</span>
             <span>Built with practicing therapists</span>
           </div>
         </div>
@@ -158,7 +156,6 @@ export default function MarketingHome() {
                 {[
                   'AI-drafted SOAP notes from session audio',
                   'No-show prediction & smart waitlist filling',
-                  'Stedi-powered eligibility & claim resubmits',
                   'Ellie AI receptionist included',
                   'Patient portal, intake, and secure messaging',
                 ].map((f) => (
@@ -242,8 +239,8 @@ export default function MarketingHome() {
                 desc: 'A model trained on practice data flags high-risk appointments before they happen, and suggests the right outreach.',
               },
               {
-                title: 'Claim resubmit automation',
-                desc: 'Denied claims get triaged, fixed, and resubmitted automatically through Stedi. No more chasing payers by hand.',
+                title: 'EHR-agnostic calendar sync',
+                desc: 'Connects to Google Calendar or Outlook so the receptionist reads your free/busy and books on whichever calendar you already use. Plays nice with any EHR.',
               },
               {
                 title: 'Missed-call patient capture',
@@ -254,8 +251,8 @@ export default function MarketingHome() {
                 desc: 'KMS-encrypted RDS, private subnets, audit logs, BAA-covered services. We can sign a BAA on day one.',
               },
               {
-                title: 'Stedi insurance integration',
-                desc: 'Real-time eligibility checks (270/271) and prior auth support. Verify coverage during the intake call itself.',
+                title: 'PHQ-2 / GAD-2 on every call',
+                desc: 'Standardized depression and anxiety screening on every new-patient intake call, with automatic crisis-language detection and 988 escalation.',
               },
             ].map(({ title, desc }) => (
               <div key={title} className="bg-white rounded-2xl p-6 border border-gray-200 hover:border-gray-300 hover:shadow-md transition-all">
@@ -300,10 +297,9 @@ export default function MarketingHome() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {[
-              { tier: 'Reception Solo', price: '$199', sub: '/mo', desc: 'AI receptionist for solo practices. Up to 100 calls/mo.' },
-              { tier: 'Reception Pro', price: '$349', sub: '/mo', desc: 'Adds Stedi real-time insurance verification. Up to 300 calls/mo.' },
+              { tier: 'Reception', price: '$249', sub: '/mo', desc: 'AI receptionist for solo practices. Up to 200 calls/mo.' },
               { tier: 'Reception Group', price: '$999', sub: '/mo', desc: 'Multi-therapist practices. Up to 1,000 calls/mo.' },
-              { tier: 'Full Harbor (with EHR)', price: 'From $349', sub: '/mo', desc: 'Reception + complete EHR + billing. Available for Reception customers ready to consolidate.' },
+              { tier: 'Full Harbor (with EHR)', price: 'From $349', sub: '/mo', desc: 'Reception + complete EHR + billing. For practices ready to consolidate.' },
             ].map(({ tier, price, sub, desc }, i) => (
               <div
                 key={tier}

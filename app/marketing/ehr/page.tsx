@@ -62,7 +62,7 @@ export default function EHRPage() {
               },
               {
                 title: 'Insurance & billing',
-                desc: 'Stedi-powered eligibility checks, claim submission, ERA reconciliation, and automated resubmits on denial.',
+                desc: 'Claim submission, ERA reconciliation, and automated resubmits on denial through your billing partner.',
               },
               {
                 title: 'AI receptionist included',
