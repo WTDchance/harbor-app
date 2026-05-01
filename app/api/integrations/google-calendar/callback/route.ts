@@ -1,13 +1,18 @@
 // Google Calendar OAuth callback. Verifies BAA attestation rode through in
-// state, exchanges code for tokens, fetches user info, upserts into
-// calendar_connections.
+// state, exchanges code for tokens, fetches user info, then dual-writes:
+//   - practice_calendar_integrations (KMS-encrypted tokens — source of truth
+//     for the new Reception calendar endpoints)
+//   - calendar_connections (legacy plaintext — still read by older EHR flows)
 //
-// REFRESH-TOKEN STORAGE: stored as plaintext in calendar_connections.refresh_token.
-// The RDS volume is encrypted at rest via KMS; inline application-layer
-// encryption is a follow-up. Match legacy behavior bug-for-bug here.
+// HIPAA: refresh tokens in calendar_connections are stored plaintext and the
+// RDS volume is encrypted at rest via KMS. The KMS-wrapped copy on
+// practice_calendar_integrations is the long-term canonical store; the
+// legacy write stays for backward compat until older readers migrate.
 
 import { NextResponse, type NextRequest } from 'next/server'
 import { pool } from '@/lib/aws/db'
+import { encryptToken } from '@/lib/aws/token-encryption'
+import { writeAuditLog } from '@/lib/audit'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -17,6 +22,7 @@ interface GoogleTokenResponse {
   refresh_token?: string
   expires_in: number
   token_type: string
+  scope?: string
 }
 
 interface GoogleUserInfo { email: string; name: string }
@@ -38,7 +44,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.redirect(appUrl('/dashboard/settings?error=missing_parameters'))
   }
 
-  let stateData: { practiceId: string; baaAttested?: boolean }
+  let stateData: { practiceId: string; therapistId?: string | null; baaAttested?: boolean }
   try {
     stateData = JSON.parse(Buffer.from(state, 'base64').toString('utf-8'))
   } catch {
@@ -86,9 +92,39 @@ export async function GET(req: NextRequest) {
   }
   const userInfo: GoogleUserInfo = await userRes.json()
 
-  const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString()
+  const expiresAt = new Date(Date.now() + (tokens.expires_in - 60) * 1000).toISOString()
   const nowIso = new Date().toISOString()
+  const therapistId = stateData.therapistId ?? null
+  const scopes = (tokens.scope || '').split(' ').filter(Boolean)
 
+  // Source-of-truth write: KMS-encrypted tokens in practice_calendar_integrations.
+  // Reception endpoints (free-busy, create-event, list) read exclusively from
+  // this table.
+  try {
+    const refreshEnc = await encryptToken(tokens.refresh_token ?? '')
+    const accessEnc  = await encryptToken(tokens.access_token)
+    await pool.query(
+      `INSERT INTO practice_calendar_integrations
+         (practice_id, therapist_id, provider, account_email,
+          refresh_token_encrypted, access_token_encrypted,
+          access_token_expires_at, scopes, status)
+       VALUES ($1, $2, 'google', $3, $4, $5, $6, $7::text[], 'active')
+       ON CONFLICT (practice_id, therapist_id, provider, account_email)
+         DO UPDATE SET
+           refresh_token_encrypted = EXCLUDED.refresh_token_encrypted,
+           access_token_encrypted  = EXCLUDED.access_token_encrypted,
+           access_token_expires_at = EXCLUDED.access_token_expires_at,
+           scopes                  = EXCLUDED.scopes,
+           status                  = 'active'`,
+      [stateData.practiceId, therapistId, userInfo.email, refreshEnc, accessEnc, expiresAt, scopes],
+    )
+  } catch (err) {
+    console.error('[google-calendar/callback] practice_calendar_integrations upsert failed:', (err as Error).message)
+    return NextResponse.redirect(appUrl('/dashboard/settings?error=database_error'))
+  }
+
+  // Legacy write: calendar_connections plaintext copy. Kept so older EHR
+  // flows that still read from this table keep working until they migrate.
   try {
     await pool.query(
       `INSERT INTO calendar_connections (
@@ -121,9 +157,17 @@ export async function GET(req: NextRequest) {
       ],
     )
   } catch (err) {
-    console.error('[google-calendar/callback] Upsert error:', (err as Error).message)
-    return NextResponse.redirect(appUrl('/dashboard/settings?error=database_error'))
+    // Legacy table is best-effort — don't fail the connect flow if it errors.
+    console.error('[google-calendar/callback] legacy calendar_connections upsert failed:', (err as Error).message)
   }
+
+  await writeAuditLog({
+    practice_id: stateData.practiceId,
+    action: 'calendar_integration.connected',
+    resource_type: 'practice_calendar_integration',
+    severity: 'info',
+    details: { provider: 'google', account_email: userInfo.email },
+  }).catch(() => null)
 
   return NextResponse.redirect(appUrl('/dashboard/settings?success=google_calendar_connected'))
 }
