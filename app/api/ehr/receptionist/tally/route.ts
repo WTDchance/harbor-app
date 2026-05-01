@@ -1,14 +1,14 @@
 // W50 D5 — tally panel: success rate, fall-off, total, avg duration in window.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
 
   const sp = req.nextUrl.searchParams

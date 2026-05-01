@@ -4,7 +4,7 @@
 // signals, recording URL, and corrections so far.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
@@ -12,7 +12,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
   const { id } = await params
 
