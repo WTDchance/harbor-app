@@ -16,10 +16,14 @@ export const metadata: Metadata = {
   viewport: 'width=device-width, initial-scale=1',
   icons: {
     icon: [
-      { url: '/harbor-icon-clean.png', type: 'image/png' },
+      { url: '/favicon.ico', sizes: 'any' },
+      { url: '/icon-192.png', type: 'image/png', sizes: '192x192' },
+      { url: '/icon-512.png', type: 'image/png', sizes: '512x512' },
     ],
-    shortcut: '/harbor-icon-clean.png',
-    apple: '/harbor-icon-clean.png',
+    shortcut: '/favicon.ico',
+    apple: [
+      { url: '/apple-touch-icon.png', sizes: '180x180', type: 'image/png' },
+    ],
   },
   manifest: '/manifest.json',
   appleWebApp: {
@@ -37,20 +41,20 @@ export const metadata: Metadata = {
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
     images: [
       {
-        url: '/harbor-logo-120.png',
-        width: 120,
-        height: 120,
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
         alt: 'Harbor AI Receptionist — Never miss a patient call again',
         type: 'image/png',
       },
     ],
   },
   twitter: {
-    card: 'summary',
+    card: 'summary_large_image',
     title: 'Harbor — AI Receptionist for Therapy Practices',
     description:
       "Never miss a patient call again. Harbor's AI receptionist answers 24/7, screens new patients, and sends you full call summaries.",
-    images: ['/harbor-logo-120.png'],
+    images: ['/og-image.png'],
   },
   alternates: {
     canonical: siteUrl,
@@ -77,9 +81,15 @@ export default function RootLayout({
         <meta name="application-name" content="Harbor" />
         <meta name="theme-color" content="#0d9488" />
         <link rel="manifest" href="/manifest.json" />
-        <link rel="icon" type="image/png" href="/harbor-icon-clean.png" />
-        <link rel="shortcut icon" type="image/png" href="/harbor-icon-clean.png" />
-        {/* Sized apple-touch-icon for sharp home-screen rendering on iOS. */}
+        {/* Multi-format favicons. /favicon.ico is what Google Search and most
+            browsers fetch by URL convention; the sized PNGs let modern browsers
+            and PWA installers pick a higher-DPI variant. Source images are
+            square branded Harbor icons (icon-512.png) — Google requires
+            square favicons or it falls back to a placeholder globe in SERPs. */}
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
+        <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
+        <link rel="shortcut icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
         {/* Chunk-load error recovery. Catches stale-chunk 404s after a deploy
