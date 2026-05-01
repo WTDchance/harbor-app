@@ -38,9 +38,19 @@ export async function GET(req: NextRequest) {
   const row = rows[0]
 
   if (row.provider !== 'outlook') {
-    // Google free/busy is handled by the existing lib/googleCalendar — leave
-    // that path as-is; this endpoint focuses on the new Outlook integration.
-    return NextResponse.json({ busy: [], note: 'google free/busy via /api/integrations/google-calendar/events' })
+    // Google free/busy is not yet wired through this Reception endpoint.
+    // Returning success with empty busy would let the receptionist book
+    // over real conflicts. Return a 503-style signal so the caller falls
+    // back to confirm-with-human or known-business-hours scheduling.
+    return NextResponse.json(
+      {
+        busy: null,
+        error: 'free_busy_unavailable',
+        provider: row.provider,
+        message: 'Free/busy lookup not yet implemented for this provider — receptionist should confirm slot with human before booking.',
+      },
+      { status: 503 },
+    )
   }
 
   // Outlook — refresh access token if expired.
