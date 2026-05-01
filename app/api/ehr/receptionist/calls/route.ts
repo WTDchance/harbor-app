@@ -4,7 +4,7 @@
 // outcome bucketing + filters.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic'
 const OUTCOME_FILTERS = new Set(['booked', 'cancelled_call', 'no_record_created', 'crisis_flagged', 'all'])
 
 export async function GET(req: NextRequest) {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
 
   const sp = req.nextUrl.searchParams

@@ -1,7 +1,7 @@
 // W50 D5 — POST a correction.
 
 import { NextResponse, type NextRequest } from 'next/server'
-import { requireEhrApiSession } from '@/lib/aws/api-auth'
+import { requireReceptionApiSession } from '@/lib/aws/api-auth'
 import { pool } from '@/lib/aws/db'
 import { auditEhrAccess } from '@/lib/aws/ehr/audit'
 
@@ -13,7 +13,7 @@ const FIELDS = new Set(['patient_name', 'patient_dob', 'patient_phone', 'patient
   'patient_match_id', 'outcome'])
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const ctx = await requireEhrApiSession()
+  const ctx = await requireReceptionApiSession()
   if (ctx instanceof NextResponse) return ctx
   const { id: callId } = await params
 
