@@ -51,6 +51,23 @@ const FOUNDING_CAP = Number(process.env.FOUNDING_MEMBER_CAP || '20')
 const STRIPE_PRICE_ID_FOUNDING = process.env.STRIPE_PRICE_ID_FOUNDING || ''
 const STRIPE_PRICE_ID_REGULAR =
   process.env.STRIPE_PRICE_ID_REGULAR || process.env.STRIPE_PRICE_ID || ''
+const STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY =
+  process.env.STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY || ''
+
+type ProductTier = 'ehr_full' | 'reception_only' | 'ehr_only' | 'both'
+
+function normalizeProductTier(input: unknown, isCompedSignup: boolean): ProductTier {
+  // Comped (MOM-FREE) signups stay on the legacy EHR product.
+  if (isCompedSignup) return 'ehr_full'
+  const raw = typeof input === 'string' ? input.trim().toLowerCase() : ''
+  if (raw === 'ehr' || raw === 'ehr_full' || raw === 'full') return 'ehr_full'
+  if (raw === 'ehr_only') return 'ehr_only'
+  if (raw === 'both' || raw === 'bundle') return 'both'
+  // Default — marketing site is Reception-only. Anything else (including
+  // 'reception', 'reception_only', empty, or unknown) routes to the
+  // Reception product so lab.harboroffice.ai signups land on the right tier.
+  return 'reception_only'
+}
 
 const COGNITO_REGION = process.env.COGNITO_REGION || 'us-east-1'
 const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || ''
@@ -104,7 +121,11 @@ export async function POST(req: NextRequest) {
         { status: 500 },
       )
     }
-    if (!STRIPE_PRICE_ID_FOUNDING && !STRIPE_PRICE_ID_REGULAR) {
+    if (
+      !STRIPE_PRICE_ID_FOUNDING &&
+      !STRIPE_PRICE_ID_REGULAR &&
+      !STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY
+    ) {
       return NextResponse.json(
         { error: 'Stripe price IDs not configured on the server.' },
         { status: 500 },
@@ -149,6 +170,7 @@ export async function POST(req: NextRequest) {
       promo_code,
       selected_phone_number,
       accepted_insurance,
+      product,
     } = body
 
     if (!practice_name || !provider_name || !email || !password) {
@@ -222,12 +244,27 @@ export async function POST(req: NextRequest) {
         sunday: { enabled: false, openTime: '09:00', closeTime: '13:00' },
       }
 
-    const foundingUsed = await countFoundingMembers()
-    const isFounding = !isCompedSignup && foundingUsed < FOUNDING_CAP
-    const priceId =
-      isFounding && STRIPE_PRICE_ID_FOUNDING ? STRIPE_PRICE_ID_FOUNDING : STRIPE_PRICE_ID_REGULAR
+    const productTier = normalizeProductTier(product, isCompedSignup)
+    const isReceptionOnly = productTier === 'reception_only'
+
+    // Founding pricing only applies to the legacy EHR product. Reception-only
+    // signups always use the standard Reception monthly price.
+    const foundingUsed = isReceptionOnly ? 0 : await countFoundingMembers()
+    const isFounding = !isCompedSignup && !isReceptionOnly && foundingUsed < FOUNDING_CAP
+    const priceId = isReceptionOnly
+      ? STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY
+      : isFounding && STRIPE_PRICE_ID_FOUNDING
+        ? STRIPE_PRICE_ID_FOUNDING
+        : STRIPE_PRICE_ID_REGULAR
     if (!priceId) {
-      return NextResponse.json({ error: 'No price configured for this tier.' }, { status: 500 })
+      return NextResponse.json(
+        {
+          error: isReceptionOnly
+            ? 'Reception-only price ID not configured on the server.'
+            : 'No price configured for this tier.',
+        },
+        { status: 500 },
+      )
     }
 
     // --- Cognito user creation ---
@@ -287,12 +324,14 @@ export async function POST(req: NextRequest) {
             name, ai_name, owner_email, billing_email, location, phone,
             specialties, hours, timezone, greeting, provisioning_state,
             subscription_status, founding_member, comped,
-            accepted_insurance, provider_name, city, state, selected_phone_number
+            accepted_insurance, provider_name, city, state, selected_phone_number,
+            product_tier
          ) VALUES (
             $1, $2, $3, $3, $4, NULL,
             $5::text[], $6::jsonb, $7, $8, 'pending_payment',
             $9, $10, $11,
-            $12::text[], $13, $14, $15, $16
+            $12::text[], $13, $14, $15, $16,
+            $17
          ) RETURNING id`,
         [
           practice_name,
@@ -311,6 +350,7 @@ export async function POST(req: NextRequest) {
           city || null,
           state || null,
           selected_phone_number || null,
+          productTier,
         ],
       )
       practiceId = pIns.rows[0].id
@@ -381,6 +421,7 @@ export async function POST(req: NextRequest) {
         provider_name,
         founding_member: String(isFounding),
         comped: String(isCompedSignup),
+        product_tier: productTier,
       },
     })
 
@@ -403,6 +444,7 @@ export async function POST(req: NextRequest) {
           practice_name,
           founding_member: String(isFounding),
           comped: String(isCompedSignup),
+          product_tier: productTier,
         },
       },
       metadata: {
@@ -410,6 +452,7 @@ export async function POST(req: NextRequest) {
         cognito_sub: cognitoSub,
         founding_member: String(isFounding),
         comped: String(isCompedSignup),
+        product_tier: productTier,
         practice_state: state || '',
         practice_city: city || '',
         sms_consent: sms_consent ? 'true' : 'false',

@@ -187,6 +187,64 @@ resource "aws_ssm_parameter" "signalwire_validate_inbound" {
 }
 
 
+# -----------------------------------------------------------------------------
+# Wave 51 — Stripe billing credentials (secret key + price IDs) and Resend
+# transactional-email key. The Stripe webhook signing secrets above only cover
+# inbound webhook verification; signup/checkout flows additionally need the
+# secret key to create customers + checkout sessions, plus the price IDs to
+# pick the right tier.
+# -----------------------------------------------------------------------------
+resource "aws_ssm_parameter" "stripe_secret_key" {
+  name        = "/${local.name_prefix}/api-keys/stripe-secret-key"
+  description = "Stripe secret key (sk_live_… / sk_test_…) — used by /api/signup, /api/billing/* and the Stripe Node SDK at lib/stripe.ts."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "stripe_price_id_founding" {
+  name        = "/${local.name_prefix}/api-keys/stripe-price-founding"
+  description = "Stripe price ID for the EHR founding-member tier (first 20 EHR signups)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "stripe_price_id_regular" {
+  name        = "/${local.name_prefix}/api-keys/stripe-price-regular"
+  description = "Stripe price ID for the regular EHR tier (after founding cap)."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "stripe_price_id_reception_only_monthly" {
+  name        = "/${local.name_prefix}/api-keys/stripe-price-reception-monthly"
+  description = "Stripe price ID for the Reception-only monthly tier ($249/mo). Selected by /api/signup when product_tier='reception_only'."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+resource "aws_ssm_parameter" "resend_api_key" {
+  name        = "/${local.name_prefix}/api-keys/resend"
+  description = "Resend transactional-email API key. Most paths have moved to SES; kept for legacy reconcile cron + /api/health visibility."
+  type        = "SecureString"
+  value       = local.api_key_placeholder
+  key_id      = aws_kms_key.ssm.arn
+  tags        = local.common_tags
+  lifecycle { ignore_changes = [value] }
+}
+
+
 # Wave 27p — SignalWire LaML signing key. SignalWire's webhook signature is
 # HMAC-SHA1(LaMLAuthToken, URL+sortedKVs); the LaML auth token is DISTINCT
 # from the project token (PT…) used for REST basic-auth. The dashboard calls

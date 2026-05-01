@@ -57,6 +57,7 @@ const PUBLIC_API_PREFIXES = [
   '/api/vapi/webhook',          // legacy carrier — kept for inbound webhook compat
   '/api/sms/',
   '/api/signup',
+  '/api/leads/',
   '/api/audit-log',
   // Wave 27 carrier-swap public webhook paths. SignalWire signs each
   // inbound POST with x-signalwire-signature; Retell signs lifecycle
