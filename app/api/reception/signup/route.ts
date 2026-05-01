@@ -28,16 +28,20 @@ import {
   AdminSetUserPasswordCommand,
   AdminGetUserCommand,
   AdminDeleteUserCommand,
+  InitiateAuthCommand,
+  AuthFlowType,
 } from '@aws-sdk/client-cognito-identity-provider'
 import { pool } from '@/lib/aws/db'
 import { auditSystemEvent } from '@/lib/aws/ehr/audit'
 import { generateApiKey } from '@/lib/aws/reception/generate-api-key'
+import { SESSION_COOKIE, ACCESS_COOKIE, REFRESH_COOKIE } from '@/lib/aws/cognito'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const COGNITO_REGION = process.env.COGNITO_REGION || 'us-east-1'
 const COGNITO_USER_POOL_ID = process.env.COGNITO_USER_POOL_ID || ''
+const COGNITO_APP_CLIENT_ID = process.env.COGNITO_APP_CLIENT_ID || ''
 
 const DEFAULT_SCOPES = [
   'agents:read', 'agents:write',
@@ -156,12 +160,47 @@ export async function POST(req: NextRequest) {
       details: { has_phone: !!ownerPhone },
     })
 
-    return NextResponse.json({
+    // Auto-sign-in: create Cognito session cookies so the user lands
+    // on /onboarding/reception authenticated and doesn't have to manually
+    // log in right after signing up.
+    let auth: any = null
+    try {
+      const authResult = await cog.send(
+        new InitiateAuthCommand({
+          AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,
+          ClientId: COGNITO_APP_CLIENT_ID,
+          AuthParameters: { USERNAME: ownerEmail, PASSWORD: ownerPassword },
+        }),
+      )
+      auth = authResult.AuthenticationResult
+    } catch (err) {
+      console.warn('[reception/signup] auto-sign-in failed (user must log in manually):', (err as Error).message)
+    }
+
+    const res = NextResponse.json({
       practice_id: practiceId,
       api_key_plaintext: minted.plaintext,
       signalwire_number: null,    // Phase 2 — carrier provisioning
       retell_agent_id: null,      // Phase 2 — Retell agent creation
     })
+
+    if (auth?.IdToken && auth.AccessToken) {
+      const isProd = process.env.NODE_ENV === 'production'
+      const cookieOpts = {
+        httpOnly: true,
+        secure: isProd,
+        sameSite: 'lax' as const,
+        path: '/',
+      }
+      const ttl = auth.ExpiresIn ?? 3600
+      res.cookies.set(SESSION_COOKIE, auth.IdToken, { ...cookieOpts, maxAge: ttl })
+      res.cookies.set(ACCESS_COOKIE, auth.AccessToken, { ...cookieOpts, maxAge: ttl })
+      if (auth.RefreshToken) {
+        res.cookies.set(REFRESH_COOKIE, auth.RefreshToken, { ...cookieOpts, maxAge: 30 * 24 * 60 * 60 })
+      }
+    }
+
+    return res
   } catch (err) {
     console.error('[reception/signup] error:', (err as Error).message)
     return NextResponse.json({ error: (err as Error).message }, { status: 500 })
