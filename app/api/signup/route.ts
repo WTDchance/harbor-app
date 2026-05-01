@@ -207,26 +207,30 @@ export async function POST(req: NextRequest) {
     })
 
     // --- Promo code validation ---
+    // Accepts any active promotion code that exists in Stripe. The
+    // MOM-FREE code is additionally email-locked to prevent abuse;
+    // other codes are validated only against Stripe's active state.
+    // 100%-off promos are treated as comped signups, which bypass the
+    // founding-spot count.
     let resolvedPromo: Awaited<ReturnType<typeof resolveActivePromotionCode>> = null
     let isCompedSignup = false
     if (normalizedPromo) {
-      if (normalizedPromo !== MOM_PROMO_CODE) {
-        return NextResponse.json({ error: 'That promo code is not valid.' }, { status: 400 })
-      }
-      if (normalizedEmail !== MOM_LOCKED_EMAIL) {
+      if (normalizedPromo === MOM_PROMO_CODE && normalizedEmail !== MOM_LOCKED_EMAIL) {
         return NextResponse.json(
           { error: 'This promo code is not valid for that email address.' },
           { status: 400 },
         )
       }
-      resolvedPromo = await resolveActivePromotionCode(MOM_PROMO_CODE)
+      resolvedPromo = await resolveActivePromotionCode(normalizedPromo)
       if (!resolvedPromo) {
         return NextResponse.json(
-          { error: 'This promo code has already been used or is no longer available.' },
+          { error: 'That promo code is not valid.' },
           { status: 400 },
         )
       }
-      isCompedSignup = true
+      // A 100%-off coupon means the customer pays nothing — exclude
+      // them from the founding count so they don't burn a paid slot.
+      isCompedSignup = resolvedPromo.coupon?.percent_off === 100
     }
 
     const aiName = ai_name || 'Ellie'
