@@ -85,7 +85,9 @@ export async function POST(req: NextRequest) {
         reason_for_visit, urgency_level, preferred_therapist,
         preferred_appointment_window, notes, call_id, status)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-     RETURNING id, status, created_at`,
+     RETURNING id, first_name, last_name, date_of_birth::text AS date_of_birth,
+               phone_e164, email, insurance_payer, reason_for_visit,
+               urgency_level, status, created_at, updated_at`,
     [ctx.practiceId, ...values],
   )
 
