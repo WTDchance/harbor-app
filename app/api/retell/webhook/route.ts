@@ -235,20 +235,37 @@ async function handleCrisis(args: {
   const ctx = await loadPracticeAlertContext(practiceId)
 
   // crisis_alerts row — surfaces on the Today screen until a therapist
-  // marks reviewed=true. Existing W37 table; we do NOT add a new
-  // patient-level flag column to keep this PR light-touch.
+  // acknowledges. Uses the canonical AWS schema (tier / matched_phrases /
+  // transcript_snippet / llm_verdict), matching app/api/retell/call-ended
+  // and app/api/ehr/assessments. Tier 3 = behavioral-signal layer (regex
+  // + AI extractor on call transcripts).
+  const matchedPhrases = signals.key_phrases.slice(0, 10)
+  const transcriptSnippet = signals.key_phrases.length
+    ? `Crisis signals on receptionist call (source=${signals.source}): ${signals.key_phrases.slice(0, 5).join(' | ')}`
+    : `Crisis risk flagged by ${signals.source} extractor on receptionist call.`
   try {
     await pool.query(
       `INSERT INTO crisis_alerts
-          (practice_id, call_log_id, patient_phone, sms_sent, keywords_found)
+          (practice_id, patient_id, call_log_id, tier, matched_phrases,
+           transcript_snippet, llm_verdict, llm_reasoning)
         VALUES (
           $1,
-          (SELECT id FROM call_logs WHERE retell_call_id = $2 LIMIT 1),
-          NULL,
-          false,
-          $3::text[]
+          $2,
+          (SELECT id FROM call_logs WHERE retell_call_id = $3 LIMIT 1),
+          3,
+          $4::text[],
+          $5,
+          'escalate_therapist',
+          $6
         )`,
-      [practiceId, callId, signals.key_phrases.slice(0, 8)],
+      [
+        practiceId,
+        patientId,
+        callId,
+        matchedPhrases,
+        transcriptSnippet,
+        `Receptionist-call signal extractor (source=${signals.source}, ai_used=${signals.ai_used}). Therapist review required.`,
+      ],
     )
   } catch (err) {
     console.error('[retell/webhook] crisis_alerts insert failed:', (err as Error).message)
@@ -279,10 +296,12 @@ async function handleCrisis(args: {
       await pool
         .query(
           `UPDATE crisis_alerts
-              SET sms_sent = true
+              SET alert_sent_at = NOW(),
+                  alert_channel = 'sms',
+                  alert_recipient = $3
             WHERE practice_id = $1
               AND call_log_id = (SELECT id FROM call_logs WHERE retell_call_id = $2 LIMIT 1)`,
-          [practiceId, callId],
+          [practiceId, callId, ctx.alertPhone],
         )
         .catch(() => {})
     }

@@ -61,6 +61,15 @@ locals {
     #   billing        → app/api/ehr/billing/stripe-webhook/route.ts
     { name = "STRIPE_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_subscriptions.arn },
     { name = "STRIPE_EHR_WEBHOOK_SECRET", valueFrom = aws_ssm_parameter.stripe_webhook_billing.arn },
+    # Wave 51 — Stripe secret key + price IDs (signup checkout creation).
+    # Without these /api/health reports stripe:false and signup 500s.
+    { name = "STRIPE_SECRET_KEY", valueFrom = aws_ssm_parameter.stripe_secret_key.arn },
+    { name = "STRIPE_PRICE_ID_FOUNDING", valueFrom = aws_ssm_parameter.stripe_price_id_founding.arn },
+    { name = "STRIPE_PRICE_ID_REGULAR", valueFrom = aws_ssm_parameter.stripe_price_id_regular.arn },
+    { name = "STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY", valueFrom = aws_ssm_parameter.stripe_price_id_reception_only_monthly.arn },
+    # Resend — most email paths have moved to SES; kept for the legacy
+    # reconcile cron's best-effort fallback and /api/health visibility.
+    { name = "RESEND_API_KEY", valueFrom = aws_ssm_parameter.resend_api_key.arn },
     # Wave 27b — SignalWire + Retell carrier-swap credentials.
     { name = "SIGNALWIRE_PROJECT_ID", valueFrom = aws_ssm_parameter.signalwire_project_id.arn },
     { name = "SIGNALWIRE_TOKEN", valueFrom = aws_ssm_parameter.signalwire_token.arn },
