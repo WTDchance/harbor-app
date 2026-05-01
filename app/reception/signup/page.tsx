@@ -54,9 +54,7 @@ export default function ReceptionSignupPage() {
         <div className="rounded-2xl bg-white shadow-md p-6 max-w-lg w-full space-y-4 border">
           <h1 className="text-xl font-semibold" style={{ color: '#1f375d' }}>You're set up.</h1>
           <p className="text-sm text-gray-600">
-            Your Reception API key is shown once below. Copy it now —
-            it will never be shown again. Store it in your EHR's
-            integration settings or a secret manager.
+            Your Reception API key is shown once below. Copy and save it — it won't be shown again. Then continue to setup to connect your calendar, customize your greeting, and claim a phone number.
           </p>
           <div className="rounded border bg-gray-50 p-3 font-mono text-xs break-all">
             {result.api_key_plaintext}
@@ -69,9 +67,9 @@ export default function ReceptionSignupPage() {
             <div>Practice ID: <code className="font-mono">{result.practice_id}</code></div>
             {result.signalwire_number && <div>Phone: <code className="font-mono">{result.signalwire_number}</code></div>}
           </div>
-          <button onClick={() => router.push('/reception/dashboard')}
+          <button onClick={() => router.push('/onboarding/reception')}
                   className="bg-[#1f375d] text-white px-3 py-1.5 rounded text-sm w-full">
-            Continue to dashboard
+            Continue to setup
           </button>
         </div>
       </div>

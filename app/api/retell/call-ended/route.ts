@@ -184,14 +184,21 @@ export async function POST(req: NextRequest) {
         signal_count: signals.filter(s => s.signal_type === 'crisis_flag').length,
       },
     })
-    // Best-effort in-app notification.
+    // Best-effort in-app notification — uses the AWS canonical
+    // crisis_alerts schema (tier / matched_phrases / transcript_snippet
+    // columns, NOT the legacy alert_kind/summary shape).
+    const crisisSignals = signals.filter(s => s.signal_type === 'crisis_flag')
+    const matchedPhrases = crisisSignals.map(s => s.signal_value).filter(Boolean).slice(0, 10)
+    const snippet = crisisSignals.map(s => s.raw_excerpt).join(' ... ').slice(0, 1000)
     await pool.query(
-      `INSERT INTO crisis_alerts (practice_id, call_log_id, patient_id, alert_kind, summary, created_at)
-       VALUES ($1, $2, $3, 'call_signal_crisis_flag', $4, NOW())
-       ON CONFLICT DO NOTHING`,
-      [row.practice_id, row.id, row.patient_id ?? null,
-       'Crisis language detected in receptionist call. Review immediately.'],
-    ).catch(() => null)
+      `INSERT INTO crisis_alerts
+         (practice_id, patient_id, call_log_id, tier, matched_phrases,
+          transcript_snippet, llm_verdict, llm_reasoning)
+       VALUES ($1, $2, $3, 3, $4, $5, 'escalate_therapist',
+               'Crisis language detected by regex extractor on receptionist call. Review immediately.')`,
+      [row.practice_id, row.patient_id ?? null, row.id,
+       matchedPhrases, snippet || null],
+    ).catch((e) => console.error('[call-ended] crisis_alerts insert failed:', (e as Error).message))
   }
 
   return NextResponse.json({
