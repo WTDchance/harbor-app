@@ -57,6 +57,7 @@ const PUBLIC_API_PREFIXES = [
   '/api/vapi/webhook',          // legacy carrier — kept for inbound webhook compat
   '/api/sms/',
   '/api/signup',
+  '/api/phone-numbers/',         // signup phone-picker runs pre-auth
   '/api/leads/',
   '/api/audit-log',
   // Wave 27 carrier-swap public webhook paths. SignalWire signs each
