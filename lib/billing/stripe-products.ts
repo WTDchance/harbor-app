@@ -9,7 +9,6 @@
 
 export type HarborTierKey =
   | 'reception_only_monthly'
-  | 'reception_with_verify_monthly'
   | 'solo_cash_pay_monthly'
   | 'solo_in_network_monthly'
   | 'group_practice_monthly'
@@ -29,19 +28,10 @@ export const HARBOR_PRICING_TIERS = {
     key: 'reception_only_monthly',
     name: 'Reception',
     description:
-      'AI receptionist for practices that already have an EHR elsewhere. Inbound calls, intake capture, calendar sync, lead handoff.',
-    interval: 'month',
-    amount_usd_cents: 19900,
-    stripe_price_id_env: 'STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY',
-  },
-  reception_with_verify_monthly: {
-    key: 'reception_with_verify_monthly',
-    name: 'Reception + Verify',
-    description:
-      'AI receptionist + real-time Stedi insurance eligibility verification. For in-network practices that want coverage confirmed at the call.',
+      'AI receptionist for therapy practices that already have an EHR. Inbound call answering, intake capture, calendar sync (Google or Outlook), lead handoff via webhook or CSV.',
     interval: 'month',
     amount_usd_cents: 24900,
-    stripe_price_id_env: 'STRIPE_PRICE_RECEPTION_WITH_VERIFY_MONTHLY',
+    stripe_price_id_env: 'STRIPE_PRICE_ID_RECEPTION_ONLY_MONTHLY',
   },
   solo_cash_pay_monthly: {
     key: 'solo_cash_pay_monthly',
@@ -56,7 +46,7 @@ export const HARBOR_PRICING_TIERS = {
     key: 'solo_in_network_monthly',
     name: 'Solo (In-Network)',
     description:
-      'Single-provider practice that bills insurance. Full Harbor EHR + AI receptionist + Stedi eligibility & claims.',
+      'Single-provider practice that bills insurance. Full Harbor EHR + AI receptionist + claim submission and ERA reconciliation.',
     interval: 'month',
     amount_usd_cents: 29900,
     stripe_price_id_env: 'STRIPE_PRICE_ID_SOLO_IN_NETWORK_MONTHLY',

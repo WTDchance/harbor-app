@@ -4,7 +4,7 @@ import type { Metadata } from 'next'
 export const metadata: Metadata = {
   title: 'Pricing — Harbor Reception',
   description:
-    'Transparent pricing for Harbor Reception. Solo $199/mo, Pro $349/mo (with Stedi insurance verification), Group $999/mo. Full Harbor (Reception + EHR) available for customers ready to consolidate. No per-seat fees.',
+    'Transparent pricing for Harbor Reception. AI receptionist for therapy practices at $249/mo, Group $999/mo, Full Harbor (Reception + EHR) from $349/mo. No per-seat fees.',
 }
 
 const TIERS = [
@@ -34,9 +34,6 @@ const TIERS = [
     cta: 'Start Solo In-Network',
     features: [
       'Everything in Solo Cash-Pay',
-      'Stedi insurance eligibility (270/271)',
-      'Claim submission &amp; ERA reconciliation',
-      'Automated claim resubmit on denial',
       'No-show prediction model',
       'Authorization &amp; visit-limit tracking',
       'Priority support',
