@@ -347,16 +347,17 @@ export async function POST(req: NextRequest) {
             accepted_insurance, provider_name, city, state, selected_phone_number,
             product_tier
          ) VALUES (
-            $1, $2, $3, $3, $4, NULL,
-            $5::text[], $6::jsonb, $7, $8, 'pending_payment',
-            $9, $10, $11,
-            $12::text[], $13, $14, $15, $16,
-            $17
+            $1, $2, $3::text, $4::text, $5, NULL,
+            $6::text[], $7::jsonb, $8, $9, 'pending_payment',
+            $10, $11, $12,
+            $13::text[], $14, $15, $16, $17,
+            $18
          ) RETURNING id`,
         [
           practice_name,
           aiName,
-          normalizedEmail,
+          normalizedEmail, // owner_email
+          normalizedEmail, // billing_email (separate param so Postgres doesn't have to deduce a single type for two columns)
           [city, state].filter(Boolean).join(', ') || null,
           Array.isArray(specialties) ? specialties : [],
           JSON.stringify(finalHoursJson),
