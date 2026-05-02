@@ -122,7 +122,13 @@ export default function SignupPage() {
       if (!form.email.trim()) { setError('Email is required'); return false }
       if (!/^\S+@\S+\.\S+$/.test(form.email.trim())) { setError('Enter a valid email address'); return false }
       if (!form.password) { setError('Password is required'); return false }
-      if (form.password.length < 8) { setError('Password must be at least 8 characters'); return false }
+      // Mirror Cognito user pool policy (infra/terraform/cognito.tf):
+      // 12+ chars, lowercase, uppercase, number, symbol.
+      if (form.password.length < 12) { setError('Password must be at least 12 characters'); return false }
+      if (!/[a-z]/.test(form.password)) { setError('Password must include a lowercase letter'); return false }
+      if (!/[A-Z]/.test(form.password)) { setError('Password must include an uppercase letter'); return false }
+      if (!/[0-9]/.test(form.password)) { setError('Password must include a number'); return false }
+      if (!/[^A-Za-z0-9]/.test(form.password)) { setError('Password must include a symbol (e.g. !@#$%)'); return false }
       if (form.password !== form.confirm_password) { setError('Passwords do not match'); return false }
       if (!form.tos_accepted) { setError('Please accept the Terms of Service to continue'); return false }
       if (!form.baa_acknowledged) { setError('Please acknowledge the Business Associate Agreement to continue'); return false }
@@ -441,8 +447,11 @@ export default function SignupPage() {
                   <Lock className="w-4 h-4 inline mr-1" />Password *
                 </label>
                 <input type="password" value={form.password} onChange={(e) => u('password', e.target.value)}
-                  placeholder="Min 8 characters"
+                  placeholder="Min 12 characters"
                   className="w-full bg-slate-700 border border-slate-600 rounded-lg px-4 py-3 text-white placeholder-slate-500 focus:outline-none focus:border-teal-500 transition-colors" />
+                <p className="mt-1.5 text-xs text-slate-400">
+                  Must be 12+ characters with uppercase, lowercase, number, and symbol.
+                </p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-300 mb-1.5">
