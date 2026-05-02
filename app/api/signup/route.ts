@@ -327,6 +327,7 @@ export async function POST(req: NextRequest) {
         }),
       )
     } catch (err) {
+      console.error('[signup] cognito user creation failed:', err)
       return NextResponse.json(
         { error: 'Failed to create account: ' + (err as Error).message },
         { status: 500 },
@@ -384,6 +385,7 @@ export async function POST(req: NextRequest) {
 
       await client.query('COMMIT')
     } catch (err) {
+      console.error('[signup] practice transaction failed:', err)
       await client.query('ROLLBACK')
       // Roll back the Cognito user too so a retry doesn't 400 on duplicate.
       try {
@@ -393,8 +395,8 @@ export async function POST(req: NextRequest) {
             Username: normalizedEmail,
           }),
         )
-      } catch {
-        /* best effort */
+      } catch (cleanupErr) {
+        console.error('[signup] cognito cleanup after rollback failed:', cleanupErr)
       }
       return NextResponse.json(
         { error: 'Failed to create practice: ' + (err as Error).message },
