@@ -78,5 +78,5 @@ Hours: {{practice_hours}}. Outside hours, take a message and tell them {{therapi
  * default is used. The {{practice_name}}, {{therapist_name}} prompt
  * tokens are still substituted per-call.
  */
-export const HARBOR_DEFAULT_RETELL_VOICE_ID = '11labs-Sarah'
+export const HARBOR_DEFAULT_RETELL_VOICE_ID = '11labs-Bella'
 
