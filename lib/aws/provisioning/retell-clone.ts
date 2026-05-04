@@ -115,8 +115,11 @@ export async function cloneAgentForPractice(opts: {
     voice_id: HARBOR_DEFAULT_RETELL_VOICE_ID,
     voice_temperature: demoAgent.voice_temperature,
     voice_speed: demoAgent.voice_speed,
-    ambient_sound: demoAgent.ambient_sound,
-    ambient_sound_volume: demoAgent.ambient_sound_volume,
+    // Hardcoded ambient: call-center hum at noticeable-but-not-intrusive
+    // volume. Makes Bella feel like she's at a real desk instead of in
+    // a soundproof booth. Override via Retell dashboard if needed.
+    ambient_sound: 'call-center',
+    ambient_sound_volume: 0.15,
     enable_backchannel: demoAgent.enable_backchannel,
     backchannel_frequency: demoAgent.backchannel_frequency,
     backchannel_words: demoAgent.backchannel_words,
